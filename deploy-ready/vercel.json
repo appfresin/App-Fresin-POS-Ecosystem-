@@ -50,6 +50,14 @@
     {
       "source": "/delivery/:path*",
       "destination": "/delivery/"
+    },
+    {
+      "source": "/driver",
+      "destination": "/driver/"
+    },
+    {
+      "source": "/driver/:path*",
+      "destination": "/driver/"
     }
   ]
 }

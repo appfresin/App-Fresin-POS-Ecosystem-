@@ -700,6 +700,7 @@
 
 .customer-home-qris-placeholder {
   display: grid;
+  gap: 8px;
   place-items: center;
   min-height: 168px;
   padding: 18px;
@@ -711,54 +712,116 @@
   font-weight: 800;
 }
 
-.customer-home-progress {
+.customer-home-qris-placeholder.error {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.customer-home-qris-placeholder.error span {
+  color: #9a3412;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.customer-home-qris-card {
   display: grid;
-  gap: 7px;
-  margin-top: 0;
+  gap: 10px;
+  place-items: center;
+  padding: 14px;
+  border: 1px solid rgba(67, 94, 145, 0.16);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(35, 52, 86, 0.07);
+}
+
+.customer-home-qris-card img {
+  display: block;
+  width: min(100%, 260px);
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.customer-home-qris-card span {
+  color: #475467;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.customer-home-progress {
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin-top: 2px;
 }
 
 .customer-home-progress span {
   display: grid;
-  grid-template-columns: 26px 1fr;
-  align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 7px 9px;
-  border: 1px solid rgba(67, 94, 145, 0.12);
-  border-radius: 13px;
-  background: rgba(255, 255, 255, 0.74);
+  gap: 5px;
+  justify-items: center;
+  min-width: 0;
+  min-height: 108px;
+  padding: 12px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: #f4f7fb;
   color: #667085;
+  text-align: center;
   font-weight: 800;
-  font-size: 0.85rem;
+  font-size: 0.84rem;
 }
 
 .customer-home-progress i {
   display: inline-grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
   background: #d8e0ea;
   color: #475467;
   font-style: normal;
-  font-size: 0.78rem;
 }
 
-.customer-home-progress span.done,
 .customer-home-progress span.active {
-  border-color: rgba(67, 94, 145, 0.18);
-  background: #eef5ff;
-  color: #17396d;
+  background: #edf7f2;
+  color: #14532d;
 }
 
-.customer-home-progress span.done i,
 .customer-home-progress span.active i {
-  background: #2f5592;
+  background: #2f9b76;
   color: #fff;
 }
 
-.customer-home-progress span.active i {
-  box-shadow: 0 0 0 6px rgba(47, 85, 146, 0.12);
+.customer-home-progress b {
+  line-height: 1.15;
+}
+
+.customer-home-progress small {
+  max-width: 100%;
+  color: #667085;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.customer-home-progress span.active small {
+  color: #356454;
+}
+
+.customer-home-progress:not(.is-paid) span:first-child {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.customer-home-progress:not(.is-paid) span:first-child i {
+  background: #fb923c;
+  color: #fff;
 }
 
 .customer-home-checkout .self-order-submit-error {
@@ -850,5 +913,27 @@
 
   .customer-home-location-btn {
     flex: 1 1 100%;
+  }
+
+  .customer-home-progress {
+    gap: 4px;
+  }
+
+  .customer-home-progress span {
+    gap: 4px;
+    min-height: 112px;
+    padding: 9px 4px;
+    font-size: 0.64rem;
+  }
+
+  .customer-home-progress i {
+    width: 26px;
+    height: 26px;
+    font-size: 0.78rem;
+  }
+
+  .customer-home-progress small {
+    font-size: 0.56rem;
+    line-height: 1.2;
   }
 }

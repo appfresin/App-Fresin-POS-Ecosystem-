@@ -2,6 +2,7 @@
 
 let stockAuditSubmitting = false;
 let stockAuditSubmitStatus = null;
+const STOCK_AUDIT_DRAFT_KEY = "stock_audit_draft_values";
 const STOCK_OPNAME_QR_URL = "https://fresin.id/pos";
 const STOCK_OPNAME_QR_SIZE = 25;
 const STOCK_OPNAME_QR_MATRIX = "1111111001110100001111111100000101100011100100000110111010010100010010111011011101010111111101011101101110100001101010101110110000010101011110010000011111111010101010101111111000000000110100100000000011111011101001111101010101001110101110000110100010110100110000101110101101100101001111010110001000010010001011000111011010111100000001101001010010101010100010100001010111110111010000101101000111110001100111101110111011111010000000000110100011000110001111111010101100101010111100000100101001010001100110111010101111111111101011011101010111000011011100101110101110101111000110110000010111000111011110011111111010111110010111111";
@@ -94,6 +95,42 @@ function stockAuditCheckedIds() {
 
 function saveStockAuditCheckedIds(ids) {
   sessionStorage.setItem("stock_audit_checked_ids", JSON.stringify([...ids]));
+}
+
+function stockAuditDraftKey(productId) {
+  return String(productId || "");
+}
+
+function readStockAuditDrafts() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(STOCK_AUDIT_DRAFT_KEY) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStockAuditDrafts(drafts) {
+  sessionStorage.setItem(STOCK_AUDIT_DRAFT_KEY, JSON.stringify(drafts || {}));
+}
+
+function saveStockAuditDraft(productId, value) {
+  const key = stockAuditDraftKey(productId);
+  if (!key) return;
+  const drafts = readStockAuditDrafts();
+  drafts[key] = String(value ?? "");
+  writeStockAuditDrafts(drafts);
+}
+
+function clearStockAuditDrafts(productIds = []) {
+  if (!productIds.length) {
+    sessionStorage.removeItem(STOCK_AUDIT_DRAFT_KEY);
+    return;
+  }
+  const drafts = readStockAuditDrafts();
+  productIds.forEach(productId => delete drafts[stockAuditDraftKey(productId)]);
+  if (Object.keys(drafts).length) writeStockAuditDrafts(drafts);
+  else sessionStorage.removeItem(STOCK_AUDIT_DRAFT_KEY);
 }
 
 function renderStockInventoryPanel() {
@@ -221,10 +258,17 @@ function stockOpnameSearchText(product) {
   ].join(" ").toLowerCase();
 }
 
-function stockAuditInputValue(product) {
+function stockAuditBaseInputValue(product) {
   const value = Number(product?.stock || 0);
   if (!Number.isFinite(value)) return "0";
   return Number.isInteger(value) ? String(value) : String(value);
+}
+
+function stockAuditInputValue(product) {
+  const drafts = readStockAuditDrafts();
+  const draft = drafts[stockAuditDraftKey(product.id)];
+  if (draft !== undefined) return String(draft);
+  return stockAuditBaseInputValue(product);
 }
 
 function stockAuditResultMessage(adjustedCount, synced) {
@@ -251,8 +295,11 @@ function resetStockAuditSubmitStatus() {
   if (button) button.outerHTML = stockAuditSubmitButtonHtml(true);
 }
 
-function markStockAuditInputDirty(input) {
-  if (input) input.dataset.dirty = "1";
+function markStockAuditInputDirty(input, productId) {
+  if (input) {
+    input.dataset.dirty = "1";
+    saveStockAuditDraft(productId || input.closest("[data-audit-product-id]")?.dataset.auditProductId, input.value);
+  }
   resetStockAuditSubmitStatus();
 }
 
@@ -284,6 +331,8 @@ function stockOpnameCardHtml(product) {
   const variantGroups = productAvailabilityVariantGroups(product);
   const variants = variantGroups.flatMap(group => group.variants);
   const checked = stockAuditCheckedIds().has(product.id);
+  const hasDraft = readStockAuditDrafts()[stockAuditDraftKey(product.id)] !== undefined;
+  const inputValue = stockAuditInputValue(product);
   const lastChecked = product.stockOpnameCheckedAt ? dateTime(product.stockOpnameCheckedAt) : "Belum pernah dicek";
   const search = [
     product.name,
@@ -308,7 +357,7 @@ function stockOpnameCardHtml(product) {
         <small class="stock-audit-last">Dicek sebelumnya: ${escapeHtml(lastChecked)}</small>
         <div class="stock-audit-entry" data-audit-product-id="${escapeHtml(product.id)}">
           <label class="stock-previous-display"><span>Stok sebelumnya</span><b>${Number(product.stock || 0)} ${escapeHtml(product.unit || "item")}</b></label>
-          <label><span>Stok saat ini</span><input inputmode="decimal" type="number" min="0" step="1" value="${escapeHtml(stockAuditInputValue(product))}" data-dirty="0" oninput="markStockAuditInputDirty(this)" aria-label="Stok saat ini ${escapeHtml(product.name)}" /></label>
+          <label><span>Stok saat ini</span><input inputmode="decimal" type="number" min="0" step="1" value="${escapeHtml(inputValue)}" data-current-value="${escapeHtml(stockAuditBaseInputValue(product))}" data-dirty="${hasDraft ? "1" : "0"}" oninput="markStockAuditInputDirty(this, '${escapeHtml(product.id)}')" aria-label="Stok saat ini ${escapeHtml(product.name)}" /></label>
         </div>
       </div>
     </article>
@@ -377,7 +426,7 @@ async function submitStockAudit() {
   if (!checkedCount) {
     stockAuditSubmitting = false;
     if (stopLoading) stopLoading();
-    stockAuditSubmitStatus = { type: "warning", message: "Isi stok nyata minimal satu barang." };
+    stockAuditSubmitStatus = { type: "warning", message: "Belum ada stok yang dicek atau diubah." };
     render();
     return;
   }
@@ -390,6 +439,7 @@ async function submitStockAudit() {
     }));
     const movementsSynced = await syncStockMovementsToSupabase(auditMovements);
     saveStockAuditCheckedIds([]);
+    clearStockAuditDrafts(changedProductIds);
     const synced = syncResults.every(Boolean) && movementsSynced;
     stockAuditSubmitStatus = { type: synced ? "success" : "pending", message: stockAuditResultMessage(adjustedCount, synced) };
   } catch (error) {

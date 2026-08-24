@@ -3,7 +3,7 @@
 
   const HOME_ACTIVE_KEY = "customer_home_active_orders";
   const HOME_CHECKOUT_KEY = "customer_home_checkout";
-  const HOME_PAYMENT_PROVIDER = "mock";
+  const HOME_PAYMENT_PROVIDER = "midtrans";
   const HOME_STATUS_REFRESH_MS = 15000;
   const HOME_CONFIG = {
     defaultDeliveryFee: 10000,
@@ -18,6 +18,7 @@
   };
   let homeStatusRefreshLoading = false;
   let homeStatusRefreshAt = 0;
+  const homePaymentRequests = new Set();
 
   function homeParams() {
     try {
@@ -435,21 +436,66 @@
     const { search } = homeParams();
     return homePaymentProvider() === "mock"
       || search.get("dev") === "1"
-      || host === "localhost"
-      || host === "127.0.0.1"
-      || location.protocol === "file:";
+      || search.get("payment_provider") === "mock"
+      || ((host === "localhost" || host === "127.0.0.1" || location.protocol === "file:") && search.get("mock_payment") === "1");
   }
 
   const PaymentService = {
     createPayment(order) {
       order.paymentProvider = homePaymentProvider();
-      order.paymentReference = order.paymentReference || `MOCK-${order.number || Date.now()}`;
       return {
         provider: order.paymentProvider,
         reference: order.paymentReference,
         amount: homeOrderTotal(order),
-        qrData: null
+        qrUrl: order.paymentQrUrl || "",
+        status: order.paymentGatewayStatus || "",
+        error: order.paymentError || "",
+        loading: order.paymentLoading === true
       };
+    },
+    async ensurePayment(order) {
+      if (!order || homeIsPaid(order) || homePaymentProvider() !== "midtrans") return false;
+      if (order.paymentQrUrl && order.paymentReference) return true;
+      if (!supabaseReadable() || !supabaseClient?.functions?.invoke) {
+        order.paymentError = "Koneksi pembayaran belum siap.";
+        saveState();
+        render();
+        return false;
+      }
+      const key = order.publicOrderToken || order.number || order.id;
+      if (!key || homePaymentRequests.has(key)) return false;
+      homePaymentRequests.add(key);
+      order.paymentLoading = true;
+      order.paymentError = "";
+      saveState();
+      try {
+        const { data, error } = await supabaseClient.functions.invoke("create-midtrans-qris-payment", {
+          body: {
+            publicOrderToken: order.publicOrderToken,
+            orderNumber: order.number
+          }
+        });
+        if (error) throw error;
+        if (!data?.ok) throw new Error(data?.error || "Gagal membuat QRIS.");
+        order.paymentProvider = "midtrans";
+        order.paymentReference = data.reference || order.paymentReference || "";
+        order.paymentGatewayTransactionId = data.transactionId || order.paymentGatewayTransactionId || "";
+        order.paymentGatewayStatus = data.transactionStatus || order.paymentGatewayStatus || "pending";
+        order.paymentQrUrl = data.qrUrl || order.paymentQrUrl || "";
+        order.paymentExpiryTime = data.expiryTime || order.paymentExpiryTime || "";
+        order.paymentError = "";
+        await homeSyncOrderExtras(order);
+        return true;
+      } catch (error) {
+        console.warn("Midtrans QRIS creation failed", error);
+        order.paymentError = error?.message || "Gagal membuat QRIS. Coba lagi.";
+        return false;
+      } finally {
+        order.paymentLoading = false;
+        homePaymentRequests.delete(key);
+        saveState();
+        render();
+      }
     },
     checkPayment(order) {
       return { paid: homeIsPaid(order), reference: order?.paymentReference || "" };
@@ -464,8 +510,25 @@
     }
   };
 
-  function PaymentQRCode() {
-    return `<div class="customer-home-qris-placeholder">Pembayaran QRIS sedang dalam tahap integrasi.</div>`;
+  function PaymentQRCode(payment) {
+    if (payment.qrUrl) {
+      return `
+        <div class="customer-home-qris-card">
+          <img src="${homeEscape(payment.qrUrl)}" alt="QRIS pembayaran" />
+          <span>Scan QRIS ini dari aplikasi e-wallet atau mobile banking.</span>
+        </div>
+      `;
+    }
+    if (payment.error) {
+      return `
+        <div class="customer-home-qris-placeholder error">
+          <strong>QRIS belum berhasil dibuat.</strong>
+          <span>${homeEscape(payment.error)}</span>
+          <button class="self-order-secondary" type="button" onclick="CustomerOrder.retryPayment()">Coba Lagi</button>
+        </div>
+      `;
+    }
+    return `<div class="customer-home-qris-placeholder">${payment.loading ? "Membuat QRIS pembayaran..." : "Menyiapkan QRIS pembayaran..."}</div>`;
   }
 
   function homePrimeMode() {
@@ -770,6 +833,7 @@
         return;
       }
       await homeSyncOrderExtras(order);
+      await PaymentService.ensurePayment(order);
       audit("Customer order dibuat", `${order.number} ${order.customer} ${homeMoney(homeOrderTotal(order))}`);
       selfOrderCart = [];
       saveSelfOrderCart();
@@ -810,6 +874,10 @@
       delivery_longitude: order.deliveryLongitude,
       payment_provider: order.paymentProvider || "",
       payment_reference: order.paymentReference || "",
+      payment_gateway_transaction_id: order.paymentGatewayTransactionId || "",
+      payment_gateway_status: order.paymentGatewayStatus || "",
+      payment_qr_url: order.paymentQrUrl || "",
+      payment_expiry_time: order.paymentExpiryTime || null,
       public_order_token: order.publicOrderToken || "",
       driver_id: order.driverId || ""
     };
@@ -918,6 +986,50 @@
   function homeProgress(order) {
     const status = homeCustomerStatus(order);
     const delivery = homeOrderKind(order) === "DELIVERY";
+    const paid = homeIsPaid(order);
+    const completed = status === "COMPLETED";
+    const processing = paid && !completed;
+    const processText = delivery
+      ? (status === "SEARCHING_DRIVER" || status === "NO_DRIVER_AVAILABLE"
+        ? "Mencari driver"
+        : status === "DRIVER_ASSIGNED"
+          ? "Driver ditemukan"
+          : status === "DELIVERING"
+            ? "Dalam perjalanan"
+            : "Pesanan diproses")
+      : (status === "READY" ? "Siap diambil" : "Diproses");
+    const processDescription = delivery
+      ? (status === "DELIVERING"
+        ? "Driver sedang menuju alamatmu."
+        : status === "DRIVER_ASSIGNED"
+          ? "Driver sudah ditugaskan untuk pesananmu."
+          : status === "SEARCHING_DRIVER" || status === "NO_DRIVER_AVAILABLE"
+            ? "Kami sedang mencarikan driver."
+            : "Pesanan masuk antrean setelah pembayaran diterima.")
+      : (status === "READY"
+        ? "Pesanan sudah bisa diambil di outlet."
+        : "Pesanan masuk antrean setelah pembayaran diterima.");
+    const steps = [
+      ["payment", paid ? "Pembayaran diterima" : "Menunggu pembayaran", paid ? "Pembayaran berhasil dikonfirmasi." : "Selesaikan pembayaran agar pesanan diproses.", true, paid ? "✓" : "1"],
+      ["process", processing ? processText : "Menunggu diproses", processing ? processDescription : "Pesanan diproses setelah pembayaran diterima.", paid, processing ? "✓" : "2"],
+      ["done", "Selesai", completed ? "Pesanan sudah selesai." : delivery ? "Tunggu sampai pesanan sampai di alamat." : "Tunggu sampai pesanan siap diambil.", completed, completed ? "✓" : "3"]
+    ];
+    return `
+      <div class="customer-home-progress customer-home-statusbar ${paid ? "is-paid" : ""} ${processing ? "is-processing" : ""} ${completed ? "is-completed" : ""}" aria-label="Status pesanan">
+        ${steps.map(([id, label, description, active, icon]) => `
+          <span class="${active ? "active" : ""}" data-step="${homeEscape(id)}">
+            <i aria-hidden="true">${homeEscape(icon)}</i>
+            <b>${homeEscape(label)}</b>
+            <small>${homeEscape(description)}</small>
+          </span>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function homeDetailedProgress(order) {
+    const status = homeCustomerStatus(order);
+    const delivery = homeOrderKind(order) === "DELIVERY";
     const steps = delivery
       ? [
         ["WAITING_PAYMENT", "Pembayaran berhasil"],
@@ -949,10 +1061,12 @@
 
   function homePaymentPage(order) {
     const payment = PaymentService.createPayment(order);
+    if (!homeIsPaid(order) && payment.provider === "midtrans" && !payment.qrUrl && !payment.error && !payment.loading) {
+      window.setTimeout(() => PaymentService.ensurePayment(order), 0);
+    }
     return `
       <section class="customer-home-payment-card">
         <h3>Selesaikan Pembayaran</h3>
-        <strong class="customer-home-order-code">${homeEscape(order.number || "-")}</strong>
         <div class="customer-home-total-row"><span>Total Pembayaran</span><strong>${homeMoney(payment.amount)}</strong></div>
         ${PaymentQRCode(payment)}
         <p>Menunggu pembayaran...</p>
@@ -1021,7 +1135,7 @@
           <div class="customer-home-status-hero">
             <div class="customer-home-status-mark ${paid ? "paid" : ""}" aria-hidden="true">${paid ? "✓" : "!"}</div>
             <div>
-              <span>Pesanan ${homeEscape(order.number || "-")}</span>
+              <span>${paid ? `Pesanan ${homeEscape(order.number || "-")}` : "Pembayaran pesanan"}</span>
               <h3>${paid ? "Pembayaran berhasil" : "Menunggu pembayaran"}</h3>
               <p>${homeEscape(nextText)}</p>
             </div>
@@ -1092,7 +1206,7 @@
       Object.assign(liveOrder, {
         customerOrderType: order.customerOrderType,
         orderMode: order.orderMode,
-        customerOrderStatus: order.customerOrderStatus,
+        customerOrderStatus: orderRow.customer_order_status || liveOrder.customerOrderStatus || order.customerOrderStatus,
         publicOrderToken: order.publicOrderToken,
         customerPhone: order.customerPhone,
         pickupTime: order.pickupTime,
@@ -1104,8 +1218,12 @@
         driverId: order.driverId,
         driverName: order.driverName,
         driverWhatsapp: order.driverWhatsapp,
-        paymentProvider: order.paymentProvider,
-        paymentReference: order.paymentReference
+        paymentProvider: orderRow.payment_provider || order.paymentProvider,
+        paymentReference: orderRow.payment_reference || order.paymentReference,
+        paymentGatewayTransactionId: orderRow.payment_gateway_transaction_id || order.paymentGatewayTransactionId,
+        paymentGatewayStatus: orderRow.payment_gateway_status || order.paymentGatewayStatus,
+        paymentQrUrl: orderRow.payment_qr_url || order.paymentQrUrl,
+        paymentExpiryTime: orderRow.payment_expiry_time || order.paymentExpiryTime
       });
       mergeSupabaseLiveOrders([liveOrder]);
       saveState();
@@ -1309,6 +1427,14 @@
           deliveryFee: homeCalculateDeliveryFee(checkout)
         });
         selfOrderSubmitError = "";
+        render();
+      },
+      retryPayment() {
+        const order = homeCurrentOrder();
+        if (!order) return;
+        order.paymentError = "";
+        order.paymentLoading = false;
+        PaymentService.ensurePayment(order);
         render();
       },
       createWaitingPayment: homeCreateWaitingPayment,
