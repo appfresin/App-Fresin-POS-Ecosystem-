@@ -327,14 +327,15 @@
 }
 
 .customer-home-pickup-note {
-  padding: 9px 10px;
-  border: 1px solid rgba(67, 94, 145, 0.12);
-  border-radius: 12px;
-  background: #f2f7ff;
-  color: #4f617c;
-  font-size: 0.82rem;
-  font-weight: 750;
-  line-height: 1.35;
+  margin-top: -2px;
+  padding: 8px 10px;
+  border: 1px solid rgba(67, 94, 145, 0.1);
+  border-radius: 10px;
+  background: rgba(242, 247, 255, 0.68);
+  color: #667085;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.42;
 }
 
 .customer-home-location-pin {
@@ -400,32 +401,37 @@
   font-size: 0.9rem;
 }
 
-.customer-home-location-copy p,
-.customer-home-location-copy small {
-  margin: 0;
-  color: #667085;
-  font-size: 0.82rem;
-  line-height: 1.25;
-}
-
-.customer-home-location-copy small {
-  color: #0f766e;
-  font-weight: 800;
-}
-
 .customer-home-location-actions {
   grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 7px;
-  align-items: center;
+  align-items: stretch;
 }
 
 .customer-home-location-btn {
-  min-height: 36px;
+  width: 100%;
+  min-height: 40px;
   border-radius: 12px;
-  padding: 7px 12px;
+  padding: 9px 12px;
   font-size: 0.82rem;
+}
+
+.customer-home-location-note {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(67, 94, 145, 0.1);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.86);
+  color: #667085;
+  font-size: 0.76rem;
+  font-weight: 560;
+  line-height: 1.35;
+}
+
+.customer-home-location-note.warning {
+  border-color: rgba(244, 63, 94, 0.14);
+  background: rgba(255, 241, 242, 0.78);
+  color: #b42318;
 }
 
 .customer-home-location-btn.is-confirmed,
@@ -517,21 +523,36 @@
 }
 
 .customer-home-map-locate-control button {
-  min-width: 86px;
-  min-height: 32px;
-  padding: 0 10px;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
   border: 0;
-  border-radius: 4px;
-  background: #ffffff;
-  color: #17396d;
-  font: 900 0.72rem "Plus Jakarta Sans", Inter, system-ui, sans-serif;
-  letter-spacing: 0;
-  box-shadow: 0 5px 12px rgba(35, 52, 86, 0.14);
+  border-radius: 999px;
+  background: linear-gradient(145deg, #2f5592, #0f766e);
+  color: #ffffff;
+  box-shadow: 0 10px 20px rgba(35, 52, 86, 0.22);
   cursor: pointer;
 }
 
 .customer-home-map-locate-control button:active {
   transform: translateY(1px);
+}
+
+.customer-home-locate-icon,
+.customer-home-locate-icon svg {
+  display: block;
+  width: 21px;
+  height: 21px;
+}
+
+.customer-home-locate-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .customer-home-review {
@@ -574,6 +595,17 @@
   padding-top: 6px;
   margin-top: 2px;
   font-weight: 900;
+}
+
+.customer-home-review.is-total-only {
+  padding-block: 9px;
+}
+
+.customer-home-review.is-total-only .customer-home-total-row {
+  min-height: 20px;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .customer-home-payment-card,
@@ -647,24 +679,45 @@
 }
 
 .customer-home-status .self-order-success-detail {
+  display: grid;
   gap: 0;
-  padding: 0;
+  padding: 5px 9px;
   overflow: hidden;
   border: 1px solid rgba(72, 91, 128, 0.16);
-  border-radius: 14px;
-  background: #fff;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86);
 }
 
 .customer-home-status .self-order-success-detail span {
-  min-height: 38px;
-  padding: 8px 11px;
-  border-bottom: 1px solid rgba(203, 213, 225, 0.62);
-  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 25px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.48);
+  background: transparent;
+  font-size: 0.76rem;
+}
+
+.customer-home-status .self-order-success-detail span:last-child {
+  border-bottom: 0;
+}
+
+.customer-home-status .self-order-success-detail b {
+  color: #6f7d96;
+  font-size: 0.74rem;
+  font-weight: 520;
+  line-height: 1.2;
 }
 
 .customer-home-status .self-order-success-detail strong {
   color: #11233d;
-  font-size: 0.86rem;
+  font-size: 0.78rem;
+  font-weight: 640;
+  line-height: 1.2;
+  text-align: right;
 }
 
 .customer-home-status-panel {
@@ -752,6 +805,34 @@
   text-align: center;
 }
 
+.customer-home-dummy-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed #f59e0b;
+  border-radius: 16px;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.customer-home-dummy-panel small {
+  color: #b45309;
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.customer-home-dummy-panel strong {
+  color: #78350f;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.customer-home-progress-wrap {
+  display: grid;
+  gap: 9px;
+  width: 100%;
+}
+
 .customer-home-progress {
   align-self: stretch;
   display: grid;
@@ -761,13 +842,17 @@
   margin-top: 2px;
 }
 
+.customer-home-progress.is-delivery {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .customer-home-progress span {
   display: grid;
-  gap: 5px;
+  gap: 6px;
   justify-items: center;
   min-width: 0;
-  min-height: 108px;
-  padding: 12px 8px;
+  min-height: 74px;
+  padding: 10px 7px;
   border: 0;
   border-radius: 8px;
   background: #f4f7fb;
@@ -802,16 +887,21 @@
   line-height: 1.15;
 }
 
-.customer-home-progress small {
-  max-width: 100%;
-  color: #667085;
-  font-size: 0.68rem;
-  font-weight: 700;
-  line-height: 1.25;
+.customer-home-progress-detail {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid #d8eadf;
+  border-radius: 12px;
+  background: #f5fbf8;
 }
 
-.customer-home-progress span.active small {
-  color: #356454;
+.customer-home-progress-detail p {
+  margin: 0;
+  color: #4f617c;
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.42;
 }
 
 .customer-home-progress:not(.is-paid) span:first-child {
@@ -838,19 +928,98 @@
 }
 
 .customer-home-driver-card {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid #d5eadf;
+  display: block;
+  padding: 10px;
+  border: 1px solid #bfd7ff;
   border-radius: 16px;
-  background: #f4fbf7;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.18)),
+    linear-gradient(145deg, #eaf3ff 0%, #f8fbff 100%);
+  box-shadow: 0 10px 24px rgba(47, 85, 146, 0.1);
 }
 
-.customer-home-driver-card a,
+.customer-home-driver-main {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.customer-home-driver-avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #4f8de8, #0f766e);
+  color: #fff;
+  font-size: 0.86rem;
+  font-weight: 950;
+  box-shadow: 0 10px 20px rgba(47, 85, 146, 0.18);
+}
+
+.customer-home-driver-main > div {
+  min-width: 0;
+  align-self: center;
+}
+
+.customer-home-driver-main > div small {
+  display: block;
+  color: #2f5592;
+  font-size: 0.69rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.customer-home-driver-main strong {
+  display: block;
+  margin-top: 0;
+  color: #10233d;
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.12;
+}
+
 .customer-home-help-link {
-  color: #0f766e;
+  color: #2f5592;
   font-weight: 900;
   text-decoration: none;
+}
+
+.customer-home-driver-contact {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  min-width: 122px;
+  padding: 6px 8px;
+  border: 1px solid rgba(47, 85, 146, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.customer-home-driver-contact small {
+  color: #6f7d96;
+  font-size: 0.6rem;
+  font-weight: 520;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.customer-home-driver-card .customer-home-driver-whatsapp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #2f5592;
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.15;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
 .customer-home-dev-panel {
@@ -921,8 +1090,8 @@
 
   .customer-home-progress span {
     gap: 4px;
-    min-height: 112px;
-    padding: 9px 4px;
+    min-height: 66px;
+    padding: 8px 4px;
     font-size: 0.64rem;
   }
 
@@ -932,8 +1101,16 @@
     font-size: 0.78rem;
   }
 
-  .customer-home-progress small {
-    font-size: 0.56rem;
-    line-height: 1.2;
+  .customer-home-progress.is-delivery span {
+    min-height: 70px;
+    padding-inline: 3px;
+  }
+
+  .customer-home-progress.is-delivery b {
+    font-size: 0.62rem;
+  }
+
+  .customer-home-driver-card {
+    padding: 12px;
   }
 }
