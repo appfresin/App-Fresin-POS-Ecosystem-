@@ -15,6 +15,27 @@ function productReportMatchesQuery(row, query) {
   return tokens.every(token => searchText.includes(token));
 }
 
+function productSalesSummaryLoadedForRange(range) {
+  if (!range) return false;
+  if (typeof supabaseProductSalesUnavailable !== "undefined" && supabaseProductSalesUnavailable) return false;
+  if (typeof supabaseProductSalesLastLoadOk !== "undefined" && !supabaseProductSalesLastLoadOk) return false;
+  if (typeof supabaseProductSalesLoadKey === "undefined" || typeof reportLoadKey !== "function") return false;
+  return supabaseProductSalesLoadKey === reportLoadKey(range) && Number(supabaseProductSalesLoadedAt || 0) > 0;
+}
+
+function productSalesSummaryRecordsInRange(range) {
+  const rows = typeof supabaseProductSalesRecords !== "undefined" && Array.isArray(supabaseProductSalesRecords)
+    ? supabaseProductSalesRecords
+    : [];
+  if (!range) return rows;
+  const startKey = todayKey(range.start);
+  const endKey = todayKey(range.end);
+  return rows.filter(row => {
+    const key = row.salesDate || row.sales_date || row.date || "";
+    return key >= startKey && key <= endKey;
+  });
+}
+
 function setProductReportQuery(value) {
   sessionStorage.setItem("product_report_query", value);
   applyProductSalesSearchFilter(value);
@@ -54,6 +75,7 @@ function renderReports() {
   const rawSection = sessionStorage.getItem("report_section") || "profit";
   const activeSection = ["profit", "visitors", "productSales"].includes(rawSection) ? rawSection : "profit";
   if (activeSection !== rawSection) sessionStorage.setItem("report_section", activeSection);
+  if (activeSection === "productSales" && typeof requestActiveReportData === "function") requestActiveReportData();
   const sectionMenu = `
     <div class="report-section-menu">
       ${[
@@ -114,26 +136,40 @@ function renderReports() {
     }) }
   };
   const maxTrend = Math.max(1, ...trend.map(item => item.count));
+  const useRemoteProductSales = productSalesSummaryLoadedForRange(range);
+  const remoteProductRows = productSalesSummaryRecordsInRange(range);
   const byProduct = {};
-  for (const order of completed) {
-    for (const item of order.items || []) {
-      byProduct[item.name] ??= { code: "", qty: 0, value: 0, profit: 0, transactionCount: 0, source: "Kasirin!", periods: new Set() };
-      byProduct[item.name].qty += item.qty;
-      byProduct[item.name].value += cartItemTotal(item);
-      byProduct[item.name].profit += (Number(item.price || 0) - Number(item.cost || 0)) * Number(item.qty || 1);
-      byProduct[item.name].transactionCount += 1;
-      byProduct[item.name].periods.add("Transaksi aplikasi");
-      for (const addon of item.addons || []) {
-        const addonName = addon.name || "Add-on";
-        byProduct[addonName] ??= { code: "", qty: 0, value: 0, profit: 0, transactionCount: 0, source: "Kasirin! Add-on", periods: new Set() };
-        const addonQty = Number(addon.qty || 1);
-        byProduct[addonName].qty += addonQty;
-        byProduct[addonName].value += Number(addon.price || 0) * addonQty;
-        byProduct[addonName].profit += addonProfit(addon);
-        byProduct[addonName].transactionCount += 1;
-        byProduct[addonName].periods.add("Transaksi aplikasi");
+  if (!useRemoteProductSales) {
+    for (const order of completed) {
+      for (const item of order.items || []) {
+        byProduct[item.name] ??= { code: "", qty: 0, value: 0, profit: 0, transactionCount: 0, source: "Kasirin!", periods: new Set() };
+        byProduct[item.name].qty += item.qty;
+        byProduct[item.name].value += cartItemTotal(item);
+        byProduct[item.name].profit += (Number(item.price || 0) - Number(item.cost || 0)) * Number(item.qty || 1);
+        byProduct[item.name].transactionCount += 1;
+        byProduct[item.name].periods.add("Transaksi aplikasi");
+        for (const addon of item.addons || []) {
+          const addonName = addon.name || "Add-on";
+          byProduct[addonName] ??= { code: "", qty: 0, value: 0, profit: 0, transactionCount: 0, source: "Kasirin! Add-on", periods: new Set() };
+          const addonQty = Number(addon.qty || 1);
+          byProduct[addonName].qty += addonQty;
+          byProduct[addonName].value += Number(addon.price || 0) * addonQty;
+          byProduct[addonName].profit += addonProfit(addon);
+          byProduct[addonName].transactionCount += 1;
+          byProduct[addonName].periods.add("Transaksi aplikasi");
+        }
       }
     }
+  }
+  for (const row of remoteProductRows) {
+    const key = row.code ? `${row.code} - ${row.name}` : row.name;
+    byProduct[key] ??= { code: row.code || "", displayName: row.name || key, qty: 0, value: 0, profit: 0, transactionCount: 0, source: "Supabase Ringkasan Barang", periods: new Set() };
+    byProduct[key].qty += Number(row.qty || 0);
+    byProduct[key].value += Number(row.revenue || 0);
+    byProduct[key].profit += Number(row.profit || 0);
+    byProduct[key].transactionCount += Number(row.transactionCount || 0);
+    if (row.source) byProduct[key].source = row.source;
+    if (row.salesDate) byProduct[key].periods.add(formatDateKey(row.salesDate));
   }
   const legacyProductRows = productSalesRecordsInRange(range);
   for (const row of legacyProductRows) {
@@ -303,7 +339,7 @@ function renderReports() {
           <div><small>Pendapatan</small><b data-product-sales-summary="revenue">${money(productRevenue)}</b></div>
           <div><small>Keuntungan</small><b data-product-sales-summary="profit">${money(productProfit)}</b></div>
         </section>
-        <div class="product-sales-notice">${productSalesFilterNote(range, legacyProductRows.length)}</div>
+        <div class="product-sales-notice">${productSalesFilterNote(range, legacyProductRows.length, useRemoteProductSales, remoteProductRows.length)}</div>
         <div class="product-sales-list">
           ${productReportList || empty("Belum ada rincian barang pada periode ini.")}
           <div data-product-sales-empty ${allProductReportRows.length && !productReportRows.length ? "" : "hidden"}>${empty("Barang tidak ditemukan pada periode ini.")}</div>
@@ -449,7 +485,10 @@ function productSalesPeriodLabel(row) {
   return `${formatter.format(start)} - ${formatter.format(end)}`;
 }
 
-function productSalesFilterNote(range, legacyCount) {
+function productSalesFilterNote(range, legacyCount, remoteLoaded = false, remoteCount = 0) {
+  if (remoteLoaded) {
+    return `${remoteCount.toLocaleString("id-ID")} ringkasan barang Supabase masuk filter ${range.label}. Data ini dihitung harian dari transaksi lunas, jadi lebih ringan dan tidak bergantung pada cache order di perangkat.`;
+  }
   if (legacyCount) {
     return `${legacyCount.toLocaleString("id-ID")} baris data barang historis masuk filter ${range.label}. Data lama berbentuk agregat file, jadi hanya ditampilkan jika periode file tercakup penuh oleh filter.`;
   }

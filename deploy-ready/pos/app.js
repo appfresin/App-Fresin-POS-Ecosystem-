@@ -40,6 +40,7 @@ const REPORT_SALES_RECORD_COLUMNS = "id,number,created_at,paid_at,source,importe
 const REPORT_PROFIT_YEAR_COLUMNS = "year,transaction_count,total,revenue,profit,estimated_cost";
 const REPORT_PROFIT_MONTH_COLUMNS = "year,month,transaction_count,total,revenue,profit,estimated_cost";
 const REPORT_PROFIT_DAY_COLUMNS = "year,month,day,sales_date,date,transaction_count,total,revenue,profit,estimated_cost";
+const REPORT_PRODUCT_SALES_COLUMNS = "sales_date,code,name,transaction_count,qty,revenue,profit,source";
 const STOCK_MOVEMENT_COLUMNS = "id,created_at,product_id,product_local_id,qty,reason,note,movement_type,balance_after";
 const MASTER_CATEGORY_COLUMNS = "id,local_id,name,active,sort_order";
 const MASTER_ADDON_COLUMNS = "id,local_id,name,price,cost,active,sold_out";
@@ -210,6 +211,12 @@ let supabaseReportsLoading = false;
 let supabaseReportsLoadedAt = 0;
 let supabaseReportLoadKey = "";
 let supabaseReportDetailCache = new Map();
+let supabaseProductSalesRecords = [];
+let supabaseProductSalesLoading = false;
+let supabaseProductSalesLoadedAt = 0;
+let supabaseProductSalesLoadKey = "";
+let supabaseProductSalesLastLoadOk = false;
+let supabaseProductSalesUnavailable = false;
 let profitSummaryCache = { years: [], months: {}, days: {} };
 let profitSummaryLoading = false;
 let profitSummaryLoadingKeys = new Set();
@@ -3307,6 +3314,10 @@ function invalidateReportCaches() {
   legacyProfitSummaryLoadedAt = new Map();
   legacyCashierDataLoadedAt = 0;
   legacyCashierDataLoadKey = "";
+  supabaseProductSalesRecords = [];
+  supabaseProductSalesLoadedAt = 0;
+  supabaseProductSalesLoadKey = "";
+  supabaseProductSalesLastLoadOk = false;
 }
 
 function syncRetryDelayMs(attempts) {
@@ -6471,9 +6482,68 @@ async function loadProfitSummary(level = "years", year = null, month = null, for
   }
 }
 
+function normalizeSupabaseProductSalesRow(row) {
+  return {
+    salesDate: row.sales_date || row.date || "",
+    code: String(row.code || "").trim(),
+    name: row.name || "-",
+    transactionCount: Number(row.transaction_count || 0),
+    qty: Number(row.qty || 0),
+    revenue: Number(row.revenue || 0),
+    profit: Number(row.profit || 0),
+    source: row.source || "Supabase Ringkasan Barang"
+  };
+}
+
+async function loadSupabaseProductSalesRecords(force = false, range = reportRange()) {
+  if (!supabaseReadable() || supabaseProductSalesLoading || !range) return;
+  if (supabaseProductSalesUnavailable) return;
+  const loadKey = reportLoadKey(range);
+  const freshEnough = Date.now() - supabaseProductSalesLoadedAt < 60000;
+  if (!force && supabaseProductSalesLoadKey === loadKey && freshEnough) return;
+  supabaseProductSalesLoading = true;
+  try {
+    const allRows = [];
+    const pageSize = 1000;
+    for (let from = 0; ; from += pageSize) {
+      const to = from + pageSize - 1;
+      const { data, error } = await supabaseClient
+        .from("report_product_sales_daily")
+        .select(REPORT_PRODUCT_SALES_COLUMNS)
+        .gte("sales_date", todayKey(range.start))
+        .lte("sales_date", todayKey(range.end))
+        .order("sales_date", { ascending: false })
+        .range(from, to);
+      if (error) throw error;
+      allRows.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+    }
+    supabaseProductSalesRecords = allRows.map(normalizeSupabaseProductSalesRow);
+    supabaseProductSalesLoadedAt = Date.now();
+    supabaseProductSalesLoadKey = loadKey;
+    supabaseProductSalesLastLoadOk = true;
+    if ((sessionStorage.getItem("report_section") || "profit") === "productSales") reportRenderAfterDataLoad();
+  } catch (error) {
+    supabaseProductSalesLastLoadOk = false;
+    const missingReportView = isSupabaseReportViewIssue(error, "report_product_sales_daily");
+    if (missingReportView) {
+      supabaseProductSalesUnavailable = true;
+      console.warn("Product sales summary skipped: view report_product_sales_daily belum tersedia.");
+    } else {
+      console.error("Product sales summary load failed", error);
+    }
+    supabaseProductSalesLoadedAt = Date.now();
+    supabaseProductSalesLoadKey = loadKey;
+  } finally {
+    supabaseProductSalesLoading = false;
+    if ((sessionStorage.getItem("report_section") || "profit") === "productSales") reportRenderAfterDataLoad();
+  }
+}
+
 function reportDataLoading() {
   const section = sessionStorage.getItem("report_section") || "profit";
   if (section === "profit") return Boolean(profitSummaryLoading || legacyProfitSummaryLoading || legacyCashierDataLoading);
+  if (section === "productSales") return Boolean(supabaseProductSalesLoading);
   return Boolean(supabaseReportsLoading || supabaseLegacyReportsLoading || legacyCashierDataLoading);
 }
 
@@ -6680,7 +6750,9 @@ function profitReportRecordRange(level = sessionStorage.getItem("profit_report_l
 
 function requestActiveReportData(force = false) {
   const section = sessionStorage.getItem("report_section") || "profit";
-  loadLegacyCashierData(force, section === "profit" ? (currentProfitDetailRange() || profitReportRecordRange()) : reportRange());
+  if (section !== "productSales") {
+    loadLegacyCashierData(force, section === "profit" ? (currentProfitDetailRange() || profitReportRecordRange()) : reportRange());
+  }
   if (section === "profit") {
     const level = sessionStorage.getItem("profit_report_level") || "today";
     const now = new Date();
@@ -6703,6 +6775,8 @@ function requestActiveReportData(force = false) {
     if (recordRange) loadSupabaseReportRecords(force, recordRange);
   } else if (section === "visitors") {
     loadSupabaseReportRecords(force);
+  } else if (section === "productSales") {
+    loadSupabaseProductSalesRecords(force, reportRange());
   }
 }
 
@@ -6716,9 +6790,12 @@ async function refreshVisibleData() {
     if (view === "reports") {
       const activeSection = sessionStorage.getItem("report_section") || "profit";
       invalidateReportCaches();
-      await loadLegacyCashierData(true, activeSection === "profit" ? (currentProfitDetailRange() || profitReportRecordRange()) : reportRange());
+      if (activeSection !== "productSales") {
+        await loadLegacyCashierData(true, activeSection === "profit" ? (currentProfitDetailRange() || profitReportRecordRange()) : reportRange());
+      }
       if (activeSection === "profit") await refreshProfitReportData();
       else if (activeSection === "visitors") await loadSupabaseReportRecords(true);
+      else if (activeSection === "productSales") await loadSupabaseProductSalesRecords(true, reportRange());
     }
     toast("Data diperbarui.");
   } catch (error) {
