@@ -23,6 +23,13 @@ function productSalesSummaryLoadedForRange(range) {
   return supabaseProductSalesLoadKey === reportLoadKey(range) && Number(supabaseProductSalesLoadedAt || 0) > 0;
 }
 
+function productSalesSummaryPendingForRange(range) {
+  if (!range) return false;
+  if (typeof supabaseProductSalesUnavailable !== "undefined" && supabaseProductSalesUnavailable) return false;
+  if (typeof supabaseProductSalesLoading === "undefined" || !supabaseProductSalesLoading) return false;
+  return !productSalesSummaryLoadedForRange(range);
+}
+
 function productSalesSummaryRecordsInRange(range) {
   const rows = typeof supabaseProductSalesRecords !== "undefined" && Array.isArray(supabaseProductSalesRecords)
     ? supabaseProductSalesRecords
@@ -137,9 +144,10 @@ function renderReports() {
   };
   const maxTrend = Math.max(1, ...trend.map(item => item.count));
   const useRemoteProductSales = productSalesSummaryLoadedForRange(range);
+  const productSalesSummaryPending = productSalesSummaryPendingForRange(range);
   const remoteProductRows = productSalesSummaryRecordsInRange(range);
   const byProduct = {};
-  if (!useRemoteProductSales) {
+  if (!useRemoteProductSales && !productSalesSummaryPending) {
     for (const order of completed) {
       for (const item of order.items || []) {
         byProduct[item.name] ??= { code: "", qty: 0, value: 0, profit: 0, transactionCount: 0, source: "Kasirin!", periods: new Set() };
@@ -171,7 +179,7 @@ function renderReports() {
     if (row.source) byProduct[key].source = row.source;
     if (row.salesDate) byProduct[key].periods.add(formatDateKey(row.salesDate));
   }
-  const legacyProductRows = productSalesRecordsInRange(range);
+  const legacyProductRows = productSalesSummaryPending ? [] : productSalesRecordsInRange(range);
   for (const row of legacyProductRows) {
     const key = row.code ? `${row.code} - ${row.name}` : row.name;
     byProduct[key] ??= { code: row.code || "", displayName: row.name || key, qty: 0, value: 0, profit: 0, transactionCount: 0, source: "Import Penjualan Barang Lama", periods: new Set() };
@@ -341,7 +349,7 @@ function renderReports() {
         </section>
         <div class="product-sales-notice">${productSalesFilterNote(range, legacyProductRows.length, useRemoteProductSales, remoteProductRows.length)}</div>
         <div class="product-sales-list">
-          ${productReportList || empty("Belum ada rincian barang pada periode ini.")}
+          ${productSalesSummaryPending ? empty("Sedang memuat ringkasan barang...") : productReportList || empty("Belum ada rincian barang pada periode ini.")}
           <div data-product-sales-empty ${allProductReportRows.length && !productReportRows.length ? "" : "hidden"}>${empty("Barang tidak ditemukan pada periode ini.")}</div>
         </div>
       </section>
