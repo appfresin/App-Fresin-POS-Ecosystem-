@@ -3155,9 +3155,30 @@ function orderTotal(order) {
   return Number(order.grandTotal || order.total || 0);
 }
 
+function normalizePaymentBreakdown(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function paymentBreakdownHasAmount(value) {
+  const breakdown = normalizePaymentBreakdown(value);
+  return Object.values(breakdown).some(amount => {
+    const numeric = Number(amount || 0);
+    return Number.isFinite(numeric) && numeric > 0;
+  });
+}
+
 function posPaymentBreakdownAmount(order, method) {
-  const breakdown = order?.paymentBreakdown || order?.payment_breakdown || {};
-  const aliases = method === "Tunai" ? ["Tunai", "tunai", "Cash", "cash"] : [method, String(method || "").toLowerCase()];
+  const breakdown = normalizePaymentBreakdown(order?.paymentBreakdown || order?.payment_breakdown || {});
+  const aliases = method === "Tunai" ? ["Tunai", "tunai", "Cash", "cash", "CASH"] : [method, String(method || "").toLowerCase(), "QRIS", "qris", "Qris"];
   for (const key of aliases) {
     const amount = Number(breakdown?.[key] || 0);
     if (Number.isFinite(amount) && amount > 0) return amount;
@@ -5621,7 +5642,7 @@ function normalizeSupabaseLiveOrder(orderRow, itemRows = [], addonsByItemId = ne
     paymentMethod: payment?.method || existing?.paymentMethod || "Belum dipilih",
     receivedAmount: Number(payment?.received_amount || existing?.receivedAmount || 0),
     changeAmount: Number(payment?.change_amount || existing?.changeAmount || 0),
-    paymentBreakdown: payment?.payment_breakdown || existing?.paymentBreakdown || {},
+    paymentBreakdown: normalizePaymentBreakdown(payment?.payment_breakdown || existing?.paymentBreakdown || existing?.payment_breakdown || {}),
     printReceipt: Boolean(orderRow.print_receipt),
     items,
     preparedItems: mergePreparedItems(orderRow.prepared_items, existing?.preparedItems),
@@ -5903,7 +5924,7 @@ function normalizeSupabaseReportRecord(row) {
     type: row.order_type || "Import",
     customer: row.customer_name || "-",
     paymentMethod: row.payment_method || "Belum dipilih",
-    paymentBreakdown: row.payment_breakdown || {},
+    paymentBreakdown: normalizePaymentBreakdown(row.payment_breakdown || {}),
     paymentStatus: row.payment_status || "Lunas",
     status: row.order_status || row.status || "",
     subtotal: Number(row.subtotal || 0),
@@ -6021,7 +6042,7 @@ async function loadSupabaseOrderDetailForReport(record) {
       profit: Number(orderRow.profit_total ?? record.profit ?? 0),
       receivedAmount: Number(payment.received_amount || 0),
       changeAmount: Number(payment.change_amount || 0),
-      paymentBreakdown: payment.payment_breakdown || record.paymentBreakdown || {},
+      paymentBreakdown: normalizePaymentBreakdown(payment.payment_breakdown || record.paymentBreakdown || record.payment_breakdown || {}),
       items
     };
 
@@ -14642,6 +14663,7 @@ function orderReportRecord(order) {
     type: order.type || "Dine In",
     customer: customerDisplayName(order.customer),
     paymentMethod: order.paymentMethod || "Belum dipilih",
+    paymentBreakdown: normalizePaymentBreakdown(order.paymentBreakdown || order.payment_breakdown || {}),
     paymentStatus: order.paymentStatus || "Belum lunas",
     status: order.status || "",
     subtotal,
@@ -14663,6 +14685,7 @@ function importedReportRecord(row) {
     type: row.type || "Import",
     customer: row.customer || "-",
     paymentMethod: row.paymentMethod || "Cash dan Piutang",
+    paymentBreakdown: normalizePaymentBreakdown(row.paymentBreakdown || row.payment_breakdown || {}),
     paymentStatus: row.paymentStatus || "Lunas",
     subtotal: Number(row.subtotal ?? row.total ?? 0),
     discount: Number(row.discount || 0),
@@ -14700,6 +14723,30 @@ function rawRecordInRange(record, range) {
   return date >= range.start && date <= range.end;
 }
 
+function mergeReportRecordsForDisplay(existing, incoming) {
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+  const existingHasItems = Boolean((existing.items || []).length);
+  const incomingHasItems = Boolean((incoming.items || []).length);
+  const base = !existingHasItems && incomingHasItems ? incoming : existing;
+  const other = base === existing ? incoming : existing;
+  const incomingBreakdown = normalizePaymentBreakdown(incoming.paymentBreakdown || incoming.payment_breakdown || {});
+  const existingBreakdown = normalizePaymentBreakdown(existing.paymentBreakdown || existing.payment_breakdown || {});
+  const mergedFields = {
+    paymentMethod: base.paymentMethod || other.paymentMethod,
+    paymentStatus: base.paymentStatus || other.paymentStatus,
+    paidAt: base.paidAt || base.paid_at || other.paidAt || other.paid_at,
+    createdAt: base.createdAt || base.created_at || other.createdAt || other.created_at
+  };
+  if (paymentBreakdownHasAmount(incomingBreakdown)) {
+    return { ...base, ...mergedFields, paymentBreakdown: incomingBreakdown };
+  }
+  if (paymentBreakdownHasAmount(existingBreakdown)) {
+    return { ...base, ...mergedFields, paymentBreakdown: existingBreakdown };
+  }
+  return { ...base, ...mergedFields, paymentBreakdown: normalizePaymentBreakdown(base.paymentBreakdown || base.payment_breakdown || {}) };
+}
+
 function reportSourceRecords(range = null) {
   const deletedKeys = new Set(state.deletedReportKeys || []);
   const localRecords = [
@@ -14710,14 +14757,15 @@ function reportSourceRecords(range = null) {
     return isReportableRecord(record) && recordInRange(record, range) && !deletedKeys.has(key);
   });
   const merged = new Map();
-  for (const record of localRecords) merged.set(reportRecordKey(record), record);
+  for (const record of localRecords) {
+    const key = reportRecordKey(record);
+    merged.set(key, mergeReportRecordsForDisplay(merged.get(key), record));
+  }
   for (const record of supabaseReportRecords.filter(record => isReportableRecord(record) && recordInRange(record, range))) {
     const key = reportRecordKey(record);
     if (deletedKeys.has(key)) continue;
     const existing = merged.get(key);
-    const existingHasItems = Boolean((existing?.items || []).length);
-    const incomingHasItems = Boolean((record.items || []).length);
-    if (!existing || (!existingHasItems && incomingHasItems)) merged.set(key, record);
+    merged.set(key, mergeReportRecordsForDisplay(existing, record));
   }
   return [...merged.values()].sort((a, b) => reportRecordTime(b) - reportRecordTime(a));
 }

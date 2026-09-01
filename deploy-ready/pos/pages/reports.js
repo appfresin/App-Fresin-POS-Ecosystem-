@@ -627,7 +627,6 @@ async function openReportVisitorReceipt(eventOrRecordKey, maybeRecordKey) {
           <span>Subtotal</span><b>${money(order.subtotal)}</b>
           <span>Diskon</span><b>${money(order.discount)}</b>
           <span>Total</span><b>${money(order.total)}</b>
-          <span>Keuntungan</span><b>${money(order.profit)}</b>
         </div>
       </div>
     </div>
@@ -713,10 +712,15 @@ async function downloadReportReceipt(recordKey) {
     preview = document.querySelector(".visitor-receipt-modal .visitor-receipt-paper");
   }
   if (!preview) return toast("Preview struk belum siap diunduh.");
+  const filename = `struk-${String(shortOrderNumber(order.number)).replace(/^#/, "") || "transaksi"}.png`;
   try {
-    await downloadElementAsPng(preview, `struk-${String(shortOrderNumber(order.number)).replace(/^#/, "") || "transaksi"}.png`);
-    toast("Gambar struk berhasil diunduh.");
+    const saveMethod = await downloadElementAsPng(preview, filename);
+    if (saveMethod !== "native") toast("Gambar struk berhasil diunduh.");
   } catch (error) {
+    if (saveElementSnapshotWithNativeBridge(preview, filename)) {
+      toast("Gambar struk sedang disimpan.");
+      return;
+    }
     console.warn("Receipt image download failed", error);
     toast("Gagal mengunduh gambar struk.");
   }
@@ -794,9 +798,36 @@ async function downloadElementAsPng(element, filename) {
     context.drawImage(image, 0, 0, width + padding * 2, height + padding * 2);
     const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png", 0.95));
     if (!blob) throw new Error("PNG export failed.");
+    if (await saveBlobWithNativeBridge(blob, filename, "image/png")) return "native";
     triggerBlobDownload(blob, filename);
+    return "browser";
   } finally {
     URL.revokeObjectURL(svgUrl);
+  }
+}
+
+function saveElementSnapshotWithNativeBridge(element, filename) {
+  const saveVisibleRegionAsImage = window.KasirinNative?.saveVisibleRegionAsImage || window.KasirinAndroid?.saveVisibleRegionAsImage;
+  if (!saveVisibleRegionAsImage || !element) return false;
+  const rect = element.getBoundingClientRect();
+  if (!rect.width || !rect.height) return false;
+  const payload = {
+    filename,
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+    viewportWidth: window.innerWidth || document.documentElement.clientWidth || 1,
+    viewportHeight: window.innerHeight || document.documentElement.clientHeight || 1,
+    dpr: Number(window.devicePixelRatio || 1)
+  };
+  try {
+    if (window.KasirinNative?.saveVisibleRegionAsImage) window.KasirinNative.saveVisibleRegionAsImage(payload);
+    else window.KasirinAndroid.saveVisibleRegionAsImage(JSON.stringify(payload));
+    return true;
+  } catch (error) {
+    console.warn("Native receipt snapshot failed", error);
+    return false;
   }
 }
 
@@ -850,6 +881,22 @@ function triggerBlobDownload(blob, filename) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 600);
+}
+
+async function saveBlobWithNativeBridge(blob, filename, mimeType = "application/octet-stream") {
+  const saveBase64File = window.KasirinNative?.saveBase64File || window.AndroidDownloader?.saveBase64File;
+  if (!saveBase64File || !blob) return false;
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Image read failed."));
+    reader.readAsDataURL(blob);
+  });
+  const base64 = dataUrl.split(",")[1] || "";
+  if (!base64) return false;
+  if (window.KasirinNative?.saveBase64File) window.KasirinNative.saveBase64File(base64, mimeType || blob.type || "image/png", filename);
+  else window.AndroidDownloader.saveBase64File(base64, mimeType || blob.type || "image/png", filename);
+  return true;
 }
 
 function searchReportReceipt(event) {
@@ -1301,7 +1348,7 @@ function renderProfitLossDrill() {
       type: record.type || "-",
       customer: String(record.customer || "").trim(),
       paymentMethod: record.paymentMethod || "Belum dipilih",
-      paymentBreakdown: record.paymentBreakdown || record.payment_breakdown || {},
+      paymentBreakdown: normalizePaymentBreakdown(record.paymentBreakdown || record.payment_breakdown || {}),
       hint: dateTime(record.paidAt || record.createdAt),
       createdAt: record.createdAt,
       paidAt: record.paidAt,
@@ -1387,7 +1434,7 @@ function renderProfitLossDrill() {
       type: record.type || "-",
       customer: String(record.customer || "").trim(),
       paymentMethod: record.paymentMethod || "Belum dipilih",
-      paymentBreakdown: record.paymentBreakdown || record.payment_breakdown || {},
+      paymentBreakdown: normalizePaymentBreakdown(record.paymentBreakdown || record.payment_breakdown || {}),
       hint: dateTime(record.paidAt || record.createdAt),
       createdAt: record.createdAt,
       paidAt: record.paidAt,
