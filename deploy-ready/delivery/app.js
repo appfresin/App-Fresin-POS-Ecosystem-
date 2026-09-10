@@ -2012,6 +2012,7 @@ function orderNotificationItemRevision(order) {
 }
 
 function orderNotificationKey(order) {
+  if (!orderVisibleInPosOrderList(order)) return "";
   const base = String(order?.supabaseId || order?.number || order?.id || "").trim();
   if (!base) return "";
   return [base, String(order?.status || ""), orderNotificationItemRevision(order)].join("|");
@@ -3177,6 +3178,29 @@ function orderIsCancelled(order) {
 function orderIsPaid(order) {
   const status = String(order?.paymentStatus || order?.payment_status || "").trim().toLowerCase().replace(/[\s_-]+/g, " ");
   return ["lunas", "paid", "dibayar", "sudah bayar", "selesai bayar"].includes(status);
+}
+
+function orderIsCustomerHomeOrder(order) {
+  const mode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || order?.order_mode || "").trim().toUpperCase();
+  if (["DELIVERY", "PICKUP_PREORDER"].includes(mode)) return true;
+  const source = String(order?.source || "").trim().toLowerCase();
+  const type = String(order?.type || "").trim().toLowerCase();
+  const number = String(order?.number || order?.order_number || "").trim();
+  return source === "self order" && ["delivery", "take away"].includes(type) && /^[DP]\d{1,6}$/i.test(number);
+}
+
+function orderVisibleInPosOrderList(order) {
+  return !orderIsCustomerHomeOrder(order) || orderIsPaid(order);
+}
+
+function orderServiceInfoDisplay(order) {
+  const raw = String(order?.serviceInfo ?? order?.service_info ?? "").trim();
+  const type = String(order?.type || "").trim();
+  if (!raw || raw === "-") return type || "-";
+  if (orderIsCustomerHomeOrder(order)) return type || raw;
+  const looksLikeLocation = /google\.com\/maps|maps\?q=|pin lokasi|latitude|longitude|koordinat|^-?\d{1,2}(?:\.\d+)?,\s*-?\d{1,3}(?:\.\d+)?$/i.test(raw);
+  if (type.toLowerCase() === "delivery" && looksLikeLocation) return "Delivery";
+  return raw;
 }
 
 function orderIsActiveTableOrder(order) {
@@ -11426,7 +11450,7 @@ function readPosDraft() {
 }
 
 function unpaidOrders() {
-  return state.orders.filter(order => order.paymentStatus === "Belum dibayar" && !orderIsCancelled(order));
+  return state.orders.filter(order => order.paymentStatus === "Belum dibayar" && !orderIsCancelled(order) && orderVisibleInPosOrderList(order));
 }
 
 function orderAdditionalItems(existingItems = [], nextItems = []) {
@@ -12626,13 +12650,14 @@ function renderOrders() {
     ["Batal", "Dibatalkan"]
   ];
   const periodOrders = state.orders.filter(order => orderInOrdersRange(order, dateRange));
-  const newOrders = periodOrders.filter(order => order.status === "Pesanan Baru");
-  const processOrders = periodOrders.filter(order => order.status === "Sedang Disiapkan");
-  const doneOrders = periodOrders.filter(order => order.status === "Selesai");
-  const unpaid = periodOrders.filter(order => order.paymentStatus !== "Lunas" && order.status !== "Dibatalkan");
+  const posOrders = periodOrders.filter(orderVisibleInPosOrderList);
+  const newOrders = posOrders.filter(order => order.status === "Pesanan Baru");
+  const processOrders = posOrders.filter(order => order.status === "Sedang Disiapkan");
+  const doneOrders = posOrders.filter(order => order.status === "Selesai");
+  const unpaid = posOrders.filter(order => order.paymentStatus !== "Lunas" && order.status !== "Dibatalkan");
   const orderSummary = reportOrderSummary(dateRange);
-  const reportOnlyOrders = reportOnlyCompletedOrders(dateRange, periodOrders);
-  const filtered = periodOrders.filter(order => orderMatchesQuickFilter(order, quickFilter));
+  const reportOnlyOrders = reportOnlyCompletedOrders(dateRange, posOrders);
+  const filtered = posOrders.filter(order => orderMatchesQuickFilter(order, quickFilter));
   const filteredReportOrders = reportOnlyOrders.filter(order => orderMatchesQuickFilter(order, quickFilter));
   const ordered = [...filtered, ...filteredReportOrders].sort(ordersEntryStableSort);
   const visibleOrders = ordered.filter(order => orderMatchesSearch(order, query));
@@ -12715,7 +12740,7 @@ function orderSearchVariants(value) {
 function orderSearchText(order) {
   return [
     order.customer,
-    order.serviceInfo
+    orderServiceInfoDisplay(order)
   ].flatMap(field => orderSearchVariants(field)).join(" ");
 }
 
@@ -12802,7 +12827,7 @@ function orderCenterCard(order, options = {}) {
         </div>
         <div class="unpaid-compact-meta">
           <span>${escapeHtml(customerDisplayName(order.customer))}</span>
-          <span>${escapeHtml(order.serviceInfo || "-")}</span>
+          <span>${escapeHtml(orderServiceInfoDisplay(order))}</span>
           <span>${escapeHtml(order.type || "-")}</span>
         </div>
       </article>
@@ -12823,7 +12848,7 @@ function orderCenterCard(order, options = {}) {
         </div>
         <div class="orders-card-meta">
           <span>${escapeHtml(order.type || "-")}</span>
-          <span>${escapeHtml(order.serviceInfo || "-")}</span>
+          <span>${escapeHtml(orderServiceInfoDisplay(order))}</span>
           <span>${escapeHtml(customerDisplayName(order.customer))}</span>
           <span>Lunas</span>
         </div>
@@ -12881,7 +12906,7 @@ function orderCenterCard(order, options = {}) {
       </div>
       <div class="orders-card-meta">
         <span>${escapeHtml(order.type || "-")}</span>
-        <span>${escapeHtml(order.serviceInfo || "-")}</span>
+        <span>${escapeHtml(orderServiceInfoDisplay(order))}</span>
         <span>${escapeHtml(customerDisplayName(order.customer))}</span>
         <span>${escapeHtml(order.paymentStatus || "-")}</span>
       </div>
