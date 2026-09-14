@@ -5,6 +5,19 @@
   const HOME_CHECKOUT_KEY = "customer_home_checkout";
   const HOME_PAYMENT_PROVIDER = "midtrans";
   const HOME_STATUS_REFRESH_MS = 15000;
+  const HOME_DRIVER_SEARCH_DURATION_MS = 5 * 60 * 1000;
+  const HOME_MAPLIBRE_ASSETS = [
+    {
+      id: "cdnjs",
+      css: "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.12.0/maplibre-gl.css",
+      js: "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.12.0/maplibre-gl.js"
+    },
+    {
+      id: "unpkg",
+      css: "https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css",
+      js: "https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js"
+    }
+  ];
   // Temporary QRIS integration test gate. Remove after Midtrans QRIS is live.
   const HOME_TEMP_DUMMY_PAYMENT_MARKER = "TEST DRIVER";
   const HOME_CONFIG = {
@@ -20,6 +33,10 @@
   };
   let homeStatusRefreshLoading = false;
   let homeStatusRefreshAt = 0;
+  let homeCheckoutErrors = {};
+  let homeCheckoutValidationAttempted = false;
+  let homeAutoLocationRequested = false;
+  let homeDriverSearchTickTimer = null;
   const homePaymentRequests = new Set();
 
   function homeParams() {
@@ -81,8 +98,100 @@
     return Boolean(order) && ["PICKUP_PREORDER", "DELIVERY"].includes(order.customerOrderType || order.orderMode);
   }
 
+  function homeCartHasItems() {
+    return Array.isArray(selfOrderCart) && selfOrderCart.length > 0;
+  }
+
+  function homeShowEmptyCartNotice() {
+    toast("Keranjang masih kosong.");
+    return false;
+  }
+
+  function homePreventEmptyCartAccess(showToast = false) {
+    if (!homeIsMode() || selfOrderStep() !== "cart" || homeCartHasItems()) return false;
+    sessionStorage.setItem("self_order_step", "menu");
+    sessionStorage.removeItem("self_order_product_id");
+    if (showToast) homeShowEmptyCartNotice();
+    homeReplaceSelfOrderHistoryStep("menu");
+    return true;
+  }
+
   function homeOrderKind(order) {
     return order?.customerOrderType || order?.orderMode || "";
+  }
+
+  const HOME_DELIVERY_PAYMENT_READY_STATUSES = ["DRIVER_ASSIGNED", "PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING", "COMPLETED"];
+
+  function homeDeliveryCanPay(order) {
+    return HOME_DELIVERY_PAYMENT_READY_STATUSES.includes(homeCustomerStatus(order));
+  }
+
+  function homeStartDriverSearchSession(order, nowMs = Date.now()) {
+    if (!order) return order;
+    const startedAt = new Date(nowMs).toISOString();
+    order.customerOrderStatus = "SEARCHING_DRIVER";
+    order.driverSearchStartedAt = startedAt;
+    order.driverSearchExpiresAt = new Date(nowMs + HOME_DRIVER_SEARCH_DURATION_MS).toISOString();
+    order.driverSearchExpiredAt = "";
+    order.driverId = "";
+    order.driverName = "";
+    order.driverWhatsapp = "";
+    order.updatedAt = startedAt;
+    return order;
+  }
+
+  function homeDriverSearchTimestamp(value) {
+    const time = Date.parse(value || "");
+    return Number.isFinite(time) ? time : 0;
+  }
+
+  function homeDriverSearchRemainingMs(order) {
+    return Math.max(0, homeDriverSearchTimestamp(order?.driverSearchExpiresAt) - Date.now());
+  }
+
+  function homeDriverSearchTimeLabel(ms) {
+    const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function homeDriverSearchProgress(order) {
+    const started = homeDriverSearchTimestamp(order?.driverSearchStartedAt);
+    const expires = homeDriverSearchTimestamp(order?.driverSearchExpiresAt);
+    if (!started || !expires || expires <= started) return 0;
+    const elapsed = Math.min(Math.max(0, Date.now() - started), expires - started);
+    return Math.round((elapsed / (expires - started)) * 100);
+  }
+
+  function homeQueueDriverSearchSync(order) {
+    if (!order) return;
+    window.setTimeout(async () => {
+      await syncOrderToSupabase(order, { silent: true });
+      await homeSyncOrderExtras(order);
+      broadcastRealtimeEvent("orders");
+    }, 0);
+  }
+
+  function homeExpireDriverSearchSession(order) {
+    if (!order || homeOrderKind(order) !== "DELIVERY" || homeIsPaid(order) || homeCustomerStatus(order) !== "SEARCHING_DRIVER") return false;
+    const now = new Date().toISOString();
+    order.customerOrderStatus = "NO_DRIVER_AVAILABLE";
+    order.driverSearchExpiredAt = now;
+    order.updatedAt = now;
+    saveState();
+    homeQueueDriverSearchSync(order);
+    return true;
+  }
+
+  function homeEnsureDriverSearchSession(order) {
+    if (!order || homeOrderKind(order) !== "DELIVERY" || homeIsPaid(order) || homeCustomerStatus(order) !== "SEARCHING_DRIVER") return false;
+    if (!homeDriverSearchTimestamp(order.driverSearchStartedAt) || !homeDriverSearchTimestamp(order.driverSearchExpiresAt)) {
+      const startedMs = homeDriverSearchTimestamp(order.createdAt) || homeDriverSearchTimestamp(order.updatedAt) || Date.now();
+      homeStartDriverSearchSession(order, startedMs);
+      saveState();
+    }
+    return homeDriverSearchRemainingMs(order) <= 0 ? homeExpireDriverSearchSession(order) : false;
   }
 
   function homeStatusRank(status) {
@@ -130,6 +239,42 @@
 
   function homeSetCheckout(patch) {
     sessionStorage.setItem(HOME_CHECKOUT_KEY, JSON.stringify({ ...homeCheckout(), ...patch }));
+  }
+
+  function homeCheckoutFieldError(field) {
+    if (!homeCheckoutValidationAttempted) return "";
+    const message = String(homeCheckoutErrors[field] || "").trim();
+    return message ? `<p class="customer-home-field-error" id="customerHome${field}Error" role="alert">${homeEscape(message)}</p>` : "";
+  }
+
+  function homeCheckoutInvalidAttrs(field) {
+    return homeCheckoutValidationAttempted && homeCheckoutErrors[field] ? `aria-invalid="true" aria-describedby="customerHome${field}Error"` : "";
+  }
+
+  function homeClearCheckoutErrors(fields = []) {
+    if (!fields.length || !Object.keys(homeCheckoutErrors).length) return;
+    const next = { ...homeCheckoutErrors };
+    const inputIds = {
+      Name: "customerHomeName",
+      Phone: "customerHomePhone",
+      AddressNote: "customerHomeAddressNote",
+      Location: "customerHomeLocationButton"
+    };
+    fields.forEach(field => {
+      delete next[field];
+      const input = document.getElementById(inputIds[field] || "");
+      const error = document.getElementById(`customerHome${field}Error`);
+      input?.removeAttribute("aria-invalid");
+      input?.removeAttribute("aria-describedby");
+      input?.closest("label, section")?.classList.remove("invalid");
+      error?.remove();
+    });
+    homeCheckoutErrors = next;
+  }
+
+  function homeResetCheckoutValidation() {
+    homeCheckoutErrors = {};
+    homeCheckoutValidationAttempted = false;
   }
 
   function homeActiveRefs() {
@@ -309,30 +454,119 @@
       : "";
   }
 
+  function homeGeoapifyStaticMapUrl(latitude, longitude) {
+    const key = homeGeoapifyApiKey();
+    if (!key) return "";
+    const config = homeDeliveryConfig();
+    const style = String(window.GEOAPIFY_STATIC_MAP_STYLE || window.GEOAPIFY_MAP_STYLE || "osm-bright").trim() || "osm-bright";
+    const params = new URLSearchParams({
+      style,
+      width: "720",
+      height: "520",
+      scaleFactor: "2",
+      format: "png",
+      center: `lonlat:${longitude},${latitude}`,
+      zoom: String(config.mapInitialZoom),
+      marker: `lonlat:${longitude},${latitude};type:material;color:#2f5592;size:large;icon:map-marker-alt;icontype:awesome;whitecircle:no`,
+      apiKey: key
+    });
+    return `https://maps.geoapify.com/v1/staticmap?${params.toString()}`;
+  }
+
+  function homeRenderStaticLocationMap(latitude, longitude) {
+    const imageUrl = homeGeoapifyStaticMapUrl(latitude, longitude);
+    if (!imageUrl) return '<div class="customer-home-map-loading">API key Geoapify belum diatur.</div>';
+    return `
+      <div class="customer-home-static-map">
+        <img src="${homeEscape(imageUrl)}" alt="Peta lokasi pengantaran" loading="lazy" />
+        <button class="customer-home-static-map-action" type="button" onclick="CustomerOrder.pinCurrentLocation()">Lokasi terkini</button>
+      </div>
+    `;
+  }
+
+  function homeShowStaticLocationMapFallback(element, latitude, longitude, error) {
+    if (error) console.warn("Peta lokasi interaktif gagal dimuat", error);
+    try {
+      if (homeMapLibreMap?.getContainer && homeMapLibreMap.getContainer() === element) {
+        homeMapLibreMap.remove();
+      }
+    } catch {}
+    homeMapLibreMap = null;
+    homeMapLibreMarker = null;
+    element.dataset.ready = "";
+    element.dataset.mapError = "1";
+    element.innerHTML = homeRenderStaticLocationMap(latitude, longitude);
+  }
+
+  function homeEnsureMapLibreStylesheet(asset) {
+    if (document.getElementById(`customerHomeMapLibreCss-${asset.id}`)) return;
+    const stylesheet = document.createElement("link");
+    stylesheet.id = `customerHomeMapLibreCss-${asset.id}`;
+    stylesheet.rel = "stylesheet";
+    stylesheet.href = asset.css;
+    document.head.appendChild(stylesheet);
+  }
+
+  function homeLoadMapLibreScript(asset) {
+    return new Promise((resolve, reject) => {
+      if (window.maplibregl?.Map) {
+        resolve(window.maplibregl);
+        return;
+      }
+      const scriptId = `customerHomeMapLibreJs-${asset.id}`;
+      document.getElementById(scriptId)?.remove();
+      const script = document.createElement("script");
+      let settled = false;
+      const finish = callback => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        callback();
+      };
+      const timeout = window.setTimeout(() => {
+        finish(() => {
+          script.remove();
+          reject(new Error(`MapLibre CDN ${asset.id} timeout.`));
+        });
+      }, 10000);
+      script.id = scriptId;
+      script.async = true;
+      script.src = asset.js;
+      script.onload = () => finish(() => {
+        if (window.maplibregl?.Map) {
+          resolve(window.maplibregl);
+          return;
+        }
+        script.remove();
+        reject(new Error(`MapLibre CDN ${asset.id} tidak lengkap.`));
+      });
+      script.onerror = () => finish(() => {
+        script.remove();
+        reject(new Error(`MapLibre CDN ${asset.id} gagal dimuat.`));
+      });
+      document.head.appendChild(script);
+    });
+  }
+
   function homeLoadMapLibre() {
     if (window.maplibregl?.Map) return Promise.resolve(window.maplibregl);
     if (homeMapLibrePromise) return homeMapLibrePromise;
-    homeMapLibrePromise = new Promise((resolve, reject) => {
-      if (!document.getElementById("customerHomeMapLibreCss")) {
-        const stylesheet = document.createElement("link");
-        stylesheet.id = "customerHomeMapLibreCss";
-        stylesheet.rel = "stylesheet";
-        stylesheet.href = "https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css";
-        document.head.appendChild(stylesheet);
+    homeMapLibrePromise = (async () => {
+      let lastError = null;
+      for (const asset of HOME_MAPLIBRE_ASSETS) {
+        try {
+          homeEnsureMapLibreStylesheet(asset);
+          return await homeLoadMapLibreScript(asset);
+        } catch (error) {
+          lastError = error;
+          console.warn("MapLibre asset failed", asset.id, error);
+        }
       }
-      const existing = document.getElementById("customerHomeMapLibreJs");
-      if (existing) {
-        existing.addEventListener("load", () => resolve(window.maplibregl), { once: true });
-        existing.addEventListener("error", reject, { once: true });
-        return;
-      }
-      const script = document.createElement("script");
-      script.id = "customerHomeMapLibreJs";
-      script.async = true;
-      script.src = "https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js";
-      script.onload = () => resolve(window.maplibregl);
-      script.onerror = () => reject(new Error("MapLibre gagal dimuat."));
-      document.head.appendChild(script);
+      homeMapLibrePromise = null;
+      throw lastError || new Error("MapLibre gagal dimuat.");
+    })().catch(error => {
+      homeMapLibrePromise = null;
+      throw error;
     });
     return homeMapLibrePromise;
   }
@@ -377,6 +611,56 @@
     homeRefreshLocationPinState();
   }
 
+  function homePinCurrentLocation(options = {}) {
+    if (!navigator.geolocation) {
+      if (!options.silentError) selfOrderSubmitError = "Browser belum mendukung pin lokasi otomatis.";
+      render();
+      return;
+    }
+    selfOrderSubmitError = "";
+    homeSetCheckout({ locationStatus: "loading" });
+    homeClearCheckoutErrors(["Location"]);
+    render();
+    navigator.geolocation.getCurrentPosition(position => {
+      const latitude = Number(position.coords.latitude);
+      const longitude = Number(position.coords.longitude);
+      homeSetCheckout({
+        latitude,
+        longitude,
+        location: `https://www.google.com/maps?q=${latitude},${longitude}`,
+        locationAccuracy: Number(position.coords.accuracy || 0),
+        locationPinnedAt: new Date().toISOString(),
+        locationStatus: "ready",
+        deliveryDistanceKm: homeDeliveryQuote({ latitude, longitude }).distanceKm,
+        deliveryFee: homeCalculateDeliveryFee({ latitude, longitude })
+      });
+      selfOrderSubmitError = "";
+      render();
+    }, error => {
+      homeSetCheckout({ locationStatus: "error" });
+      if (!options.silentError) {
+        selfOrderSubmitError = error?.code === 1
+          ? "Izin lokasi ditolak. Aktifkan izin lokasi browser lalu coba lagi."
+          : "Gagal mengambil lokasi. Coba lagi di area dengan sinyal GPS lebih baik.";
+      }
+      render();
+    }, {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 60000
+    });
+  }
+
+  function homeMaybeAutoPinCurrentLocation() {
+    if (homeAutoLocationRequested || !homeIsMode() || selfOrderStep() !== "payment") return;
+    const checkout = homeCheckout();
+    if ((checkout.method || "PICKUP_PREORDER") !== "DELIVERY") return;
+    if (homeHasPinnedLocation(checkout)) return;
+    if (["loading", "error"].includes(String(checkout.locationStatus || ""))) return;
+    homeAutoLocationRequested = true;
+    homePinCurrentLocation({ silentError: true });
+  }
+
   function homeInitMapLibreLocationMap() {
     const element = document.getElementById("customerHomeMapLibreMap");
     if (!element || element.dataset.ready === "1") return;
@@ -389,6 +673,8 @@
       element.innerHTML = '<div class="customer-home-map-loading">API key Geoapify belum diatur.</div>';
       return;
     }
+    const fallbackMap = homeRenderStaticLocationMap(latitude, longitude);
+    element.innerHTML = fallbackMap;
     try {
       if (homeMapLibreMap?.getContainer && homeMapLibreMap.getContainer() !== element) {
         homeMapLibreMap.remove();
@@ -400,11 +686,13 @@
       homeMapLibreMarker = null;
     }
     element.dataset.ready = "1";
+    element.dataset.mapError = "";
     homeLoadMapLibre()
       .then(maplibregl => {
         if (!document.body.contains(element)) return;
         const config = homeDeliveryConfig();
         const center = [longitude, latitude];
+        element.innerHTML = "";
         const map = new maplibregl.Map({
           container: element,
           style: styleUrl,
@@ -429,11 +717,36 @@
         map.touchZoomRotate.disableRotation();
         map.doubleClickZoom.enable();
         map.boxZoom.enable();
+        let mapReadyForUserInput = false;
+        let userAdjustedMap = false;
+        let interactiveMapSettled = false;
+        const fallBackToStaticMap = error => {
+          if (interactiveMapSettled) return;
+          interactiveMapSettled = true;
+          window.clearTimeout(interactiveMapTimeout);
+          homeShowStaticLocationMapFallback(element, latitude, longitude, error);
+        };
+        const interactiveMapTimeout = window.setTimeout(() => {
+          fallBackToStaticMap(new Error("MapLibre timeout."));
+        }, 12000);
+        map.once("load", () => {
+          interactiveMapSettled = true;
+          window.clearTimeout(interactiveMapTimeout);
+          element.dataset.mapError = "";
+          window.setTimeout(() => { mapReadyForUserInput = true; }, 250);
+        });
+        map.on("error", event => {
+          console.warn("MapLibre runtime warning", event?.error || event);
+        });
+        const markUserAdjustedMap = () => {
+          if (mapReadyForUserInput) userAdjustedMap = true;
+        };
         const normalizeLngLat = lngLat => ({
           lng: Number(lngLat.lng ?? lngLat[0]),
           lat: Number(lngLat.lat ?? lngLat[1])
         });
         const syncPosition = (lngLat, options = {}) => {
+          if (!userAdjustedMap && !options.force) return;
           const point = normalizeLngLat(lngLat);
           if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return;
           marker.setLngLat(point);
@@ -443,19 +756,25 @@
         const syncCenterMarker = () => {
           marker.setLngLat(map.getCenter());
         };
-        marker.on("dragend", () => syncPosition(marker.getLngLat()));
+        marker.on("dragstart", markUserAdjustedMap);
+        marker.on("dragend", () => syncPosition(marker.getLngLat(), { force: true }));
+        map.on("dragstart", markUserAdjustedMap);
         map.on("drag", syncCenterMarker);
         map.on("dragend", () => syncPosition(map.getCenter(), { pan: false }));
+        map.on("zoomstart", markUserAdjustedMap);
         map.on("zoom", syncCenterMarker);
         map.on("zoomend", () => syncPosition(map.getCenter(), { pan: false }));
-        map.on("click", event => syncPosition(event.lngLat));
+        map.on("click", event => {
+          markUserAdjustedMap();
+          syncPosition(event.lngLat, { force: true });
+        });
         const locateControl = {
           onAdd() {
             const container = document.createElement("div");
             const button = document.createElement("button");
             container.className = "customer-home-map-locate-control maplibregl-ctrl";
             button.type = "button";
-            button.innerHTML = '<span class="customer-home-locate-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg></span>';
+            button.innerHTML = '<span class="customer-home-locate-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg></span><span class="customer-home-locate-label">Lokasi terkini</span>';
             button.setAttribute("aria-label", "Pusatkan lokasi saya saat ini");
             button.title = "Pusatkan lokasi saya";
             button.addEventListener("click", event => {
@@ -475,9 +794,7 @@
         setTimeout(() => map.resize(), 0);
       })
       .catch(error => {
-        console.warn("Peta lokasi gagal dimuat", error);
-        element.dataset.ready = "";
-        element.innerHTML = '<div class="customer-home-map-loading">Peta belum berhasil dimuat. Periksa API key atau koneksi internet.</div>';
+        homeShowStaticLocationMapFallback(element, latitude, longitude, error);
       });
   }
 
@@ -537,6 +854,7 @@
     },
     async ensurePayment(order) {
       if (!order || homeIsPaid(order) || homePaymentProvider() !== "midtrans") return false;
+      if (homeOrderKind(order) === "DELIVERY" && !homeDeliveryCanPay(order)) return false;
       if (order.paymentQrUrl && order.paymentReference) return true;
       if (!supabaseReadable() || !supabaseClient?.functions?.invoke) {
         order.paymentError = "Koneksi pembayaran belum siap.";
@@ -626,11 +944,13 @@
     const appName = state.settings.selfOrderAppName || state.settings.receiptStoreName || "Kasirin Cafe";
     const outletName = state.settings.selfOrderOutletName || state.outlet || "Outlet Utama";
     const profileImage = String(state.settings.selfOrderProfileImageDataUrl || state.settings.receiptLogoDataUrl || "").trim();
+    const step = selfOrderStep();
+    const showBack = step !== "menu";
     return `
       <header class="self-order-topbar customer-home-topbar">
-        <button type="button" class="self-order-icon-btn ${profileImage ? "has-photo" : ""}" onclick="selfOrderShowMenu()" aria-label="Menu">
-          ${profileImage ? mediaImageTag(profileImage, "Foto profil self order", "", 240) : navIcon("selforder")}
-        </button>
+        ${showBack
+          ? `<button type="button" class="self-order-icon-btn customer-home-topbar-back" onclick="CustomerOrder.goBack()" aria-label="Kembali">${navIcon("back")}</button>`
+          : `<button type="button" class="self-order-icon-btn ${profileImage ? "has-photo" : ""}" onclick="selfOrderShowMenu()" aria-label="Menu">${profileImage ? mediaImageTag(profileImage, "Foto profil self order", "", 240) : navIcon("selforder")}</button>`}
         <div>
           <strong>${homeEscape(appName)}</strong>
           <span>${homeEscape(outletName)}</span>
@@ -673,7 +993,7 @@
     return `
       <main class="self-order-main cart customer-home-cart">
         <div class="self-order-section-head">
-          <div><span>Keranjang</span><h3>${selfOrderItemsTotal()} item</h3></div>
+          <div><h3>Pesanan :</h3></div>
         </div>
         <section class="self-order-cart-list">
           ${selfOrderCart.map(item => `
@@ -696,7 +1016,7 @@
           `).join("") || empty("Keranjang masih kosong.")}
         </section>
         <section class="self-order-summary customer-home-summary-card">
-          <div class="total"><span>Subtotal</span><strong>${homeMoney(subtotal)}</strong></div>
+          <div class="total"><span>Total Pesanan</span><strong>${homeMoney(subtotal)}</strong></div>
         </section>
         <section class="customer-home-cart-methods">
           <h4>Pilih cara menerima pesanan</h4>
@@ -724,8 +1044,9 @@
   function homeRenderLocationPin(checkout = homeCheckout()) {
     const ui = homeLocationUiState(checkout);
     const pinned = ui.pinned;
+    const locationError = homeCheckoutFieldError("Location");
     return `
-      <section class="customer-home-location-pin ${pinned ? "is-pinned" : ""} ${ui.adjusted ? "needs-confirmation" : ""}">
+      <section class="customer-home-location-pin ${pinned ? "is-pinned" : ""} ${ui.adjusted ? "needs-confirmation" : ""} ${locationError ? "invalid" : ""}">
         <div class="customer-home-location-visual" aria-hidden="true">
           <span class="customer-home-pin-marker"></span>
         </div>
@@ -743,6 +1064,7 @@
         <div class="customer-home-location-actions">
           <button id="customerHomeLocationButton" class="self-order-secondary customer-home-location-btn ${ui.confirmed ? "is-confirmed" : ""}" type="button" onclick="${ui.buttonAction}" ${ui.buttonDisabled ? "disabled" : ""}>${homeEscape(ui.button)}</button>
           <p id="customerHomeLocationBody" class="customer-home-location-note ${ui.adjusted ? "warning" : ""}">${homeEscape(ui.body)}</p>
+          ${locationError}
         </div>
       </section>
     `;
@@ -755,6 +1077,8 @@
     const subtotal = selfOrderSubtotal();
     const total = subtotal + fee;
     const pickupTime = "Secepatnya";
+    const errors = homeCheckoutErrors || {};
+    const finishLabel = method === "DELIVERY" ? "Lanjut mencari driver" : "Lanjut ke Pembayaran";
     if (method === "PICKUP_PREORDER" && checkout.pickupTime !== pickupTime) homeSetCheckout({ pickupTime });
     return `
       <main class="self-order-main payment customer-home-checkout">
@@ -764,16 +1088,16 @@
               <span class="customer-home-service-icon ${method === "DELIVERY" ? "delivery" : "pickup"}">${method === "DELIVERY" ? homeDeliveryIconSvg() : homeTakeawayIconSvg()}</span>
               <div class="customer-home-service-copy">
                 <strong>${method === "DELIVERY" ? "Delivery" : "Ambil Sendiri"}</strong>
-                <small>${method === "DELIVERY" ? "Diantar ke tempatmu" : "Mengunjungi outlet langsung"}</small>
+                <small>${method === "DELIVERY" ? "Diantar oleh driver (dikenakan Ongkir)" : "Ambil pesanan langsung di outlet"}</small>
               </div>
             </section>
             <div class="customer-home-field-grid">
-              <label class="self-order-customer-field"><span>Nama Penerima</span><input id="customerHomeName" value="${homeInputValue("customerHomeName", "name")}" placeholder="Wajib" oninput="CustomerOrder.captureCheckout()" /></label>
-              <label class="self-order-customer-field"><span>Nomor WhatsApp</span><input id="customerHomePhone" value="${homeInputValue("customerHomePhone", "phone")}" inputmode="tel" placeholder="08..." oninput="CustomerOrder.captureCheckout()" /></label>
+              <label class="self-order-customer-field ${errors.Name ? "invalid" : ""}"><span>Nama Penerima</span><input id="customerHomeName" value="${homeInputValue("customerHomeName", "name")}" placeholder="Wajib" oninput="CustomerOrder.captureCheckout('Name')" ${homeCheckoutInvalidAttrs("Name")} />${homeCheckoutFieldError("Name")}</label>
+              <label class="self-order-customer-field ${errors.Phone ? "invalid" : ""}"><span>Nomor WhatsApp</span><input id="customerHomePhone" value="${homeInputValue("customerHomePhone", "phone")}" inputmode="tel" placeholder="08..." oninput="CustomerOrder.captureCheckout('Phone')" ${homeCheckoutInvalidAttrs("Phone")} />${homeCheckoutFieldError("Phone")}</label>
             </div>
             ${method === "PICKUP_PREORDER" ? "" : `
               ${homeRenderLocationPin(checkout)}
-              <label class="wide"><span>Patokan alamat</span><textarea id="customerHomeAddressNote" required aria-required="true" placeholder="Wajib, contoh: rumah pagar hitam, depan apotek, titip di pos satpam" oninput="CustomerOrder.captureCheckout()">${homeInputValue("customerHomeAddressNote", "addressNote")}</textarea></label>
+              <label class="wide ${errors.AddressNote ? "invalid" : ""}"><span>Patokan alamat</span><textarea id="customerHomeAddressNote" required aria-required="true" placeholder="Wajib, contoh: rumah pagar hitam, depan apotek, titip di pos satpam" oninput="CustomerOrder.captureCheckout('AddressNote')" ${homeCheckoutInvalidAttrs("AddressNote")}>${homeInputValue("customerHomeAddressNote", "addressNote")}</textarea>${homeCheckoutFieldError("AddressNote")}</label>
             `}
             <label class="wide"><span>Catatan Pesanan</span><textarea id="customerHomeNote" placeholder="Opsional" oninput="CustomerOrder.captureCheckout()">${homeInputValue("customerHomeNote", "note")}</textarea></label>
             ${method === "PICKUP_PREORDER" ? `
@@ -782,7 +1106,7 @@
           </div>
         </section>
         ${homeRenderReview({ method, subtotal, fee, total, pickupTime, checkout, compact: true })}
-        <button class="self-order-primary self-order-finish" type="button" onclick="CustomerOrder.createWaitingPayment()" ${selfOrderSubmitting ? `disabled aria-busy="true"` : ""}>Lanjut ke Pembayaran</button>
+        <button class="self-order-primary self-order-finish" type="button" onclick="CustomerOrder.createWaitingPayment()" ${selfOrderSubmitting ? `disabled aria-busy="true"` : ""}>${homeEscape(finishLabel)}</button>
         ${selfOrderSubmitError ? `<p class="self-order-submit-error" role="alert">${homeEscape(selfOrderSubmitError)}</p>` : ""}
       </main>
     `;
@@ -793,18 +1117,19 @@
     return `
       <section class="customer-home-review ${totalOnly ? "is-total-only" : ""}">
         ${method === "DELIVERY" ? `<div class="customer-home-review-row"><span>Biaya Pengantaran</span><strong>${homeMoney(fee)}</strong></div>` : ""}
-        <div class="customer-home-total-row"><span>Total</span><strong>${homeMoney(total)}</strong></div>
+        <div class="customer-home-total-row"><span>Total Pesanan</span><strong>${homeMoney(total)}</strong></div>
       </section>
     `;
   }
 
   function homeValidateCheckout(checkout) {
-    if (!String(checkout.name || "").trim()) return "Nama penerima wajib diisi.";
-    if (!String(checkout.phone || "").trim()) return "Nomor WhatsApp wajib diisi.";
-    if (checkout.method === "DELIVERY" && !homeHasPinnedLocation(checkout)) return "Pilih pin lokasi pengantaran.";
-    if (checkout.method === "DELIVERY" && String(checkout.locationStatus || "") === "adjusted") return "Tekan Tetapkan Lokasi setelah menggeser pin.";
-    if (checkout.method === "DELIVERY" && !String(checkout.addressNote || "").trim()) return "Patokan alamat wajib diisi.";
-    return "";
+    const errors = {};
+    if (!String(checkout.name || "").trim()) errors.Name = "Nama penerima wajib diisi.";
+    if (!String(checkout.phone || "").trim()) errors.Phone = "Nomor WhatsApp wajib diisi.";
+    if (checkout.method === "DELIVERY" && !homeHasPinnedLocation(checkout)) errors.Location = "Pilih pin lokasi pengantaran.";
+    if (checkout.method === "DELIVERY" && String(checkout.locationStatus || "") === "adjusted") errors.Location = "Tekan Tetapkan Lokasi setelah menggeser pin.";
+    if (checkout.method === "DELIVERY" && !String(checkout.addressNote || "").trim()) errors.AddressNote = "Patokan alamat wajib diisi.";
+    return errors;
   }
 
   async function homeCreateWaitingPayment() {
@@ -813,9 +1138,11 @@
     if (!selfOrderCart.length) return toast("Keranjang masih kosong.");
     CustomerOrder.captureCheckout();
     const checkout = { method: "PICKUP_PREORDER", ...homeCheckout() };
-    const validationError = homeValidateCheckout(checkout);
-    if (validationError) {
-      selfOrderSubmitError = validationError;
+    const validationErrors = homeValidateCheckout(checkout);
+    if (Object.keys(validationErrors).length) {
+      homeCheckoutErrors = validationErrors;
+      homeCheckoutValidationAttempted = true;
+      selfOrderSubmitError = "";
       render();
       return;
     }
@@ -825,6 +1152,7 @@
       return;
     }
     let renderedCompletion = false;
+    homeResetCheckoutValidation();
     selfOrderSubmitError = "";
     selfOrderSubmitting = true;
     try {
@@ -854,7 +1182,7 @@
         type: checkout.method === "DELIVERY" ? "Delivery" : "Take Away",
         customerOrderType: checkout.method,
         orderMode: checkout.method,
-        customerOrderStatus: "WAITING_PAYMENT",
+        customerOrderStatus: checkout.method === "DELIVERY" ? "SEARCHING_DRIVER" : "WAITING_PAYMENT",
         publicOrderToken: homeGenerateToken(),
         customer: checkout.name,
         customerPhone: checkout.phone,
@@ -892,6 +1220,7 @@
         preparedItems: {},
         pendingPushEventType: ""
       };
+      if (checkout.method === "DELIVERY") homeStartDriverSearchSession(order, Date.parse(orderCreatedAt) || Date.now());
       PaymentService.createPayment(order);
       const stockValidation = validateLimitedStockItems(orderItems);
       if (!stockValidation.ok) {
@@ -917,7 +1246,6 @@
         return;
       }
       await homeSyncOrderExtras(order);
-      await PaymentService.ensurePayment(order);
       audit("Customer order dibuat", `${order.number} ${order.customer} ${homeMoney(homeOrderTotal(order))}`);
       selfOrderCart = [];
       saveSelfOrderCart();
@@ -984,9 +1312,13 @@
   }
 
   function homeCustomerStatus(order) {
-    if (!homeIsPaid(order)) return "WAITING_PAYMENT";
     const stored = String(order.customerOrderStatus || "").trim();
     const lifecycle = homeLifecycleCustomerStatus(order);
+    if (homeOrderKind(order) === "DELIVERY") {
+      if (!homeIsPaid(order) && stored) return stored === "WAITING_PAYMENT" ? "SEARCHING_DRIVER" : stored;
+      if (!homeIsPaid(order)) return "SEARCHING_DRIVER";
+    }
+    if (!homeIsPaid(order)) return "WAITING_PAYMENT";
     if (stored && stored !== "WAITING_PAYMENT") return homePreferAdvancedCustomerStatus(stored, lifecycle);
     if (lifecycle) return lifecycle;
     if (homeOrderKind(order) === "DELIVERY") return "SEARCHING_DRIVER";
@@ -1019,6 +1351,7 @@
   async function homeApplyPaidState(order, options = {}) {
     if (!order || homeIsPaid(order)) return;
     const now = new Date().toISOString();
+    const currentCustomerStatus = homeCustomerStatus(order);
     order.paymentStatus = "Lunas";
     order.paymentMethod = options.method || "QRIS";
     order.paymentProvider = options.provider || homePaymentProvider();
@@ -1029,7 +1362,7 @@
     order.confirmedAt = now;
     order.updatedAt = now;
     order.customerOrderStatus = homeOrderKind(order) === "DELIVERY"
-      ? "SEARCHING_DRIVER"
+      ? (HOME_DELIVERY_PAYMENT_READY_STATUSES.includes(currentCustomerStatus) ? currentCustomerStatus : "SEARCHING_DRIVER")
       : (String(order.pickupTime || "").toLowerCase() === "secepatnya" ? "PREPARING" : "SCHEDULED");
     order.pendingPushEventType = homeCustomerStatus(order) === "SCHEDULED" || homeCustomerStatus(order) === "SEARCHING_DRIVER" ? "" : "new_order";
     saveState();
@@ -1049,13 +1382,15 @@
       order.driverId = "MOCK_DRIVER";
       order.driverName = HOME_CONFIG.driverName;
       order.driverWhatsapp = HOME_CONFIG.driverWhatsapp;
+      order.driverSearchMatchedAt = now;
+      order.driverSearchExpiredAt = "";
       order.status = "Pesanan Baru";
-      order.pendingPushEventType = "new_order";
+      order.pendingPushEventType = homeIsPaid(order) ? "new_order" : "";
     }
     if (status === "PREPARING") {
       order.status = "Sedang Disiapkan";
       order.preparedAt = order.preparedAt || now;
-      order.pendingPushEventType = order.pendingPushEventType || "new_order";
+      order.pendingPushEventType = homeIsPaid(order) ? (order.pendingPushEventType || "new_order") : "";
     }
     if (status === "READY" || status === "READY_FOR_PICKUP") {
       order.status = "Siap Diambil";
@@ -1073,13 +1408,44 @@
     render();
   }
 
+  async function homeRetryDriverSearch() {
+    const order = homeCurrentOrder();
+    if (!order || homeOrderKind(order) !== "DELIVERY" || homeIsPaid(order)) return;
+    homeStartDriverSearchSession(order);
+    saveState();
+    await syncOrderToSupabase(order, { silent: true });
+    await homeSyncOrderExtras(order);
+    broadcastRealtimeEvent("orders");
+    render();
+  }
+
+  function homeScheduleDriverSearchTick() {
+    if (homeDriverSearchTickTimer) {
+      window.clearTimeout(homeDriverSearchTickTimer);
+      homeDriverSearchTickTimer = null;
+    }
+    if (!homeIsMode()) return;
+    if (selfOrderStep() !== "success") return;
+    const order = homeCurrentOrder();
+    if (!order || homeOrderKind(order) !== "DELIVERY" || homeIsPaid(order)) return;
+    homeEnsureDriverSearchSession(order);
+    if (homeCustomerStatus(order) !== "SEARCHING_DRIVER") return;
+    const remainingMs = homeDriverSearchRemainingMs(order);
+    homeDriverSearchTickTimer = window.setTimeout(() => {
+      homeDriverSearchTickTimer = null;
+      const activeOrder = homeCurrentOrder();
+      if (activeOrder) homeEnsureDriverSearchSession(activeOrder);
+      render();
+    }, Math.max(250, Math.min(1000, remainingMs + 25)));
+  }
+
   function homeStatusLabel(order) {
     const status = homeCustomerStatus(order);
     const labels = {
       WAITING_PAYMENT: "Menunggu Pembayaran",
       SCHEDULED: "Pesanan Dijadwalkan",
       SEARCHING_DRIVER: "Mencari Driver",
-      NO_DRIVER_AVAILABLE: "Mencari Driver",
+      NO_DRIVER_AVAILABLE: "Driver Belum Tersedia",
       DRIVER_ASSIGNED: "Driver Ditemukan",
       PREPARING: "Sedang Disiapkan",
       READY: "Siap Diambil",
@@ -1098,13 +1464,15 @@
     const paid = homeIsPaid(order);
     const completed = status === "COMPLETED";
     const driverFound = ["DRIVER_ASSIGNED", "PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING", "COMPLETED"].includes(status);
+    const driverUnavailable = status === "NO_DRIVER_AVAILABLE";
     const preparing = ["PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING", "COMPLETED"].includes(status);
     const delivering = ["DELIVERING", "COMPLETED"].includes(status);
     const processing = paid && !completed;
     if (delivery) {
+      const paymentReady = homeDeliveryCanPay(order);
       const steps = [
-        ["payment", paid ? "Pembayaran diterima" : "Menunggu pembayaran", paid ? "Pembayaran berhasil dikonfirmasi. Pesananmu sudah masuk ke sistem dan akan lanjut ke proses pencarian driver." : "Selesaikan pembayaran terlebih dahulu agar pesanan bisa diproses oleh outlet.", paid, paid ? "✓" : "1"],
-        ["driver", driverFound ? "Driver ditemukan" : "Mencari driver", driverFound ? "Driver sudah ditugaskan untuk pesananmu. Setelah pesanan siap, driver akan mengambil order dari outlet dan mengantarkannya ke alamat tujuan." : "Kami sedang mencarikan driver yang tersedia. Pesanan tetap tersimpan dan status akan diperbarui otomatis saat driver mengambil tugas.", paid && (driverFound || status === "SEARCHING_DRIVER" || status === "NO_DRIVER_AVAILABLE"), driverFound ? "✓" : "2"],
+        ["driver", driverFound ? "Driver ditemukan" : driverUnavailable ? "Driver belum tersedia" : "Mencari driver", driverFound ? "Driver ditemukan sebelum pembayaran dibuka. Selesaikan pembayaran agar pesanan masuk ke outlet." : driverUnavailable ? "Belum ada driver yang menerima. Kamu bisa mencoba mencari driver lagi." : "Kami sedang mencarikan driver yang tersedia. Pembayaran akan tersedia setelah driver ditemukan.", driverFound || status === "SEARCHING_DRIVER" || status === "NO_DRIVER_AVAILABLE" || !paymentReady, driverFound ? "✓" : "1"],
+        ["payment", paid ? "Pembayaran diterima" : paymentReady ? "Menunggu pembayaran" : "Menunggu driver", paid ? "Pembayaran berhasil dikonfirmasi. Pesananmu sudah masuk ke sistem outlet." : paymentReady ? "Selesaikan pembayaran agar pesanan diproses oleh outlet." : "Pembayaran tersedia setelah driver ditemukan.", paid || paymentReady, paid ? "✓" : "2"],
         ["prepare", preparing ? "Pesanan disiapkan" : "Menunggu disiapkan", preparing ? "Outlet sudah menyiapkan pesanan. Driver akan mengambil order dari outlet untuk diantar ke alamat tujuan." : "Pesanan akan mulai disiapkan setelah order diterima outlet dan driver sudah masuk ke alur pengantaran.", preparing, preparing ? "✓" : "3"],
         ["deliver", "Pesanan diantar", delivering ? "Driver sedang mengantar pesanan ke alamat tujuan. Siapkan penerima dan pantau WhatsApp jika ada kendala." : "Status ini aktif setelah driver mengambil pesanan dari outlet.", delivering, delivering ? "✓" : "4"],
         ["done", "Selesai", completed ? "Pesanan sudah sampai di alamat tujuan. Terima kasih sudah memesan." : "Tunggu sampai pesanan sampai di alamat tujuan. Status akan berubah selesai setelah driver menyelesaikan pengantaran.", completed, completed ? "✓" : "5"]
@@ -1174,9 +1542,9 @@
     const delivery = homeOrderKind(order) === "DELIVERY";
     const steps = delivery
       ? [
-        ["WAITING_PAYMENT", "Pembayaran berhasil"],
         ["SEARCHING_DRIVER", "Mencari driver"],
         ["DRIVER_ASSIGNED", "Driver ditemukan"],
+        ["WAITING_PAYMENT", "Pembayaran berhasil"],
         ["PREPARING", "Pesanan disiapkan"],
         ["READY_FOR_PICKUP", "Siap diambil driver"],
         ["DELIVERING", "Pesanan diantar"],
@@ -1208,7 +1576,6 @@
     }
     return `
       <section class="customer-home-payment-card">
-        <h3>Selesaikan Pembayaran</h3>
         <div class="customer-home-total-row"><span>Total Pembayaran</span><strong>${homeMoney(payment.amount)}</strong></div>
         ${PaymentQRCode(payment)}
         <p>Menunggu pembayaran...</p>
@@ -1255,9 +1622,13 @@
   }
 
   function homeDevStatusButtons(order) {
-    if (!homeIsDevelopmentPayment() || !homeIsPaid(order)) return "";
     const delivery = homeOrderKind(order) === "DELIVERY";
-    const buttons = delivery
+    if (!homeIsDevelopmentPayment() || (!delivery && !homeIsPaid(order))) return "";
+    const buttons = delivery && !homeIsPaid(order)
+      ? [
+        ["DRIVER_ASSIGNED", "Simulasi Driver Ditemukan"]
+      ]
+      : delivery
       ? [
         ["DRIVER_ASSIGNED", "Simulasi Driver Ditemukan"],
         ["PREPARING", "Simulasi Dapur Proses"],
@@ -1278,13 +1649,45 @@
     `;
   }
 
+  function homeRenderDriverSearchPanel(order) {
+    const status = homeCustomerStatus(order);
+    const expired = status === "NO_DRIVER_AVAILABLE";
+    const remainingMs = homeDriverSearchRemainingMs(order);
+    const progress = expired ? 100 : homeDriverSearchProgress(order);
+    return `
+      <section class="customer-home-driver-search-panel ${expired ? "is-expired" : ""}" style="--driver-search-progress: ${progress}%;" aria-live="polite">
+        <div class="customer-home-driver-search-visual" aria-hidden="true">
+          <span class="customer-home-driver-radar"><i></i></span>
+        </div>
+        <div class="customer-home-driver-search-copy">
+          <small>${expired ? "Sesi pencarian selesai" : "Mencari driver tersedia"}</small>
+          <h3>${expired ? "Driver belum tersedia" : "Menghubungi driver terdekat"}</h3>
+          <p>${expired ? "Belum ada driver yang menerima pesanan ini dalam 5 menit. Kamu bisa mencoba mencari driver lagi tanpa membuat pesanan baru." : "Tunggu sebentar, driver sedang menerima tawaran pengantaran. Halaman pembayaran akan terbuka setelah driver ditemukan."}</p>
+          <div class="customer-home-driver-search-progress"><span></span></div>
+          ${expired
+            ? `<button class="self-order-primary" type="button" onclick="CustomerOrder.retryDriverSearch()">Coba Cari Driver Lagi</button>`
+            : `<strong class="customer-home-driver-search-timer">${homeDriverSearchTimeLabel(remainingMs)}</strong><em>Maksimal 5 menit untuk satu sesi pencarian.</em>`}
+        </div>
+      </section>
+    `;
+  }
+
   function homeRenderStatus() {
     const order = homeCurrentOrder();
     if (!order) return homeRenderOrdersList();
+    homeEnsureDriverSearchSession(order);
     const paid = homeIsPaid(order);
     const kind = homeOrderKind(order);
     const status = homeCustomerStatus(order);
-    const nextText = !paid
+    const canPay = kind !== "DELIVERY" || homeDeliveryCanPay(order);
+    const waitingDriverBeforePayment = kind === "DELIVERY" && !paid && !canPay;
+    const driverSearchExpired = kind === "DELIVERY" && !paid && status === "NO_DRIVER_AVAILABLE";
+    const heroTitle = driverSearchExpired ? "Driver belum tersedia" : waitingDriverBeforePayment ? "Mencari driver" : paid ? "Pembayaran berhasil" : "Menunggu pembayaran";
+    const nextText = driverSearchExpired
+      ? "Belum ada driver yang menerima pesanan. Kamu bisa mencoba mencari driver lagi."
+      : waitingDriverBeforePayment
+      ? "Kami sedang mencarikan driver. Halaman pembayaran akan muncul setelah driver ditemukan."
+      : !paid
       ? "Order belum masuk dapur sebelum pembayaran berhasil."
       : kind === "DELIVERY"
         ? (status === "SEARCHING_DRIVER" || status === "NO_DRIVER_AVAILABLE" ? "Sedang mencarikan driver yang tersedia untuk pesanan Anda." : homeStatusLabel(order))
@@ -1295,12 +1698,12 @@
           <div class="customer-home-status-hero">
             <div class="customer-home-status-mark ${paid ? "paid" : ""}" aria-hidden="true">${paid ? "✓" : "!"}</div>
             <div>
-              ${paid ? "" : "<span>Pembayaran pesanan</span>"}
-              <h3>${paid ? "Pembayaran berhasil" : "Menunggu pembayaran"}</h3>
+              <h3>${homeEscape(heroTitle)}</h3>
               <p>${homeEscape(nextText)}</p>
             </div>
           </div>
-          ${paid ? "" : homePaymentPage(order)}
+          ${waitingDriverBeforePayment || driverSearchExpired ? homeRenderDriverSearchPanel(order) : ""}
+          ${!paid && canPay ? homePaymentPage(order) : ""}
           <div class="self-order-success-detail">
             <span><b>Nomor pesanan</b><strong>${homeEscape(order.number || "-")}</strong></span>
             <span><b>Layanan</b><strong>${kind === "DELIVERY" ? "Delivery" : "Ambil Sendiri"}</strong></span>
@@ -1387,9 +1790,13 @@
         deliveryLocation: order.deliveryLocation,
         deliveryLatitude: order.deliveryLatitude,
         deliveryLongitude: order.deliveryLongitude,
-        driverId: order.driverId,
-        driverName: order.driverName,
-        driverWhatsapp: order.driverWhatsapp,
+        driverSearchStartedAt: order.driverSearchStartedAt,
+        driverSearchExpiresAt: order.driverSearchExpiresAt,
+        driverSearchExpiredAt: order.driverSearchExpiredAt,
+        driverSearchMatchedAt: order.driverSearchMatchedAt,
+        driverId: orderRow.driver_id || liveOrder.driverId || order.driverId,
+        driverName: orderRow.driver_name || liveOrder.driverName || order.driverName,
+        driverWhatsapp: orderRow.driver_phone || liveOrder.driverWhatsapp || order.driverWhatsapp,
         paymentProvider: orderRow.payment_provider || order.paymentProvider,
         paymentReference: orderRow.payment_reference || order.paymentReference,
         paymentGatewayTransactionId: orderRow.payment_gateway_transaction_id || order.paymentGatewayTransactionId,
@@ -1419,6 +1826,33 @@
     render();
   }
 
+  function homeBackStep(step = selfOrderStep()) {
+    if (step === "payment" || step === "table-check" || step === "table-decision") return "cart";
+    if (step === "detail" || step === "cart" || step === "orders" || step === "success") return "menu";
+    return "menu";
+  }
+
+  function homeGoBack() {
+    if (!homeIsMode()) return;
+    const currentStep = selfOrderStep();
+    if (history.state?.selfOrderStep === currentStep && history.length > 1) {
+      history.back();
+      window.setTimeout(() => {
+        if (selfOrderStep() !== currentStep) return;
+        const fallback = homeBackStep(currentStep);
+        sessionStorage.setItem("self_order_step", fallback);
+        if (fallback === "menu") sessionStorage.removeItem("self_order_product_id");
+        render();
+      }, 120);
+      return;
+    }
+    const fallback = homeBackStep(currentStep);
+    sessionStorage.setItem("self_order_step", fallback);
+    if (fallback === "menu") sessionStorage.removeItem("self_order_product_id");
+    homeReplaceSelfOrderHistoryStep(fallback);
+    render();
+  }
+
   function homeReplaceSelfOrderHistoryStep(step) {
     if (!homeIsMode() || selfOrderHistoryNavigating) return;
     if (history.state?.selfOrderStep === step) return;
@@ -1430,8 +1864,15 @@
 
     const baseRender = render;
     render = function () {
+      if (homeIsMode()) homePreventEmptyCartAccess();
       const result = baseRender.apply(this, arguments);
-      if (homeIsMode()) window.setTimeout(homeInitMapLibreLocationMap, 0);
+      if (homeIsMode()) {
+        homeScheduleDriverSearchTick();
+        window.setTimeout(() => {
+          homeMaybeAutoPinCurrentLocation();
+          homeInitMapLibreLocationMap();
+        }, 0);
+      }
       return result;
     };
 
@@ -1442,7 +1883,9 @@
 
     const baseRenderSelfOrderCart = renderSelfOrderCart;
     renderSelfOrderCart = function () {
-      return homeIsMode() ? homeRenderCart() : baseRenderSelfOrderCart();
+      if (!homeIsMode()) return baseRenderSelfOrderCart();
+      if (homePreventEmptyCartAccess()) return renderSelfOrderMenu();
+      return homeRenderCart();
     };
 
     const baseRenderSelfOrderPayment = renderSelfOrderPayment;
@@ -1458,6 +1901,7 @@
     const baseSelfOrderShowCart = selfOrderShowCart;
     selfOrderShowCart = async function () {
       if (!homeIsMode()) return baseSelfOrderShowCart();
+      if (!homeCartHasItems()) return homeShowEmptyCartNotice();
       homeReplaceSelfOrderHistoryStep("menu");
       return baseSelfOrderShowCart();
     };
@@ -1469,6 +1913,8 @@
       const stockReady = await ensureLimitedStockCartReservations(selfOrderCart, "Self Order");
       if (!stockReady.ok) return toast(limitedStockFailureMessage(stockReady.product, stockReady.variantKey, stockReady));
       CustomerOrder.captureCheckout();
+      homeAutoLocationRequested = false;
+      homeResetCheckoutValidation();
       homeReplaceSelfOrderHistoryStep("cart");
       sessionStorage.setItem("self_order_step", "payment");
       pushSelfOrderHistory("payment");
@@ -1492,10 +1938,15 @@
       return `
         <nav class="self-order-bottom-nav">
           ${items.map(([id, label, action]) => `
-            <button class="${navStep === id ? "active" : ""}" type="button" onclick="${action}">
-              ${id === "orders" ? `<span class="self-order-nav-icon payment-icon" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M14 9h20l5 6v24H9V9h5Z"/><path d="M15 20h18M15 27h18M15 34h11"/></svg><i></i></span>` : selfOrderTabIcon(id)}
-              <span>${homeEscape(label)}</span>
-            </button>
+            ${(() => {
+              const cartDisabled = id === "cart" && !homeCartHasItems();
+              return `
+                <button class="${navStep === id ? "active" : ""} ${cartDisabled ? "is-disabled" : ""}" type="button" aria-disabled="${cartDisabled ? "true" : "false"}" onclick="${cartDisabled ? "CustomerOrder.showEmptyCartNotice()" : action}">
+                  ${id === "orders" ? `<span class="self-order-nav-icon payment-icon" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M14 9h20l5 6v24H9V9h5Z"/><path d="M15 20h18M15 27h18M15 34h11"/></svg><i></i></span>` : selfOrderTabIcon(id)}
+                  <span>${homeEscape(label)}</span>
+                </button>
+              `;
+            })()}
           `).join("")}
         </nav>
       `;
@@ -1555,9 +2006,11 @@
       isOrder: homeIsOrder,
       setMethod(method) {
         homeSetCheckout({ method });
+        homeResetCheckoutValidation();
+        selfOrderSubmitError = "";
         render();
       },
-      captureCheckout() {
+      captureCheckout(field = "") {
         const patch = {
           name: String(document.getElementById("customerHomeName")?.value || homeCheckout().name || "").trim(),
           phone: String(document.getElementById("customerHomePhone")?.value || homeCheckout().phone || "").trim(),
@@ -1565,42 +2018,11 @@
           note: String(document.getElementById("customerHomeNote")?.value || homeCheckout().note || "").trim()
         };
         homeSetCheckout(patch);
+        homeClearCheckoutErrors(field ? [field] : ["Name", "Phone", "AddressNote"]);
       },
       pinCurrentLocation() {
-        if (!navigator.geolocation) {
-          selfOrderSubmitError = "Browser belum mendukung pin lokasi otomatis.";
-          render();
-          return;
-        }
-        selfOrderSubmitError = "";
-        homeSetCheckout({ locationStatus: "loading" });
-        render();
-        navigator.geolocation.getCurrentPosition(position => {
-          const latitude = Number(position.coords.latitude);
-          const longitude = Number(position.coords.longitude);
-          homeSetCheckout({
-            latitude,
-            longitude,
-            location: `https://www.google.com/maps?q=${latitude},${longitude}`,
-            locationAccuracy: Number(position.coords.accuracy || 0),
-            locationPinnedAt: new Date().toISOString(),
-            locationStatus: "ready",
-            deliveryDistanceKm: homeDeliveryQuote({ latitude, longitude }).distanceKm,
-            deliveryFee: homeCalculateDeliveryFee({ latitude, longitude })
-          });
-          selfOrderSubmitError = "";
-          render();
-        }, error => {
-          homeSetCheckout({ locationStatus: "error" });
-          selfOrderSubmitError = error?.code === 1
-            ? "Izin lokasi ditolak. Aktifkan izin lokasi browser lalu coba lagi."
-            : "Gagal mengambil lokasi. Coba lagi di area dengan sinyal GPS lebih baik.";
-          render();
-        }, {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 60000
-        });
+        homeAutoLocationRequested = true;
+        homePinCurrentLocation();
       },
       confirmPinnedLocation() {
         const checkout = homeCheckout();
@@ -1623,7 +2045,10 @@
         PaymentService.ensurePayment(order);
         render();
       },
+      showEmptyCartNotice: homeShowEmptyCartNotice,
+      goBack: homeGoBack,
       createWaitingPayment: homeCreateWaitingPayment,
+      retryDriverSearch: homeRetryDriverSearch,
       mockPaymentSuccess: homeMarkPaid,
       dummyPaymentSuccess: homeMarkTemporaryDummyPaid,
       setStatus: homeSetStatus,

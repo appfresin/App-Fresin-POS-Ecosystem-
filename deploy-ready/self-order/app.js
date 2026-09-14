@@ -1,4 +1,4 @@
-﻿const STORAGE_KEY = "omnipos_mvp_state_v1";
+const STORAGE_KEY = "omnipos_mvp_state_v1";
 const LOCAL_DB_NAME = "omnipos_local_db";
 const LOCAL_DB_VERSION = 1;
 const LOCAL_DB_STORE = "app_state";
@@ -7708,9 +7708,8 @@ function receiptPrintModel(order = null) {
   const receivedAmount = Number(source.receivedAmount || 0);
   const hasReceivedAmount = Number.isFinite(receivedAmount) && receivedAmount > 0;
   const changeAmount = Math.max(0, Number(source.changeAmount || 0));
-  const isMixedPayment = source.paymentMethod === "Campuran";
-  const mixedQrisAmount = orderQrisAmount(source);
-  const mixedCashReceiptAmount = isMixedPayment ? Math.max(0, receivedAmount || orderCashAmount(source)) : 0;
+  const cashReceiptAmount = source.paymentMethod === "Campuran" ? Math.max(0, receivedAmount || orderCashAmount(source)) : orderCashAmount(source);
+  const qrisReceiptAmount = orderQrisAmount(source);
   return {
     width: settings.receiptWidth || "58mm",
     widthChars: receiptPrintWidth(settings),
@@ -7742,9 +7741,9 @@ function receiptPrintModel(order = null) {
     totalLines: [
       ...(settings.receiptShowTotalQuantity ? [{ label: "Total qty", value: String(totalQty) }] : []),
       { label: "Total", value: receiptMoneyText(total), strong: true },
-      ...(isMixedPayment && mixedCashReceiptAmount ? [{ label: "Cash", value: receiptMoneyText(mixedCashReceiptAmount) }] : []),
-      ...(isMixedPayment && mixedQrisAmount ? [{ label: "QRIS", value: receiptMoneyText(mixedQrisAmount) }] : []),
-      ...(!isMixedPayment && hasReceivedAmount ? [{ label: "Bayar", value: receiptMoneyText(receivedAmount) }] : []),
+      ...(cashReceiptAmount ? [{ label: "Cash", value: receiptMoneyText(cashReceiptAmount) }] : []),
+      ...(qrisReceiptAmount ? [{ label: "QRIS", value: receiptMoneyText(qrisReceiptAmount) }] : []),
+      ...(hasReceivedAmount && !cashReceiptAmount && !qrisReceiptAmount ? [{ label: "Bayar", value: receiptMoneyText(receivedAmount) }] : []),
       ...(hasReceivedAmount ? [{ label: "Kembali", value: receiptMoneyText(changeAmount) }] : [])
     ],
     qrText: settings.receiptShowQr ? "QR Promo" : "",

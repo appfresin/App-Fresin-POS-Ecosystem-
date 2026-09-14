@@ -586,6 +586,8 @@ async function openReportVisitorReceipt(eventOrRecordKey, maybeRecordKey) {
   const currentKey = reportRecordKey(order);
   const previousKey = reportReceiptSiblingKey(currentKey, -1);
   const nextKey = reportReceiptSiblingKey(currentKey, 1);
+  const cashReceiptAmount = orderCashAmount(order);
+  const qrisReceiptAmount = orderQrisAmount(order);
   const itemRows = items.map(item => {
     const modifiers = typeof orderItemModifiers === "function" ? orderItemModifiers(item) : [];
     return `
@@ -627,6 +629,8 @@ async function openReportVisitorReceipt(eventOrRecordKey, maybeRecordKey) {
           <span>Subtotal</span><b>${money(order.subtotal)}</b>
           <span>Diskon</span><b>${money(order.discount)}</b>
           <span>Total</span><b>${money(order.total)}</b>
+          ${cashReceiptAmount ? `<span>Cash</span><b>${money(cashReceiptAmount)}</b>` : ""}
+          ${qrisReceiptAmount ? `<span>QRIS</span><b>${money(qrisReceiptAmount)}</b>` : ""}
         </div>
       </div>
     </div>
