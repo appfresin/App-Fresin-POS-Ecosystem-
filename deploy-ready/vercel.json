@@ -32,6 +32,10 @@
   ],
   "rewrites": [
     {
+      "source": "/duitku/callback",
+      "destination": "https://pjkotqianxecaawqompo.supabase.co/functions/v1/duitku-payment-webhook"
+    },
+    {
       "source": "/pos",
       "destination": "/pos/"
     },
@@ -61,3 +65,4 @@
     }
   ]
 }
+

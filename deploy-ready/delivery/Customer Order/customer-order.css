@@ -42,13 +42,13 @@
 
 .customer-home-support {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   margin: 14px 0 4px;
-  padding: 9px 10px;
-  border: 1px solid rgba(47, 85, 146, 0.24);
+  padding: 10px 12px;
+  border: 1px solid rgba(47, 85, 146, 0.2);
   border-radius: 8px;
-  background: linear-gradient(145deg, #eaf3ff 0%, #f7fbff 100%);
-  box-shadow: 0 8px 18px rgba(47, 85, 146, 0.08);
+  background: linear-gradient(145deg, #e8f2ff 0%, #f8fbff 100%);
+  box-shadow: 0 8px 18px rgba(47, 85, 146, 0.07);
   scroll-margin-top: 78px;
 }
 
@@ -110,7 +110,7 @@
 .customer-home-support-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 5px;
+  gap: 2px;
 }
 
 .customer-home-support-item {
@@ -119,10 +119,10 @@
   gap: 8px;
   align-items: start;
   min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid rgba(47, 85, 146, 0.12);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.72);
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: #14233d;
   text-decoration: none;
 }
@@ -148,11 +148,16 @@
 
 .customer-home-support-item[href]:focus-visible,
 .customer-home-support-item[href]:hover {
-  border-color: rgba(47, 85, 146, 0.3);
-  background: #ffffff;
-  box-shadow: 0 6px 14px rgba(35, 52, 86, 0.06);
+  color: #0054a6;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
+
+.self-order-app > .self-order-topbar:not(.customer-home-topbar) .self-order-table {
+  display: none;
+}
 .customer-home-cart-methods,
 .customer-home-choice-grid,
 .customer-home-review,
@@ -1585,7 +1590,7 @@
 
   .customer-home-support {
     margin-top: 12px;
-    padding: 8px 10px;
+    padding: 9px 10px;
     scroll-margin-top: 64px;
   }
 
@@ -1603,12 +1608,16 @@
   }
 
   .customer-home-support-grid {
-    grid-template-columns: 1fr;
-  }
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+}
 
   .customer-home-support-item {
-    grid-template-columns: 68px minmax(0, 1fr);
-    padding: 6px 7px;
+    grid-template-columns: 66px minmax(0, 1fr);
+    padding: 2px 0;
   }
 }
+
+
 
