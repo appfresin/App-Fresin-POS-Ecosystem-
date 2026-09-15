@@ -29,6 +29,7 @@ function kitchenOrderIsVisible(order, filter, visibleStatuses) {
     ? orderIsCancelled(order)
     : Boolean(order?.cancelledAt) || ["Dibatalkan", "Batal"].includes(order?.status);
   if (cancelled) return false;
+  if (typeof orderVisibleInPosOrderList === "function" && !orderVisibleInPosOrderList(order)) return false;
   return filter === "Semua" ? visibleStatuses.includes(order.status) : order.status === filter;
 }
 

@@ -12160,11 +12160,28 @@ function orderSequenceMap(orders = []) {
   return sequences;
 }
 
+function kitchenOrderNoteDisplay(order) {
+  return String(order?.note || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !/(google\.com\/maps|maps\?q=|pin lokasi|latitude|longitude|koordinat)/i.test(line))
+    .join("\n");
+}
+
 function kitchenCard(order, sequenceNumber = 0) {
   normalizeOrderBatches(order);
   const next = nextKitchenAction(order.status);
   const canFinish = order.status !== "Sedang Disiapkan" || areAllKitchenItemsPrepared(order);
   const orderTitle = orderDisplayTitle(order);
+  const kitchenType = String(order?.type || "").trim();
+  const kitchenServiceInfo = typeof orderServiceInfoDisplay === "function"
+    ? orderServiceInfoDisplay(order)
+    : String(order?.serviceInfo || order?.service_info || "").trim();
+  const kitchenServiceInfoPill = kitchenServiceInfo && kitchenServiceInfo.toLowerCase() !== kitchenType.toLowerCase()
+    ? kitchenServiceInfo
+    : "";
+  const kitchenCustomer = customerDisplayName(order.customer);
+  const kitchenOrderNote = kitchenOrderNoteDisplay(order);
   const carryoverLabel = typeof kitchenOrderIsCarryover === "function" && kitchenOrderIsCarryover(order)
     ? `<span class="kitchen-carryover-badge">Transaksi Kemarin</span>`
     : "";
@@ -12192,9 +12209,11 @@ function kitchenCard(order, sequenceNumber = 0) {
         ${statusPill(order.status)}
       </div>
       <div class="kitchen-order-meta">
-        <span class="pill">${escapeHtml(order.type)}</span>
-        <span class="pill">${escapeHtml(order.serviceInfo)}</span>
+        ${kitchenType ? `<span class="pill">${escapeHtml(kitchenType)}</span>` : ""}
+        ${kitchenServiceInfoPill ? `<span class="pill">${escapeHtml(kitchenServiceInfoPill)}</span>` : ""}
+        ${kitchenCustomer ? `<span class="pill">${escapeHtml(kitchenCustomer)}</span>` : ""}
       </div>
+      ${kitchenOrderNote ? `<p class="kitchen-order-note">${escapeHtml(kitchenOrderNote)}</p>` : ""}
       <div class="kitchen-order-items">
         ${groups.map(group => {
           const groupNote = orderGroupNote(order, group);

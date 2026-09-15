@@ -3,7 +3,7 @@
 
   const HOME_ACTIVE_KEY = "customer_home_active_orders";
   const HOME_CHECKOUT_KEY = "customer_home_checkout";
-  const HOME_PAYMENT_PROVIDER = "midtrans";
+  const HOME_PAYMENT_PROVIDER = "duitku";
   const HOME_STATUS_REFRESH_MS = 15000;
   const HOME_DRIVER_SEARCH_DURATION_MS = 5 * 60 * 1000;
   const HOME_MAPLIBRE_ASSETS = [
@@ -18,7 +18,7 @@
       js: "https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js"
     }
   ];
-  // Temporary QRIS integration test gate. Remove after Midtrans QRIS is live.
+  // Temporary QRIS integration test gate. Remove after Duitku QRIS is live.
   const HOME_TEMP_DUMMY_PAYMENT_MARKER = "TEST DRIVER";
   const HOME_CONFIG = {
     defaultDeliveryFee: 10000,
@@ -73,6 +73,82 @@
 
   function homeMoney(value) {
     return typeof money === "function" ? money(value) : `Rp${Number(value || 0).toLocaleString("id-ID")}`;
+  }
+
+  function homeSupportContact() {
+    const settings = state.settings || {};
+    return {
+      storeName: String(settings.selfOrderAppName || settings.receiptStoreName || state.outlet || "Kasirin Cafe").trim(),
+      email: String(window.CUSTOMER_ORDER_SUPPORT_EMAIL || settings.customerSupportEmail || settings.supportEmail || settings.receiptEmail || "").trim(),
+      phone: String(window.CUSTOMER_ORDER_SUPPORT_PHONE || settings.customerSupportPhone || settings.supportPhone || settings.receiptPhone || "").trim(),
+      address: String(window.CUSTOMER_ORDER_SUPPORT_ADDRESS || settings.customerSupportAddress || settings.supportAddress || settings.receiptAddress || "").trim(),
+      mapsUrl: String(window.CUSTOMER_ORDER_SUPPORT_MAPS_URL || settings.customerSupportMapsUrl || settings.supportMapsUrl || "").trim()
+    };
+  }
+
+  function homeSupportEmailHref(email) {
+    const value = String(email || "").trim();
+    return value ? `mailto:${value}` : "";
+  }
+
+  function homeSupportWhatsappHref(phone) {
+    const digits = String(phone || "").replace(/\D/g, "");
+    if (!digits) return "";
+    const normalized = digits.startsWith("0") ? `62${digits.slice(1)}` : digits;
+    return `https://wa.me/${normalized}`;
+  }
+
+  function homeRenderSupportItem(kind, label, value, href = "") {
+    const content = `
+      <span>${homeEscape(label)}</span>
+      <strong>${homeEscape(value || `${label} belum diatur`)}</strong>
+    `;
+    return href
+      ? `<a class="customer-home-support-item ${homeEscape(kind)}" href="${homeEscape(href)}" ${kind === "address" || kind === "whatsapp" ? 'target="_blank" rel="noopener"' : ""}>${content}</a>`
+      : `<div class="customer-home-support-item ${homeEscape(kind)} is-muted">${content}</div>`;
+  }
+
+  function homeRenderSupportContact() {
+    const contact = homeSupportContact();
+    const profileImage = String(state.settings?.selfOrderProfileImageDataUrl || state.settings?.receiptLogoDataUrl || "").trim();
+    const logo = profileImage ? mediaImageTag(profileImage, "Logo kontak support", "", 120) : navIcon("selforder");
+    return `
+      <section id="customerHomeSupport" class="customer-home-support" tabindex="-1" aria-label="Kontak support">
+        <div class="customer-home-support-head">
+          <span class="customer-home-support-logo ${profileImage ? "has-photo" : ""}" aria-hidden="true">${logo}</span>
+          <div class="customer-home-support-copy">
+            <strong>Kontak Support</strong>
+            <p>Hubungi kami jika ada kendala.</p>
+          </div>
+        </div>
+        <div class="customer-home-support-grid">
+          ${homeRenderSupportItem("email", "Email", contact.email, homeSupportEmailHref(contact.email))}
+          ${homeRenderSupportItem("whatsapp", "WhatsApp", contact.phone, homeSupportWhatsappHref(contact.phone))}
+          ${homeRenderSupportItem("address", "Alamat", contact.address, contact.mapsUrl)}
+        </div>
+      </section>
+    `;
+  }
+
+  function homeAppendSupportContact(markup) {
+    const content = String(markup || "");
+    if (content.includes('id="customerHomeSupport"')) return content;
+    if (!content.includes("</main>")) return `${content}${homeRenderSupportContact()}`;
+    return content.replace(/<\/main>\s*$/, `${homeRenderSupportContact()}</main>`);
+  }
+
+  function homeScrollToSupport() {
+    const scroll = () => {
+      const section = document.getElementById("customerHomeSupport");
+      if (!section) return false;
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+      section.focus?.({ preventScroll: true });
+      return true;
+    };
+    if (scroll()) return;
+    sessionStorage.setItem("self_order_step", "menu");
+    render();
+    window.setTimeout(scroll, 80);
   }
 
   function homeOrderTotal(order) {
@@ -473,9 +549,13 @@
     return `https://maps.geoapify.com/v1/staticmap?${params.toString()}`;
   }
 
+  function homeRenderMapLoading(message = "Memuat peta...") {
+    return `<div class="customer-home-map-loading" role="status" aria-live="polite"><span>${homeEscape(message)}</span></div>`;
+  }
+
   function homeRenderStaticLocationMap(latitude, longitude) {
     const imageUrl = homeGeoapifyStaticMapUrl(latitude, longitude);
-    if (!imageUrl) return '<div class="customer-home-map-loading">API key Geoapify belum diatur.</div>';
+    if (!imageUrl) return homeRenderMapLoading("API key Geoapify belum diatur.");
     return `
       <div class="customer-home-static-map">
         <img src="${homeEscape(imageUrl)}" alt="Peta lokasi pengantaran" loading="lazy" />
@@ -663,18 +743,17 @@
 
   function homeInitMapLibreLocationMap() {
     const element = document.getElementById("customerHomeMapLibreMap");
-    if (!element || element.dataset.ready === "1") return;
+    if (!element || ["1", "loading"].includes(element.dataset.ready)) return;
     const checkout = homeCheckout();
     const latitude = homeCoordinate(checkout.latitude);
     const longitude = homeCoordinate(checkout.longitude);
     if (latitude === null || longitude === null) return;
     const styleUrl = homeGeoapifyStyleUrl();
     if (!styleUrl) {
-      element.innerHTML = '<div class="customer-home-map-loading">API key Geoapify belum diatur.</div>';
+      element.innerHTML = homeRenderMapLoading("API key Geoapify belum diatur.");
       return;
     }
-    const fallbackMap = homeRenderStaticLocationMap(latitude, longitude);
-    element.innerHTML = fallbackMap;
+    if (!element.querySelector(".customer-home-map-loading")) element.innerHTML = homeRenderMapLoading();
     try {
       if (homeMapLibreMap?.getContainer && homeMapLibreMap.getContainer() !== element) {
         homeMapLibreMap.remove();
@@ -685,14 +764,13 @@
       homeMapLibreMap = null;
       homeMapLibreMarker = null;
     }
-    element.dataset.ready = "1";
+    element.dataset.ready = "loading";
     element.dataset.mapError = "";
     homeLoadMapLibre()
       .then(maplibregl => {
         if (!document.body.contains(element)) return;
         const config = homeDeliveryConfig();
         const center = [longitude, latitude];
-        element.innerHTML = "";
         const map = new maplibregl.Map({
           container: element,
           style: styleUrl,
@@ -732,7 +810,9 @@
         map.once("load", () => {
           interactiveMapSettled = true;
           window.clearTimeout(interactiveMapTimeout);
+          element.dataset.ready = "1";
           element.dataset.mapError = "";
+          element.querySelector(".customer-home-map-loading")?.remove();
           window.setTimeout(() => { mapReadyForUserInput = true; }, 250);
         });
         map.on("error", event => {
@@ -800,7 +880,21 @@
 
   function homePaymentProvider() {
     const { search } = homeParams();
-    return String(window.PAYMENT_PROVIDER || window.CUSTOMER_ORDER_PAYMENT_PROVIDER || search.get("payment_provider") || HOME_PAYMENT_PROVIDER).toLowerCase();
+    return String(window.PAYMENT_PROVIDER || search.get("payment_provider") || window.CUSTOMER_ORDER_PAYMENT_PROVIDER || HOME_PAYMENT_PROVIDER).toLowerCase();
+  }
+
+  function homePaymentUrlFromPayload(payload) {
+    if (!payload || typeof payload !== "object") return "";
+    return String(payload.paymentUrl || payload.payment_url || "").trim();
+  }
+
+  function homePaymentGatewayPayload(order) {
+    const payload = order?.paymentGatewayPayload && typeof order.paymentGatewayPayload === "object" && !Array.isArray(order.paymentGatewayPayload)
+      ? { ...order.paymentGatewayPayload }
+      : {};
+    const paymentUrl = String(order?.paymentUrl || homePaymentUrlFromPayload(payload) || "").trim();
+    if (paymentUrl) payload.paymentUrl = paymentUrl;
+    return payload;
   }
 
   function homeIsDevelopmentPayment() {
@@ -841,21 +935,25 @@
 
   const PaymentService = {
     createPayment(order) {
+      const gatewayPayload = homePaymentGatewayPayload(order);
       order.paymentProvider = homePaymentProvider();
       return {
         provider: order.paymentProvider,
         reference: order.paymentReference,
         amount: homeOrderTotal(order),
         qrUrl: order.paymentQrUrl || "",
+        paymentUrl: order.paymentUrl || homePaymentUrlFromPayload(gatewayPayload) || "",
         status: order.paymentGatewayStatus || "",
         error: order.paymentError || "",
         loading: order.paymentLoading === true
       };
     },
     async ensurePayment(order) {
-      if (!order || homeIsPaid(order) || homePaymentProvider() !== "midtrans") return false;
+      const provider = homePaymentProvider();
+      if (!order || homeIsPaid(order) || provider !== "duitku") return false;
       if (homeOrderKind(order) === "DELIVERY" && !homeDeliveryCanPay(order)) return false;
-      if (order.paymentQrUrl && order.paymentReference) return true;
+      const paymentUrl = order.paymentUrl || homePaymentUrlFromPayload(order.paymentGatewayPayload);
+      if ((order.paymentQrUrl || paymentUrl) && order.paymentReference) return true;
       if (!supabaseReadable() || !supabaseClient?.functions?.invoke) {
         order.paymentError = "Koneksi pembayaran belum siap.";
         saveState();
@@ -869,26 +967,30 @@
       order.paymentError = "";
       saveState();
       try {
-        const { data, error } = await supabaseClient.functions.invoke("create-midtrans-qris-payment", {
+        const functionName = "create-duitku-payment";
+        const { data, error } = await supabaseClient.functions.invoke(functionName, {
           body: {
             publicOrderToken: order.publicOrderToken,
-            orderNumber: order.number
+            orderNumber: order.number,
+            returnUrl: window.location.href
           }
         });
         if (error) throw error;
-        if (!data?.ok) throw new Error(data?.error || "Gagal membuat QRIS.");
-        order.paymentProvider = "midtrans";
+        if (!data?.ok) throw new Error(data?.error || "Gagal membuat pembayaran Duitku.");
+        order.paymentProvider = data.provider || provider;
         order.paymentReference = data.reference || order.paymentReference || "";
         order.paymentGatewayTransactionId = data.transactionId || order.paymentGatewayTransactionId || "";
         order.paymentGatewayStatus = data.transactionStatus || order.paymentGatewayStatus || "pending";
         order.paymentQrUrl = data.qrUrl || order.paymentQrUrl || "";
+        order.paymentUrl = data.paymentUrl || order.paymentUrl || "";
+        if (order.paymentUrl) order.paymentGatewayPayload = { ...homePaymentGatewayPayload(order), paymentUrl: order.paymentUrl };
         order.paymentExpiryTime = data.expiryTime || order.paymentExpiryTime || "";
         order.paymentError = "";
         await homeSyncOrderExtras(order);
         return true;
       } catch (error) {
-        console.warn("Midtrans QRIS creation failed", error);
-        order.paymentError = error?.message || "Gagal membuat QRIS. Coba lagi.";
+        console.warn(`${provider} payment creation failed`, error);
+        order.paymentError = error?.message || "Gagal membuat pembayaran Duitku. Coba lagi.";
         return false;
       } finally {
         order.paymentLoading = false;
@@ -916,6 +1018,15 @@
         <div class="customer-home-qris-card">
           <img src="${homeEscape(payment.qrUrl)}" alt="QRIS pembayaran" />
           <span>Scan QRIS ini dari aplikasi e-wallet atau mobile banking.</span>
+        </div>
+      `;
+    }
+    if (payment.paymentUrl) {
+      return `
+        <div class="customer-home-qris-placeholder duitku">
+          <strong>Pembayaran Duitku siap.</strong>
+          <span>Selesaikan QRIS melalui halaman aman Duitku sandbox.</span>
+          <a class="customer-home-duitku-link" href="${homeEscape(payment.paymentUrl)}" target="_blank" rel="noopener">Buka Pembayaran Duitku</a>
         </div>
       `;
     }
@@ -955,6 +1066,7 @@
           <strong>${homeEscape(appName)}</strong>
           <span>${homeEscape(outletName)}</span>
         </div>
+        <button type="button" class="customer-home-support-chip" onclick="CustomerOrder.scrollToSupport()" aria-label="Lihat kontak support">Kontak Support</button>
       </header>
     `;
   }
@@ -1033,6 +1145,7 @@
         </section>
         ${typeof renderSelfOrderUpsellCard === "function" ? renderSelfOrderUpsellCard("cart") : ""}
         <button class="self-order-primary self-order-cart-pay" type="button" onclick="selfOrderShowPayment()" ${selfOrderCart.length ? "" : "disabled"}>Checkout</button>
+        ${homeRenderSupportContact()}
       </main>
     `;
   }
@@ -1057,7 +1170,7 @@
         ${pinned ? `
           <div class="customer-home-maplibre-map-card">
             <div id="customerHomeMapLibreMap" class="customer-home-maplibre-map">
-              <div class="customer-home-map-loading">Memuat peta...</div>
+              ${homeRenderMapLoading()}
             </div>
           </div>
         ` : ""}
@@ -1108,6 +1221,7 @@
         ${homeRenderReview({ method, subtotal, fee, total, pickupTime, checkout, compact: true })}
         <button class="self-order-primary self-order-finish" type="button" onclick="CustomerOrder.createWaitingPayment()" ${selfOrderSubmitting ? `disabled aria-busy="true"` : ""}>${homeEscape(finishLabel)}</button>
         ${selfOrderSubmitError ? `<p class="self-order-submit-error" role="alert">${homeEscape(selfOrderSubmitError)}</p>` : ""}
+        ${homeRenderSupportContact()}
       </main>
     `;
   }
@@ -1274,6 +1388,7 @@
 
   async function homeSyncOrderExtras(order) {
     if (!order?.supabaseId || !supabaseReadable()) return false;
+    const gatewayPayload = homePaymentGatewayPayload(order);
     const payload = {
       customer_order_type: homeOrderKind(order),
       customer_order_status: order.customerOrderStatus || "",
@@ -1293,6 +1408,7 @@
       public_order_token: order.publicOrderToken || "",
       driver_id: order.driverId || ""
     };
+    if (Object.keys(gatewayPayload).length) payload.payment_gateway_payload = gatewayPayload;
     let nextPayload = { ...payload };
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const { error } = await supabaseClient.from("orders").update(nextPayload).eq("id", order.supabaseId);
@@ -1571,7 +1687,7 @@
 
   function homePaymentPage(order) {
     const payment = PaymentService.createPayment(order);
-    if (!homeIsPaid(order) && payment.provider === "midtrans" && !payment.qrUrl && !payment.error && !payment.loading) {
+    if (!homeIsPaid(order) && payment.provider === "duitku" && !payment.qrUrl && !payment.paymentUrl && !payment.error && !payment.loading) {
       window.setTimeout(() => PaymentService.ensurePayment(order), 0);
     }
     return `
@@ -1722,6 +1838,7 @@
           ${homeDevStatusButtons(order)}
           <button class="self-order-primary" type="button" onclick="CustomerOrder.startNewOrder()">Pesan Lagi</button>
         </section>
+        ${homeRenderSupportContact()}
       </main>
     `;
   }
@@ -1742,6 +1859,7 @@
             `).join("") || empty("Belum ada pesanan aktif di perangkat ini.")}
           </div>
         </section>
+        ${homeRenderSupportContact()}
       </main>
     `;
   }
@@ -1802,7 +1920,9 @@
         paymentGatewayTransactionId: orderRow.payment_gateway_transaction_id || order.paymentGatewayTransactionId,
         paymentGatewayStatus: orderRow.payment_gateway_status || order.paymentGatewayStatus,
         paymentQrUrl: orderRow.payment_qr_url || order.paymentQrUrl,
-        paymentExpiryTime: orderRow.payment_expiry_time || order.paymentExpiryTime
+        paymentExpiryTime: orderRow.payment_expiry_time || order.paymentExpiryTime,
+        paymentGatewayPayload: orderRow.payment_gateway_payload || order.paymentGatewayPayload,
+        paymentUrl: homePaymentUrlFromPayload(orderRow.payment_gateway_payload) || order.paymentUrl
       });
       mergeSupabaseLiveOrders([liveOrder]);
       saveState();
@@ -1879,6 +1999,11 @@
     const baseRenderSelfOrderTopbar = renderSelfOrderTopbar;
     renderSelfOrderTopbar = function () {
       return homeIsMode() ? homeRenderTopbar() : baseRenderSelfOrderTopbar();
+    };
+
+    const baseRenderSelfOrderMenu = renderSelfOrderMenu;
+    renderSelfOrderMenu = function () {
+      return homeIsMode() ? homeAppendSupportContact(baseRenderSelfOrderMenu()) : baseRenderSelfOrderMenu();
     };
 
     const baseRenderSelfOrderCart = renderSelfOrderCart;
@@ -2047,6 +2172,7 @@
       },
       showEmptyCartNotice: homeShowEmptyCartNotice,
       goBack: homeGoBack,
+      scrollToSupport: homeScrollToSupport,
       createWaitingPayment: homeCreateWaitingPayment,
       retryDriverSearch: homeRetryDriverSearch,
       mockPaymentSuccess: homeMarkPaid,
@@ -2084,3 +2210,7 @@
     window.addEventListener("load", homeInstall, { once: true });
   }
 }());
+
+
+
+
