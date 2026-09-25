@@ -412,6 +412,10 @@
     return Math.max(0, orderTotal(order) - Number(order.delivery_fee || 0));
   }
 
+  function isPaidOrder(order) {
+    return String(order?.payment_status || "").trim().toLowerCase() === "lunas";
+  }
+
   function extractLabelValue(text, label, stopLabels = []) {
     const source = String(text || "");
     if (!source) return "";
@@ -664,7 +668,6 @@
       .from("orders")
       .select(columns.join(","))
       .eq("customer_order_type", "DELIVERY")
-      .eq("payment_status", "Lunas")
       .in("customer_order_status", ACTIVE_STATUSES)
       .order("updated_at", { ascending: false })
       .limit(80);
@@ -1297,6 +1300,9 @@
       return `<button class="driver-primary compact-btn" type="button" data-action="take" data-order="${orderId}">${icon("plus")}<span>Ambil order</span></button>`;
     }
     if (status === "COMPLETED") return "";
+    if (status === "DRIVER_ASSIGNED" && !isPaidOrder(order)) {
+      return `<button class="driver-card-action waiting-payment" type="button" disabled>${icon("clock")}<span>Menunggu pembayaran customer</span></button>`;
+    }
     if (status === "DELIVERING") {
       return `
         <div class="driver-card-actions">
@@ -1395,6 +1401,7 @@
     const rawStatus = order.customer_order_status;
     if (status === "COMPLETED") return `<div class="driver-completed">${icon("check")} Pesanan selesai diantar</div>`;
     if (rawStatus === "SEARCHING_DRIVER") return `<button class="driver-sticky-action" type="button" data-action="take" data-order="${escapeHtml(order.id)}">${icon("plus")}<span>Ambil order</span></button>`;
+    if (status === "DRIVER_ASSIGNED" && !isPaidOrder(order)) return `<button class="driver-sticky-action" type="button" disabled>${icon("clock")}<span>Menunggu pembayaran customer</span></button>`;
     if (status === "DRIVER_ASSIGNED" || status === "PREPARING" || status === "READY_FOR_PICKUP" || status === "PICKED_UP") return `<button class="driver-sticky-action" type="button" data-action="delivering" data-order="${escapeHtml(order.id)}">${icon("bag")}<span>Ambil ke outlet</span></button>`;
     if (status === "DELIVERING") return `<button class="driver-sticky-action done" type="button" data-action="complete" data-order="${escapeHtml(order.id)}">${icon("check")}<span>Pesanan selesai diantar</span></button>`;
     return `<div class="driver-completed">${icon("check")} Pesanan selesai diantar</div>`;
@@ -1402,7 +1409,7 @@
 
   function emptyState() {
     const copy = {
-      tasks: ["Belum ada tugas tersedia", "Order delivery lunas akan muncul di sini."],
+      tasks: ["Belum ada tugas tersedia", "Order delivery yang mencari driver akan muncul di sini."],
       active: ["Belum ada tugas aktif", "Order yang kamu ambil akan tampil di sini."],
       history: ["Riwayat hari ini kosong", "Order selesai hari ini akan masuk ke riwayat."],
       earnings: ["Pendapatan kosong", "Order selesai akan dihitung sebagai riwayat pendapatan ongkir."]
@@ -1425,6 +1432,7 @@
       bike: '<svg viewBox="0 0 24 24"><path d="M5 16.5a3 3 0 1 0 0 .1M19 16.5a3 3 0 1 0 0 .1M7.5 16.5h4.2l2.1-6.5h2.4l1.6 3.4M6.5 11h3.2l2 5.5M13.7 10H17M9 7h3"/></svg>',
       bag: '<svg viewBox="0 0 24 24"><path d="M7 8h10l1 12H6L7 8ZM9 8a3 3 0 0 1 6 0"/></svg>',
       check: '<svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>',
+      clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg>',
       road: '<svg viewBox="0 0 24 24"><path d="M7 20 11 4h2l4 16M12 8v2M12 14v2"/></svg>',
       refresh: '<svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M18.5 9A7 7 0 0 0 6.4 6.8M5.5 15a7 7 0 0 0 12.1 2.2"/></svg>',
       plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',

@@ -91,10 +91,17 @@ const ROLE_DEFINITIONS = {
   dapur: {
     label: "Dapur",
     views: ["kitchen", "stock", "stock-opname", "settings"]
+  },
+  driver: {
+    label: "Driver",
+    views: ["driver"]
   }
 };
 
-const ACCESS_VIEW_OPTIONS = navItems.map(([id, , label]) => ({ id, label }));
+const ACCESS_VIEW_OPTIONS = [
+  ...navItems.map(([id, , label]) => ({ id, label })),
+  { id: "driver", label: "Driver" }
+];
 
 const DEFAULT_STAFF_MEMBERS = [
   { id: "owner", username: "owner", name: "Owner", role: "owner", pin: "0000", active: true },
@@ -3156,6 +3163,19 @@ function orderTotal(order) {
   return Number(order.grandTotal || order.total || 0);
 }
 
+function orderGrandTotalForSync(order) {
+  if (!order) return 0;
+  const explicitTotal = Number(order.grandTotal ?? order.grand_total ?? order.total ?? 0);
+  if (Number.isFinite(explicitTotal) && explicitTotal > 0) return explicitTotal;
+  const subtotal = Number(order.subtotal || 0);
+  const discount = Number(order.discount || 0);
+  const tax = Number(order.tax ?? order.taxAmount ?? order.tax_amount ?? 0);
+  const serviceFee = Number(order.serviceFee ?? order.service_fee ?? 0);
+  const deliveryFee = Number(order.deliveryFee ?? order.delivery_fee ?? 0);
+  const componentTotal = subtotal - discount + tax + serviceFee + deliveryFee;
+  return Math.max(0, explicitTotal, componentTotal);
+}
+
 function normalizePaymentBreakdown(value) {
   if (!value) return {};
   if (typeof value === "string") {
@@ -4466,7 +4486,7 @@ async function syncOrderToSupabase(order, options = {}) {
       service_fee: Number(order.serviceFee || 0),
       delivery_fee: Number(order.deliveryFee || 0),
       tax_amount: 0,
-      grand_total: orderTotal(order),
+      grand_total: orderGrandTotalForSync(order),
       profit_total: orderProfit(order),
       print_receipt: Boolean(order.printReceipt),
       created_at: order.createdAt,
@@ -5667,6 +5687,14 @@ function normalizeSupabaseLiveOrder(orderRow, itemRows = [], addonsByItemId = ne
     receivedAmount: Number(payment?.received_amount || existing?.receivedAmount || 0),
     changeAmount: Number(payment?.change_amount || existing?.changeAmount || 0),
     paymentBreakdown: normalizePaymentBreakdown(payment?.payment_breakdown || existing?.paymentBreakdown || existing?.payment_breakdown || {}),
+    paymentProvider: orderRow.payment_provider || existing?.paymentProvider || "",
+    paymentReference: orderRow.payment_reference || existing?.paymentReference || "",
+    paymentGatewayTransactionId: orderRow.payment_gateway_transaction_id || existing?.paymentGatewayTransactionId || "",
+    paymentGatewayStatus: orderRow.payment_gateway_status || existing?.paymentGatewayStatus || "",
+    paymentQrUrl: orderRow.payment_qr_url || existing?.paymentQrUrl || "",
+    paymentExpiryTime: orderRow.payment_expiry_time || existing?.paymentExpiryTime || "",
+    paymentGatewayPayload: orderRow.payment_gateway_payload || existing?.paymentGatewayPayload || {},
+    paymentUrl: orderRow.payment_gateway_payload?.paymentUrl || orderRow.payment_gateway_payload?.payment_url || existing?.paymentUrl || "",
     printReceipt: Boolean(orderRow.print_receipt),
     items,
     preparedItems: mergePreparedItems(orderRow.prepared_items, existing?.preparedItems),
@@ -6832,6 +6860,9 @@ async function refreshVisibleData() {
   try {
     await processSyncQueue("manual-refresh");
     await loadMasterDataFromSupabase({ reason: "manual-refresh", force: true });
+    if (view === "dashboard") {
+      await loadDashboardRefreshData(true);
+    }
     if (view === "reports") {
       const activeSection = sessionStorage.getItem("report_section") || "profit";
       invalidateReportCaches();
@@ -6850,6 +6881,16 @@ async function refreshVisibleData() {
     dataRefreshLoading = false;
     render();
   }
+}
+
+async function loadDashboardRefreshData(force = false) {
+  if (!supabaseReadable() || typeof dashboardPeriod !== "function" || typeof dashboardPeriodRange !== "function" || typeof dashboardReportRange !== "function") return;
+  const period = dashboardPeriod();
+  const financialRange = dashboardReportRange(period, dashboardPeriodRange(period));
+  await loadRecentOrdersFromSupabase({ force, silent: true, reason: "dashboard-refresh" });
+  const months = typeof dashboardFinancialMonths === "function" ? dashboardFinancialMonths(financialRange) : [];
+  await Promise.all(months.map(({ year, month }) => loadProfitSummary("days", year, month, force)));
+  await loadSupabaseReportRecords(force, financialRange);
 }
 
 function focusPosSearch() {
@@ -12027,6 +12068,12 @@ function printUnpaidOrder(id) {
   printReceiptOrder(order);
 }
 
+function printOrderCardReceipt(id) {
+  const order = state.orders.find(item => item.id === id);
+  if (!order) return toast("Pesanan tidak ditemukan.");
+  printReceiptOrder(order);
+}
+
 function cancelUnpaidOrder(id) {
   const order = state.orders.find(item => item.id === id);
   if (!order) return;
@@ -13412,6 +13459,7 @@ function orderCenterCard(order, options = {}) {
   }).join("");
   const actions = [
     order.paymentStatus !== "Lunas" && order.status !== "Dibatalkan" ? `<button class="btn green" type="button" onclick="event.preventDefault(); event.stopPropagation(); payUnpaidOrder('${order.id}')">Bayar</button>` : "",
+    order.paymentStatus === "Lunas" ? `<button class="btn green orders-print-receipt-btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); printOrderCardReceipt('${order.id}')">Print Struk</button>` : "",
     canCorrectOrder(order) ? `<button class="btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); openOrderCorrection('${order.id}')">Koreksi Pesanan</button>` : "",
     canMoveOrderTable(order) ? `<button class="btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); openMoveOrderTableDialog('${order.id}', ${options.returnToUnpaid ? "'unpaid'" : "'orders'"})">Pindahkan Meja</button>` : "",
     canCancelOrder(order) ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openCancelOrderDialog('${order.id}', ${options.returnToUnpaid ? "true" : "false"})">Batalkan</button>` : "",
@@ -15960,5 +16008,6 @@ function resetDemo() {
 
 initializePersistentState();
 render();
+
 
 

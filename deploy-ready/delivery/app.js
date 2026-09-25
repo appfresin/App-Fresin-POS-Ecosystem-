@@ -40,6 +40,7 @@ const REPORT_SALES_RECORD_COLUMNS = "id,number,created_at,paid_at,source,importe
 const REPORT_PROFIT_YEAR_COLUMNS = "year,transaction_count,total,revenue,profit,estimated_cost";
 const REPORT_PROFIT_MONTH_COLUMNS = "year,month,transaction_count,total,revenue,profit,estimated_cost";
 const REPORT_PROFIT_DAY_COLUMNS = "year,month,day,sales_date,date,transaction_count,total,revenue,profit,estimated_cost";
+const REPORT_PRODUCT_SALES_COLUMNS = "sales_date,code,name,transaction_count,qty,revenue,profit,source";
 const STOCK_MOVEMENT_COLUMNS = "id,created_at,product_id,product_local_id,qty,reason,note,movement_type,balance_after";
 const MASTER_CATEGORY_COLUMNS = "id,local_id,name,active,sort_order";
 const MASTER_ADDON_COLUMNS = "id,local_id,name,price,cost,active,sold_out";
@@ -90,10 +91,17 @@ const ROLE_DEFINITIONS = {
   dapur: {
     label: "Dapur",
     views: ["kitchen", "stock", "stock-opname", "settings"]
+  },
+  driver: {
+    label: "Driver",
+    views: ["driver"]
   }
 };
 
-const ACCESS_VIEW_OPTIONS = navItems.map(([id, , label]) => ({ id, label }));
+const ACCESS_VIEW_OPTIONS = [
+  ...navItems.map(([id, , label]) => ({ id, label })),
+  { id: "driver", label: "Driver" }
+];
 
 const DEFAULT_STAFF_MEMBERS = [
   { id: "owner", username: "owner", name: "Owner", role: "owner", pin: "0000", active: true },
@@ -210,6 +218,12 @@ let supabaseReportsLoading = false;
 let supabaseReportsLoadedAt = 0;
 let supabaseReportLoadKey = "";
 let supabaseReportDetailCache = new Map();
+let supabaseProductSalesRecords = [];
+let supabaseProductSalesLoading = false;
+let supabaseProductSalesLoadedAt = 0;
+let supabaseProductSalesLoadKey = "";
+let supabaseProductSalesLastLoadOk = false;
+let supabaseProductSalesUnavailable = false;
 let profitSummaryCache = { years: [], months: {}, days: {} };
 let profitSummaryLoading = false;
 let profitSummaryLoadingKeys = new Set();
@@ -3149,9 +3163,43 @@ function orderTotal(order) {
   return Number(order.grandTotal || order.total || 0);
 }
 
+function orderGrandTotalForSync(order) {
+  if (!order) return 0;
+  const explicitTotal = Number(order.grandTotal ?? order.grand_total ?? order.total ?? 0);
+  if (Number.isFinite(explicitTotal) && explicitTotal > 0) return explicitTotal;
+  const subtotal = Number(order.subtotal || 0);
+  const discount = Number(order.discount || 0);
+  const tax = Number(order.tax ?? order.taxAmount ?? order.tax_amount ?? 0);
+  const serviceFee = Number(order.serviceFee ?? order.service_fee ?? 0);
+  const deliveryFee = Number(order.deliveryFee ?? order.delivery_fee ?? 0);
+  const componentTotal = subtotal - discount + tax + serviceFee + deliveryFee;
+  return Math.max(0, explicitTotal, componentTotal);
+}
+
+function normalizePaymentBreakdown(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function paymentBreakdownHasAmount(value) {
+  const breakdown = normalizePaymentBreakdown(value);
+  return Object.values(breakdown).some(amount => {
+    const numeric = Number(amount || 0);
+    return Number.isFinite(numeric) && numeric > 0;
+  });
+}
+
 function posPaymentBreakdownAmount(order, method) {
-  const breakdown = order?.paymentBreakdown || order?.payment_breakdown || {};
-  const aliases = method === "Tunai" ? ["Tunai", "tunai", "Cash", "cash"] : [method, String(method || "").toLowerCase()];
+  const breakdown = normalizePaymentBreakdown(order?.paymentBreakdown || order?.payment_breakdown || {});
+  const aliases = method === "Tunai" ? ["Tunai", "tunai", "Cash", "cash", "CASH"] : [method, String(method || "").toLowerCase(), "QRIS", "qris", "Qris"];
   for (const key of aliases) {
     const amount = Number(breakdown?.[key] || 0);
     if (Number.isFinite(amount) && amount > 0) return amount;
@@ -3331,6 +3379,10 @@ function invalidateReportCaches() {
   legacyProfitSummaryLoadedAt = new Map();
   legacyCashierDataLoadedAt = 0;
   legacyCashierDataLoadKey = "";
+  supabaseProductSalesRecords = [];
+  supabaseProductSalesLoadedAt = 0;
+  supabaseProductSalesLoadKey = "";
+  supabaseProductSalesLastLoadOk = false;
 }
 
 function syncRetryDelayMs(attempts) {
@@ -4434,7 +4486,7 @@ async function syncOrderToSupabase(order, options = {}) {
       service_fee: Number(order.serviceFee || 0),
       delivery_fee: Number(order.deliveryFee || 0),
       tax_amount: 0,
-      grand_total: orderTotal(order),
+      grand_total: orderGrandTotalForSync(order),
       profit_total: orderProfit(order),
       print_receipt: Boolean(order.printReceipt),
       created_at: order.createdAt,
@@ -5434,6 +5486,32 @@ function mergePreparedItems(remotePrepared = {}, localPrepared = {}) {
   return merged;
 }
 
+function sanitizeKitchenPreparedItems(order) {
+  if (!order?.preparedItems || typeof order.preparedItems !== "object") return order;
+  const prepared = { ...(order.preparedItems || {}) };
+  const activeBatches = new Set((order.items || [])
+    .map(item => Number(orderItemBatch(item)))
+    .filter(batch => Number.isFinite(batch) && batch > 0));
+  const lockedBatches = (Array.isArray(prepared.__lockedBatches) ? prepared.__lockedBatches : [])
+    .map(batch => Number(batch))
+    .filter(batch => Number.isFinite(batch) && batch > 0 && activeBatches.has(batch));
+  const locksEveryVisibleBatch = activeBatches.size > 0
+    && lockedBatches.length >= activeBatches.size
+    && [...activeBatches].every(batch => lockedBatches.includes(batch));
+  if (order.status !== "Selesai" && locksEveryVisibleBatch) {
+    delete prepared.__lockedBatches;
+    order.lockedPreparedBatches = [];
+  } else if (lockedBatches.length) {
+    prepared.__lockedBatches = [...new Set(lockedBatches)].sort((a, b) => a - b);
+    order.lockedPreparedBatches = prepared.__lockedBatches;
+  } else {
+    delete prepared.__lockedBatches;
+    order.lockedPreparedBatches = [];
+  }
+  order.preparedItems = prepared;
+  return order;
+}
+
 function kitchenOptimisticOrderKeys(order = {}) {
   return [
     order?.id,
@@ -5514,7 +5592,7 @@ function applyPendingKitchenOrderMutation(remoteOrder, existingOrder = null) {
     || kitchenOptimisticOrderMutation(remoteOrder)
     || (existing && orderHasPendingLocalOrKitchenSync(existing) ? existing : null);
   if (!source) return remoteOrder;
-  return {
+  return sanitizeKitchenPreparedItems({
     ...remoteOrder,
     status: source.status || remoteOrder.status,
     preparedAt: source.preparedAt ?? remoteOrder.preparedAt,
@@ -5524,7 +5602,7 @@ function applyPendingKitchenOrderMutation(remoteOrder, existingOrder = null) {
     syncStatus: source.syncStatus || remoteOrder.syncStatus,
     syncError: source.syncError || remoteOrder.syncError,
     updatedAt: source.updatedAt || remoteOrder.updatedAt
-  };
+  });
 }
 
 function supabaseOrderItemDedupeKey(item = {}) {
@@ -5608,7 +5686,15 @@ function normalizeSupabaseLiveOrder(orderRow, itemRows = [], addonsByItemId = ne
     paymentMethod: payment?.method || existing?.paymentMethod || "Belum dipilih",
     receivedAmount: Number(payment?.received_amount || existing?.receivedAmount || 0),
     changeAmount: Number(payment?.change_amount || existing?.changeAmount || 0),
-    paymentBreakdown: payment?.payment_breakdown || existing?.paymentBreakdown || {},
+    paymentBreakdown: normalizePaymentBreakdown(payment?.payment_breakdown || existing?.paymentBreakdown || existing?.payment_breakdown || {}),
+    paymentProvider: orderRow.payment_provider || existing?.paymentProvider || "",
+    paymentReference: orderRow.payment_reference || existing?.paymentReference || "",
+    paymentGatewayTransactionId: orderRow.payment_gateway_transaction_id || existing?.paymentGatewayTransactionId || "",
+    paymentGatewayStatus: orderRow.payment_gateway_status || existing?.paymentGatewayStatus || "",
+    paymentQrUrl: orderRow.payment_qr_url || existing?.paymentQrUrl || "",
+    paymentExpiryTime: orderRow.payment_expiry_time || existing?.paymentExpiryTime || "",
+    paymentGatewayPayload: orderRow.payment_gateway_payload || existing?.paymentGatewayPayload || {},
+    paymentUrl: orderRow.payment_gateway_payload?.paymentUrl || orderRow.payment_gateway_payload?.payment_url || existing?.paymentUrl || "",
     printReceipt: Boolean(orderRow.print_receipt),
     items,
     preparedItems: mergePreparedItems(orderRow.prepared_items, existing?.preparedItems),
@@ -5630,7 +5716,7 @@ function normalizeSupabaseLiveOrder(orderRow, itemRows = [], addonsByItemId = ne
     syncStatus: "synced",
     syncError: ""
   };
-  return applyPendingKitchenOrderMutation(normalizedOrder, existing);
+  return sanitizeKitchenPreparedItems(applyPendingKitchenOrderMutation(normalizedOrder, existing));
 }
 
 function orderLiveTimestamp(value) {
@@ -5890,7 +5976,7 @@ function normalizeSupabaseReportRecord(row) {
     type: row.order_type || "Import",
     customer: row.customer_name || "-",
     paymentMethod: row.payment_method || "Belum dipilih",
-    paymentBreakdown: row.payment_breakdown || {},
+    paymentBreakdown: normalizePaymentBreakdown(row.payment_breakdown || {}),
     paymentStatus: row.payment_status || "Lunas",
     status: row.order_status || row.status || "",
     subtotal: Number(row.subtotal || 0),
@@ -6008,7 +6094,7 @@ async function loadSupabaseOrderDetailForReport(record) {
       profit: Number(orderRow.profit_total ?? record.profit ?? 0),
       receivedAmount: Number(payment.received_amount || 0),
       changeAmount: Number(payment.change_amount || 0),
-      paymentBreakdown: payment.payment_breakdown || record.paymentBreakdown || {},
+      paymentBreakdown: normalizePaymentBreakdown(payment.payment_breakdown || record.paymentBreakdown || record.payment_breakdown || {}),
       items
     };
 
@@ -6469,9 +6555,68 @@ async function loadProfitSummary(level = "years", year = null, month = null, for
   }
 }
 
+function normalizeSupabaseProductSalesRow(row) {
+  return {
+    salesDate: row.sales_date || row.date || "",
+    code: String(row.code || "").trim(),
+    name: row.name || "-",
+    transactionCount: Number(row.transaction_count || 0),
+    qty: Number(row.qty || 0),
+    revenue: Number(row.revenue || 0),
+    profit: Number(row.profit || 0),
+    source: row.source || "Supabase Ringkasan Barang"
+  };
+}
+
+async function loadSupabaseProductSalesRecords(force = false, range = reportRange()) {
+  if (!supabaseReadable() || supabaseProductSalesLoading || !range) return;
+  if (supabaseProductSalesUnavailable) return;
+  const loadKey = reportLoadKey(range);
+  const freshEnough = Date.now() - supabaseProductSalesLoadedAt < 60000;
+  if (!force && supabaseProductSalesLoadKey === loadKey && freshEnough) return;
+  supabaseProductSalesLoading = true;
+  try {
+    const allRows = [];
+    const pageSize = 1000;
+    for (let from = 0; ; from += pageSize) {
+      const to = from + pageSize - 1;
+      const { data, error } = await supabaseClient
+        .from("report_product_sales_daily")
+        .select(REPORT_PRODUCT_SALES_COLUMNS)
+        .gte("sales_date", todayKey(range.start))
+        .lte("sales_date", todayKey(range.end))
+        .order("sales_date", { ascending: false })
+        .range(from, to);
+      if (error) throw error;
+      allRows.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+    }
+    supabaseProductSalesRecords = allRows.map(normalizeSupabaseProductSalesRow);
+    supabaseProductSalesLoadedAt = Date.now();
+    supabaseProductSalesLoadKey = loadKey;
+    supabaseProductSalesLastLoadOk = true;
+    if ((sessionStorage.getItem("report_section") || "profit") === "productSales") reportRenderAfterDataLoad();
+  } catch (error) {
+    supabaseProductSalesLastLoadOk = false;
+    const missingReportView = isSupabaseReportViewIssue(error, "report_product_sales_daily");
+    if (missingReportView) {
+      supabaseProductSalesUnavailable = true;
+      console.warn("Product sales summary skipped: view report_product_sales_daily belum tersedia.");
+    } else {
+      console.error("Product sales summary load failed", error);
+    }
+    supabaseProductSalesLoadedAt = Date.now();
+    supabaseProductSalesLoadKey = loadKey;
+  } finally {
+    supabaseProductSalesLoading = false;
+    if ((sessionStorage.getItem("report_section") || "profit") === "productSales") reportRenderAfterDataLoad();
+  }
+}
+
 function reportDataLoading() {
   const section = sessionStorage.getItem("report_section") || "profit";
   if (section === "profit") return Boolean(profitSummaryLoading || legacyProfitSummaryLoading || legacyCashierDataLoading);
+  if (section === "productSales") return Boolean(supabaseProductSalesLoading);
   return Boolean(supabaseReportsLoading || supabaseLegacyReportsLoading || legacyCashierDataLoading);
 }
 
@@ -6678,7 +6823,9 @@ function profitReportRecordRange(level = sessionStorage.getItem("profit_report_l
 
 function requestActiveReportData(force = false) {
   const section = sessionStorage.getItem("report_section") || "profit";
-  loadLegacyCashierData(force, section === "profit" ? (currentProfitDetailRange() || profitReportRecordRange()) : reportRange());
+  if (section !== "productSales") {
+    loadLegacyCashierData(force, section === "profit" ? (currentProfitDetailRange() || profitReportRecordRange()) : reportRange());
+  }
   if (section === "profit") {
     const level = sessionStorage.getItem("profit_report_level") || "today";
     const now = new Date();
@@ -6701,6 +6848,8 @@ function requestActiveReportData(force = false) {
     if (recordRange) loadSupabaseReportRecords(force, recordRange);
   } else if (section === "visitors") {
     loadSupabaseReportRecords(force);
+  } else if (section === "productSales") {
+    loadSupabaseProductSalesRecords(force, reportRange());
   }
 }
 
@@ -6714,9 +6863,12 @@ async function refreshVisibleData() {
     if (view === "reports") {
       const activeSection = sessionStorage.getItem("report_section") || "profit";
       invalidateReportCaches();
-      await loadLegacyCashierData(true, activeSection === "profit" ? (currentProfitDetailRange() || profitReportRecordRange()) : reportRange());
+      if (activeSection !== "productSales") {
+        await loadLegacyCashierData(true, activeSection === "profit" ? (currentProfitDetailRange() || profitReportRecordRange()) : reportRange());
+      }
       if (activeSection === "profit") await refreshProfitReportData();
       else if (activeSection === "visitors") await loadSupabaseReportRecords(true);
+      else if (activeSection === "productSales") await loadSupabaseProductSalesRecords(true, reportRange());
     }
     toast("Data diperbarui.");
   } catch (error) {
@@ -7972,6 +8124,42 @@ function setOrderDiscountType(type) {
 
 function cartItemKey(item) {
   return item.lineId || item.productId;
+}
+
+function cartItemLockedQty(item) {
+  return Math.max(0, Number(item?.lockedQty || 0) || 0);
+}
+
+function cartItemLockedFromUnpaid(item) {
+  return Boolean(item?.lockedFromOrderId) && cartItemLockedQty(item) > 0;
+}
+
+function cartItemLockedForRegularUnpaidEdit(item) {
+  return cartItemLockedFromUnpaid(item) && !isOrderCorrectionMode();
+}
+
+function lockCartItemFromUnpaidOrder(item, orderId) {
+  return {
+    ...item,
+    lockedFromOrderId: orderId,
+    lockedQty: Math.max(0, Number(item.qty || 0) || 0)
+  };
+}
+
+function unlockCartItemForOrder(item) {
+  const next = { ...item };
+  delete next.lockedFromOrderId;
+  delete next.lockedQty;
+  return next;
+}
+
+function stripOrderCorrectionCartMetadata(item = {}) {
+  const next = unlockCartItemForOrder({ ...item });
+  delete next.correctionSourceKey;
+  delete next.correctionOriginalQty;
+  delete next.correctionOriginalBatch;
+  delete next.correctionOriginalBatchCreatedAt;
+  return next;
 }
 
 function productVariantGroups(product) {
@@ -10746,7 +10934,9 @@ function renderPosProductList() {
 }
 
 function renderPosCartPanel() {
-  const cartStep = sessionStorage.getItem("pos_cart_step") || "items";
+  const correctionOrder = currentCorrectionOrder();
+  const correctionMode = Boolean(correctionOrder);
+  const cartStep = correctionMode ? "items" : (sessionStorage.getItem("pos_cart_step") || "items");
   const orderType = posOrderTypeValue();
   const orderTypeInvalid = sessionStorage.getItem("pos_order_type_error") === "1" && !orderType;
   const customerName = sessionStorage.getItem("pos_customer_name") || "";
@@ -10780,16 +10970,22 @@ function renderPosCartPanel() {
         <div class="cart-title-mini"><strong>${money(cartStep === "items" ? subtotal : grand)}</strong></div>
         <div class="cart-step-tabs">
           <button class="${cartStep === "items" ? "active" : ""}" onclick="setCartStep('items')">Item</button>
-          <button class="${cartStep === "payment" ? "active" : ""}" onclick="setCartStep('payment')">Bayar</button>
+          ${correctionMode ? "" : `<button class="${cartStep === "payment" ? "active" : ""}" onclick="setCartStep('payment')">Bayar</button>`}
         </div>
       </div>` : ""}
+      ${correctionMode ? `<div class="order-correction-banner"><strong>Mode Koreksi Pesanan</strong><span>${escapeHtml(displayOrderNumber(correctionOrder.number))}</span></div>` : ""}
       ${cartStep === "items" ? `<div class="order-type-cards ${orderTypeInvalid ? "invalid" : ""}">${ORDER_TYPES.map(type => `<button class="order-type-card ${type.id === orderType ? "active" : ""}" onclick="setOrderType('${type.id}')"><span>${type.icon}</span><strong>${type.title}</strong><small>${type.hint}</small></button>`).join("")}</div>${orderTypeInvalid ? `<small class="pos-field-error pos-order-type-error" role="alert">Pilih jenis pesanan</small>` : ""}` : ""}
       ${cartStep === "items" ? `
         <div class="cart-items-page">
           <div class="cart-lines">
             ${cart.map((item, index) => cartItem(item, addonProducts, index)).join("") || empty("Pilih produk untuk mulai transaksi.")}
           </div>
-          <button class="btn pos-next-button" onclick="setCartStep('payment')" ${cart.length ? "" : "disabled"}>Lanjut ke pembayaran</button>
+          ${correctionMode ? `
+            <div class="order-correction-actions">
+              <button class="btn" type="button" onclick="cancelOrderCorrection()">Batalkan Koreksi</button>
+              <button class="btn green" type="button" onclick="openOrderCorrectionReasonDialog()" ${cart.length ? "" : "disabled"}>Simpan Koreksi Pesanan</button>
+            </div>
+          ` : `<button class="btn pos-next-button" onclick="setCartStep('payment')" ${cart.length ? "" : "disabled"}>Lanjut ke pembayaran</button>`}
         </div>
       ` : cartStep === "payment" ? `
         <div class="cart-payment-page">
@@ -11059,7 +11255,7 @@ async function addToCart(id) {
   const hasVariants = productVariantGroups(product).length > 0;
   if (hasVariants) return openVariantPicker(id);
   if (productSaleStockLimit(product) <= 0) return toast(limitedStockMessage(product, "", 0));
-  const existing = cart.find(item => item.productId === id);
+  const existing = cart.find(item => item.productId === id && !cartItemLockedFromUnpaid(item));
   const qty = existing && !hasVariants ? existing.qty + 1 : 1;
   if (limitedStockCartQty(cart, id) + 1 > productSaleStockLimit(product)) return toast(limitedStockMessage(product, "", productSaleStockLimit(product)));
   if (limitedStockRequiresOnline(product) && !canAttemptSupabaseSync()) return toast(limitedStockServiceMessage(navigator.onLine === false ? "offline" : "service_unavailable"));
@@ -11251,8 +11447,10 @@ function cartItem(item, addonProducts = [], index = 0) {
   const expanded = sessionStorage.getItem("pos_expanded_item") === key;
   const linePrice = cartItemTotal(item);
   const discount = itemDiscountAmount(item);
+  const locked = cartItemLockedForRegularUnpaidEdit(item);
+  const canDecrease = !locked;
   return `
-    <div class="cart-item ${expanded ? "expanded" : ""}">
+    <div class="cart-item ${expanded ? "expanded" : ""} ${locked ? "locked" : ""}">
       <div class="cart-row" onclick="toggleCartItemOptions('${key}')">
         <span class="cart-row-no">${index + 1}</span>
         <div class="cart-row-name">
@@ -11260,15 +11458,16 @@ function cartItem(item, addonProducts = [], index = 0) {
           ${addons.length ? `<div class="cart-addon-line">${addons.map(addon => `
             <span class="cart-addon-chip">
               <b>+ ${escapeHtml(addon.name)} ${money(addon.price)} x ${addon.qty}</b>
-              <button class="cart-addon-remove" type="button" aria-label="Hapus ${escapeHtml(addon.name)}" onclick="event.stopPropagation(); removeAddonFromCartItem('${key}', '${addon.id}')">x</button>
+              ${locked ? "" : `<button class="cart-addon-remove" type="button" aria-label="Hapus ${escapeHtml(addon.name)}" onclick="event.stopPropagation(); removeAddonFromCartItem('${key}', '${addon.id}')">x</button>`}
             </span>
           `).join("")}</div>` : ""}
+          ${locked ? `<small>Item lama terkunci</small>` : ""}
           ${item.note ? `<small>Catatan: ${escapeHtml(item.note)}</small>` : ""}
           ${discount ? `<small>Diskon item: ${money(discount)}</small>` : ""}
         </div>
         <strong class="cart-row-price">${money(linePrice)}</strong>
         <div class="cart-qty-control" onclick="event.stopPropagation()">
-          <button onclick="setCartQty('${key}', ${item.qty - 1})">-</button>
+          <button onclick="setCartQty('${key}', ${item.qty - 1})" ${canDecrease ? "" : "disabled"}>-</button>
           <span>${item.qty}</span>
           <button onclick="setCartQty('${key}', ${item.qty + 1})">+</button>
         </div>
@@ -11280,6 +11479,9 @@ function cartItem(item, addonProducts = [], index = 0) {
 
 function cartItemOptions(item, addonProducts = []) {
   const key = cartItemKey(item);
+  if (cartItemLockedForRegularUnpaidEdit(item)) {
+    return `<div class="cart-item-options"><span class="muted">Item lama tidak bisa diubah. Tambahkan item baru jika customer ingin menambah pesanan.</span></div>`;
+  }
   const storedPanel = sessionStorage.getItem(`pos_item_panel_${key}`);
   const activePanel = storedPanel === "variants" ? "addons" : (storedPanel || "addons");
   const product = state.products.find(entry => entry.id === item.productId);
@@ -11324,6 +11526,8 @@ function toggleCartItemOptions(itemKey) {
 }
 
 function updateCartItemField(itemKey, field, value) {
+  const cartLine = cart.find(item => cartItemKey(item) === itemKey);
+  if (cartItemLockedForRegularUnpaidEdit(cartLine)) return toast("Item lama tidak bisa diubah.");
   cart = cart.map(item => {
     if (cartItemKey(item) !== itemKey) return item;
     if (field === "price" || field === "discount" || field === "discountValue") {
@@ -11337,6 +11541,8 @@ function updateCartItemField(itemKey, field, value) {
 }
 
 function setCartItemDiscountType(itemKey, type) {
+  const cartLine = cart.find(item => cartItemKey(item) === itemKey);
+  if (cartItemLockedForRegularUnpaidEdit(cartLine)) return toast("Item lama tidak bisa diubah.");
   cart = cart.map(item => {
     if (cartItemKey(item) !== itemKey) return item;
     const value = Number(item.discountValue ?? item.discount ?? 0) || 0;
@@ -11349,6 +11555,7 @@ function setCartItemDiscountType(itemKey, type) {
 
 function addAddonToCartItem(itemKey, addonId) {
   const cartLine = cart.find(item => cartItemKey(item) === itemKey);
+  if (cartItemLockedForRegularUnpaidEdit(cartLine)) return toast("Item lama tidak bisa diubah.");
   const product = state.products.find(item => item.id === cartLine?.productId);
   if (product?.allowedAddonIds?.length && !product.allowedAddonIds.includes(addonId)) return toast("Add-on tidak tersedia untuk produk ini.");
   const addonProduct = state.addons.find(addon => addon.id === addonId && addon.active !== false && !addon.soldOut);
@@ -11367,6 +11574,8 @@ function addAddonToCartItem(itemKey, addonId) {
 }
 
 function removeAddonFromCartItem(itemKey, addonId) {
+  const cartLine = cart.find(item => cartItemKey(item) === itemKey);
+  if (cartItemLockedForRegularUnpaidEdit(cartLine)) return toast("Item lama tidak bisa diubah.");
   cart = cart.map(item => {
     if (cartItemKey(item) !== itemKey) return item;
     const addons = (item.addons || []).map(addon => ({ ...addon }));
@@ -11382,6 +11591,9 @@ function removeAddonFromCartItem(itemKey, addonId) {
 
 async function setCartQty(id, qty) {
   const cartLine = cart.find(item => cartItemKey(item) === id);
+  if (cartItemLockedForRegularUnpaidEdit(cartLine) && qty < Number(cartLine?.qty || 0)) {
+    return toast("Item lama tidak bisa dikurangi.");
+  }
   const product = state.products.find(item => item.id === cartLine?.productId);
   const variantKey = cartItemVariantKey(cartLine);
   const increasing = qty > Number(cartLine?.qty || 0);
@@ -11461,7 +11673,7 @@ function orderAdditionalItems(existingItems = [], nextItems = []) {
     .map(item => {
       const previousQty = previousByKey.get(cartItemKey(item)) || 0;
       const qty = Number(item.qty || 0) - previousQty;
-      return qty > 0 ? { ...item, qty } : null;
+      return qty > 0 ? unlockCartItemForOrder({ ...item, qty }) : null;
     })
     .filter(Boolean);
 }
@@ -11482,6 +11694,292 @@ function prepareAdditionalOrderItems(existingItems = [], nextItems = [], batch =
     };
   });
   return tagOrderBatchItems(additionalItems, batch, batchNote, batchCreatedAt);
+}
+
+function isOrderCorrectionMode() {
+  return Boolean(sessionStorage.getItem("pos_correction_order_id"));
+}
+
+function currentCorrectionOrder() {
+  const id = sessionStorage.getItem("pos_correction_order_id");
+  return id ? state.orders.find(order => order.id === id) : null;
+}
+
+function canCorrectOrder(order) {
+  if (!order || orderIsCancelled(order)) return false;
+  if (order.paymentStatus === "Lunas") return false;
+  return ["Pesanan Baru", "Sedang Disiapkan"].includes(order.status);
+}
+
+function orderCorrectionRecords(order) {
+  const records = order?.preparedItems?.__corrections;
+  return Array.isArray(records) ? records : [];
+}
+
+function orderCorrectionCount(order) {
+  return orderCorrectionRecords(order).length;
+}
+
+function orderCorrectionBadgeHtml(order) {
+  const count = orderCorrectionCount(order);
+  if (!count) return "";
+  return `<span class="order-correction-badge">Dikoreksi${count > 1 ? ` x${count}` : ""}</span>`;
+}
+
+function correctionDisplayItem(record = {}) {
+  const before = record.beforeItem || record.item || {};
+  const qty = Number(record.beforeQty || before.qty || 0) || 0;
+  return { ...before, qty };
+}
+
+function correctionBatch(record = {}) {
+  return Math.max(1, Number(record.batch || orderItemBatch(record.beforeItem || record.item || {})) || 1);
+}
+
+function correctionRecordsForBatch(order, batch) {
+  const target = Math.max(1, Number(batch || 1) || 1);
+  return orderCorrectionRecords(order).filter(record => correctionBatch(record) === target);
+}
+
+function ordersCorrectionLineHtml(record = {}) {
+  const item = correctionDisplayItem(record);
+  const afterQty = Number(record.afterQty || 0) || 0;
+  const reason = `${record.reason || "Koreksi pesanan"}${afterQty > 0 ? ` -> ${afterQty}x tersisa` : ""}`;
+  return `
+    <div class="orders-item-line orders-correction-line">
+      <span>
+        <b>${escapeHtml(orderItemInlineLabel(item))}</b>
+        <small class="orders-correction-reason">${escapeHtml(reason)}</small>
+      </span>
+      <strong>${money(cartItemTotal(item))}</strong>
+    </div>
+  `;
+}
+
+function correctionCartItemFromOrder(item = {}) {
+  const clean = unlockCartItemForOrder({ ...item });
+  const sourceKey = cartItemKey(item);
+  return {
+    ...clean,
+    correctionSourceKey: sourceKey,
+    correctionOriginalQty: Math.max(0, Number(item.qty || 0) || 0),
+    correctionOriginalBatch: orderItemBatch(item),
+    correctionOriginalBatchCreatedAt: orderItemBatchCreatedAt(item)
+  };
+}
+
+function openOrderCorrection(id) {
+  const order = state.orders.find(item => item.id === id);
+  if (!canCorrectOrder(order)) return toast("Pesanan ini tidak bisa dikoreksi.");
+  cart = (order.items || []).map(correctionCartItemFromOrder);
+  clearPosDraft();
+  sessionStorage.setItem("pos_correction_order_id", id);
+  sessionStorage.setItem("pos_order_type", order.type || "");
+  sessionStorage.setItem("pos_customer_name", order.customer || "");
+  sessionStorage.setItem("pos_service_info", order.serviceInfo || "");
+  sessionStorage.setItem("pos_order_note", order.note || "");
+  if (Number(order.discount || 0) > 0) sessionStorage.setItem("pos_discount", order.discount);
+  else sessionStorage.removeItem("pos_discount");
+  sessionStorage.setItem("pos_discount_type", "rp");
+  sessionStorage.setItem("pos_cart_step", "items");
+  sessionStorage.setItem("pos_mobile_view", "cart");
+  sessionStorage.removeItem("pos_last_result");
+  closeModal({ skipHistory: true });
+  view = "pos";
+  setAppHash("pos", { replace: true });
+  render();
+  toast(`Mode koreksi ${displayOrderNumber(order.number)} aktif.`);
+}
+
+function cancelOrderCorrection() {
+  const order = currentCorrectionOrder();
+  cart = [];
+  clearPosDraft();
+  sessionStorage.setItem("pos_cart_step", "items");
+  sessionStorage.setItem("pos_mobile_view", "items");
+  view = "orders";
+  setAppHash("orders", { replace: true });
+  render();
+  toast(order ? `Koreksi ${displayOrderNumber(order.number)} dibatalkan.` : "Koreksi dibatalkan.");
+}
+
+function openOrderCorrectionReasonDialog() {
+  const order = currentCorrectionOrder();
+  if (!order) return toast("Mode koreksi belum aktif.");
+  if (!cart.length) return toast("Koreksi tidak boleh mengosongkan pesanan. Batalkan pesanan jika semua item salah.");
+  openModal(`
+    <div class="section-title correction-dialog-title">
+      <div><h3>Alasan Koreksi</h3><p>${escapeHtml(displayOrderNumber(order.number))}</p></div>
+      <button class="modal-close-x" onclick="closeModal({ skipHistory: true })" aria-label="Tutup">&times;</button>
+    </div>
+    <form class="correction-reason-form" onsubmit="return saveOrderCorrection(event)">
+      <div class="field">
+        <label>Alasan</label>
+        <select id="orderCorrectionReason" class="input" required>
+          <option value="">Pilih alasan</option>
+          <option>Salah pilih produk</option>
+          <option>Salah jumlah</option>
+          <option>Permintaan customer</option>
+          <option>Salah input</option>
+          <option>Lainnya</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Catatan</label>
+        <textarea id="orderCorrectionNote" class="input" rows="3" placeholder="Opsional"></textarea>
+      </div>
+      <div class="correction-dialog-actions">
+        <button class="btn" type="button" onclick="closeModal({ skipHistory: true })">Batal</button>
+        <button class="btn green" type="submit">Simpan Koreksi</button>
+      </div>
+    </form>
+  `, { skipHistory: true });
+}
+
+function orderCorrectionRemovedStockItem(beforeItem, removedQty, beforeQty) {
+  const ratio = beforeQty > 0 ? Math.min(1, Math.max(0, removedQty / beforeQty)) : 0;
+  return {
+    ...beforeItem,
+    qty: removedQty,
+    addons: (beforeItem.addons || []).map(addon => ({
+      ...addon,
+      qty: Math.max(0, Math.round(Number(addon.qty || 0) * ratio))
+    })).filter(addon => Number(addon.qty || 0) > 0)
+  };
+}
+
+function buildOrderCorrectionDiff(order, nextItems, reason, note) {
+  const now = new Date().toISOString();
+  const beforeItems = order.items || [];
+  const nextBySource = new Map();
+  (nextItems || []).forEach(item => {
+    const key = String(item.correctionSourceKey || cartItemKey(item));
+    if (key) nextBySource.set(key, item);
+  });
+  const activeOldItems = [];
+  const correctionRecords = [];
+  const restoredStockItems = [];
+  beforeItems.forEach((beforeItem, beforeIndex) => {
+    const key = cartItemKey(beforeItem);
+    const nextItem = nextBySource.get(key);
+    const beforeQty = Math.max(0, Number(beforeItem.qty || 0) || 0);
+    const nextQty = Math.max(0, Number(nextItem?.qty || 0) || 0);
+    const keptQty = Math.min(beforeQty, nextQty);
+    if (keptQty > 0) {
+      const keptItem = stripOrderCorrectionCartMetadata({ ...beforeItem, qty: keptQty });
+      keptItem.correctionOriginalIndex = Number(beforeItem.correctionOriginalIndex ?? beforeIndex);
+      keptItem.discount = itemDiscountAmount(keptItem);
+      activeOldItems.push(keptItem);
+    }
+    if (nextQty < beforeQty) {
+      const removedQty = beforeQty - nextQty;
+      correctionRecords.push({
+        id: uid(),
+        at: now,
+        reason,
+        note,
+        batch: orderItemBatch(beforeItem),
+        originalIndex: Number(beforeItem.correctionOriginalIndex ?? beforeIndex),
+        beforeQty,
+        afterQty: nextQty,
+        removedQty,
+        beforeItem: stripOrderCorrectionCartMetadata({ ...beforeItem })
+      });
+      restoredStockItems.push(orderCorrectionRemovedStockItem(beforeItem, removedQty, beforeQty));
+    }
+  });
+  const batch = Math.max(1, ...beforeItems.map(orderItemBatch)) + 1;
+  const additionalItems = prepareAdditionalOrderItems(beforeItems, nextItems, batch, note, now).map(stripOrderCorrectionCartMetadata);
+  return { activeOldItems, additionalItems, correctionRecords, restoredStockItems, now };
+}
+
+async function saveOrderCorrection(event) {
+  event?.preventDefault?.();
+  const order = currentCorrectionOrder();
+  if (!order || !canCorrectOrder(order)) return false;
+  const reason = String(document.getElementById("orderCorrectionReason")?.value || "").trim();
+  const note = String(document.getElementById("orderCorrectionNote")?.value || "").trim();
+  if (!reason) return toast("Pilih alasan koreksi.");
+  const nextItems = cart.map(item => ({ ...item }));
+  const diff = buildOrderCorrectionDiff(order, nextItems, reason, note);
+  if (!diff.correctionRecords.length && !diff.additionalItems.length) return toast("Belum ada perubahan koreksi.");
+  const limitedStockChanged = [...diff.restoredStockItems, ...diff.additionalItems].some(item => {
+    const product = state.products.find(candidate => candidate.id === item.productId);
+    return item.stockTracked === true || limitedStockRequiresOnline(product, item.stockVariantKey || cartItemVariantKey(item));
+  });
+  if (limitedStockChanged && !canAttemptSupabaseSync()) return toast("Koreksi produk stok terbatas memerlukan koneksi internet.");
+  let stockCommit = { accepted: true, token: "" };
+  if (diff.additionalItems.length) {
+    const stockValidation = validateLimitedStockItems(diff.additionalItems);
+    if (!stockValidation.ok) return toast(limitedStockMessage(stockValidation.product, stockValidation.variantKey, stockValidation.available));
+    stockCommit = await commitLimitedStockReservations(diff.additionalItems, order.number, "POS");
+    if (!stockCommit.accepted) return toast(limitedStockFailureMessage(stockCommit.product || stockValidation.product, stockCommit.variantKey || "", stockCommit));
+  }
+  const touchedProductIds = [];
+  if (diff.restoredStockItems.length) {
+    touchedProductIds.push(...applyLimitedStockItems(diff.restoredStockItems, 1, `Koreksi ${order.number}`));
+    for (const item of diff.restoredStockItems) {
+      for (const addon of item.addons || []) {
+        const addonProduct = state.products.find(product => product.id === addon.id);
+        if (addonProduct?.trackStock) {
+          addonProduct.stock += addon.qty;
+          touchedProductIds.push(addonProduct.id);
+          state.stockMovements.unshift({ id: uid(), at: diff.now, productId: addonProduct.id, productName: addonProduct.name, qty: addon.qty, reason: `Koreksi add-on ${order.number}` });
+        }
+      }
+    }
+  }
+  if (diff.additionalItems.length) {
+    touchedProductIds.push(...applyLimitedStockItems(diff.additionalItems, -1, `Tambahan koreksi ${order.number}`));
+    for (const item of diff.additionalItems) {
+      for (const addon of item.addons || []) {
+        const addonProduct = state.products.find(product => product.id === addon.id);
+        if (addonProduct?.trackStock) {
+          addonProduct.stock = Math.max(0, addonProduct.stock - addon.qty);
+          touchedProductIds.push(addonProduct.id);
+          state.stockMovements.unshift({ id: uid(), at: diff.now, productId: addonProduct.id, productName: addonProduct.name, qty: -addon.qty, reason: `Add-on tambahan koreksi ${order.number}` });
+        }
+      }
+    }
+  }
+  order.preparedItems ||= {};
+  order.preparedItems.__corrections = [...orderCorrectionRecords(order), ...diff.correctionRecords];
+  order.items = [...diff.activeOldItems, ...diff.additionalItems];
+  order.subtotal = order.items.reduce((sum, item) => sum + cartItemTotal(item), 0);
+  order.discount = orderDiscountAmount(order.subtotal);
+  order.tax = 0;
+  order.grandTotal = Math.max(0, order.subtotal - order.discount);
+  order.updatedAt = diff.now;
+  order.correctionCount = orderCorrectionCount(order);
+  order.correctionLastReason = reason;
+  if (diff.additionalItems.length) {
+    order.status = "Pesanan Baru";
+    order.confirmedAt = null;
+    order.preparedAt = null;
+    order.readyAt = null;
+    order.completedAt = null;
+    order.pendingPushEventType = "additional_order";
+  }
+  if (stockCommit.token) order.limitedStockCommitToken = stockCommit.token;
+  cart = [];
+  clearPosDraft();
+  closeModal({ skipHistory: true });
+  sessionStorage.setItem("pos_mobile_view", "items");
+  sessionStorage.setItem("pos_cart_step", "items");
+  audit("Koreksi pesanan", `${order.number}; ${reason}; ${diff.correctionRecords.length} dikurangi; ${diff.additionalItems.length} tambahan`);
+  saveState();
+  const committedProductIds = new Set([...limitedStockItemTotals(diff.additionalItems).values()].map(entry => entry.product.id));
+  syncProductsByIds(touchedProductIds.filter(productId => !committedProductIds.has(productId)));
+  if (diff.additionalItems.length || diff.restoredStockItems.length) {
+    rotateLimitedStockReservationToken("POS");
+    broadcastRealtimeEvent("products");
+  }
+  toastOrderSyncOutcome(order, diff.additionalItems.length ? "Koreksi disimpan dan tambahan dikirim ke dapur." : "Koreksi pesanan disimpan.");
+  broadcastRealtimeEvent("orders");
+  view = "orders";
+  setAppHash("orders", { replace: true });
+  render();
+  return false;
 }
 
 function selectedUnpaidFilter() {
@@ -11532,7 +12030,7 @@ function setUnpaidFilter(type) {
 function payUnpaidOrder(id) {
   const order = state.orders.find(item => item.id === id);
   if (!order) return;
-  cart = order.items.map(item => ({ ...item }));
+  cart = order.items.map(item => lockCartItemFromUnpaidOrder(item, id));
   clearPosDraft();
   sessionStorage.setItem("pos_pay_unpaid_id", id);
   sessionStorage.setItem("pos_order_type", order.type);
@@ -11593,7 +12091,7 @@ function toggleItemDisplay() {
 }
 
 function clearPosDraft() {
-  ["pos_discount", "pos_discount_type", "pos_order_type", "pos_customer_name", "pos_service_info", "pos_order_note", "pos_payment_method", "pos_received_amount", "pos_split_cash_amount", "pos_split_qris_amount", "pos_split_payment_target", "pos_print_receipt", "pos_pay_unpaid_id"].forEach(key => sessionStorage.removeItem(key));
+  ["pos_discount", "pos_discount_type", "pos_order_type", "pos_customer_name", "pos_service_info", "pos_order_note", "pos_payment_method", "pos_received_amount", "pos_split_cash_amount", "pos_split_qris_amount", "pos_split_payment_target", "pos_print_receipt", "pos_pay_unpaid_id", "pos_correction_order_id"].forEach(key => sessionStorage.removeItem(key));
 }
 
 async function submitOrder() {
@@ -11630,7 +12128,7 @@ async function submitOrder() {
     existingOrder.customer = customerDisplayName(document.getElementById("customerName")?.value);
     existingOrder.serviceInfo = document.getElementById("serviceInfo")?.value || existingOrder.serviceInfo || "-";
     existingOrder.note = additionalItems.length ? (existingOrder.note || "") : submittedOrderNote;
-    existingOrder.items = additionalItems.length ? [...(existingOrder.items || []), ...additionalItems] : nextItems;
+    existingOrder.items = additionalItems.length ? [...(existingOrder.items || []), ...additionalItems] : (existingOrder.items || []);
     existingOrder.paymentStatus = "Lunas";
     existingOrder.paymentMethod = paymentMethod;
     existingOrder.receivedAmount = paymentPayload.receivedAmount;
@@ -11781,7 +12279,7 @@ async function saveOrderPayLater() {
     existingOrder.customer = customerDisplayName(document.getElementById("customerName")?.value);
     existingOrder.serviceInfo = document.getElementById("serviceInfo")?.value || existingOrder.serviceInfo || "-";
     existingOrder.note = additionalItems.length ? (existingOrder.note || "") : submittedOrderNote;
-    existingOrder.items = additionalItems.length ? [...(existingOrder.items || []), ...additionalItems] : nextItems;
+    existingOrder.items = additionalItems.length ? [...(existingOrder.items || []), ...additionalItems] : (existingOrder.items || []);
     existingOrder.subtotal = subtotal;
     existingOrder.discount = discount;
     existingOrder.tax = tax;
@@ -12185,7 +12683,15 @@ function kitchenCard(order, sequenceNumber = 0) {
   const carryoverLabel = typeof kitchenOrderIsCarryover === "function" && kitchenOrderIsCarryover(order)
     ? `<span class="kitchen-carryover-badge">Transaksi Kemarin</span>`
     : "";
-  const groups = groupedOrderItems(order);
+  const activeGroups = groupedOrderItems(order);
+  const correctionBatches = new Set(orderCorrectionRecords(order).map(correctionBatch));
+  const groups = activeGroups.slice();
+  correctionBatches.forEach(batch => {
+    if (!groups.some(group => Number(group.batch) === Number(batch))) {
+      groups.push({ batch, label: orderBatchLabel(batch), items: [] });
+    }
+  });
+  groups.sort((a, b) => Number(a.batch || 1) - Number(b.batch || 1));
   const itemsReadyText = order.status === "Sedang Disiapkan"
     ? `${(order.items || []).filter((item, itemIndex) => isKitchenItemPrepared(order, item, itemIndex)).length}/${(order.items || []).length} item siap`
     : "";
@@ -12206,7 +12712,10 @@ function kitchenCard(order, sequenceNumber = 0) {
             ${carryoverLabel}
           </div>
         </div>
-        ${statusPill(order.status)}
+        <div class="kitchen-order-statuses">
+          ${statusPill(order.status)}
+          ${orderCorrectionBadgeHtml(order)}
+        </div>
       </div>
       <div class="kitchen-order-meta">
         ${kitchenType ? `<span class="pill">${escapeHtml(kitchenType)}</span>` : ""}
@@ -12237,6 +12746,18 @@ function kitchenCard(order, sequenceNumber = 0) {
                   <div class="kitchen-prep-detail">
                     <span>${escapeHtml(orderItemInlineLabel(item))}</span>
                     ${orderItemNoteHtml(item, "kitchen-item-note")}
+                  </div>
+                </div>
+              `;
+            }).join("")}
+            ${correctionRecordsForBatch(order, group.batch).map(record => {
+              const item = correctionDisplayItem(record);
+              return `
+                <div class="order-item kitchen-prep-item is-corrected">
+                  <button class="kitchen-prep-check correction-minus" type="button" disabled aria-label="Item dikoreksi">-</button>
+                  <div class="kitchen-prep-detail">
+                    <span>${escapeHtml(orderItemInlineLabel(item))}</span>
+                    <small class="kitchen-correction-reason">Koreksi: ${escapeHtml(record.reason || "Dikoreksi")}</small>
                   </div>
                 </div>
               `;
@@ -12273,7 +12794,10 @@ function advanceOrder(id) {
   order.status = next[0];
   order[next[1]] = new Date().toISOString();
   if (wasNewOrder && !isNewOrderStatus(order)) cancelNativeOrderReminder(order);
-  if (order.status === "Sedang Disiapkan") order.preparedItems ||= {};
+  if (order.status === "Sedang Disiapkan") {
+    order.preparedItems ||= {};
+    sanitizeKitchenPreparedItems(order);
+  }
   if (order.status === "Selesai") lockKitchenPreparedBatches(order);
   audit("Status pesanan diubah", `${order.number} menjadi ${order.status}`);
   setKitchenOptimisticOrderMutation(order, {
@@ -12882,23 +13406,41 @@ function orderCenterCard(order, options = {}) {
   }
   normalizeOrderBatches(order);
   const groups = groupedOrderItems(order);
+  const correctionBatches = new Set(orderCorrectionRecords(order).map(correctionBatch));
+  correctionBatches.forEach(batch => {
+    if (!groups.some(group => Number(group.batch) === Number(batch))) {
+      groups.push({ batch, label: orderBatchLabel(batch), items: [] });
+    }
+  });
+  groups.sort((a, b) => Number(a.batch || 1) - Number(b.batch || 1));
   const itemPreview = groups.map(group => {
     const groupNote = orderGroupNote(order, group);
-    return `
-      <div class="orders-item-group">
-        ${groups.length > 1 ? `<small>${escapeHtml(group.label)}</small>` : ""}
-        ${groupNote ? `<p class="orders-item-group-note"><b>Catatan:</b> ${escapeHtml(groupNote)}</p>` : ""}
-        ${group.items.map(item => `
+    const displayLines = [
+      ...group.items.map((item, itemIndex) => ({
+        sortIndex: Number(item.correctionOriginalIndex ?? itemIndex) + 0.1,
+        html: `
           <div class="orders-item-line">
             <span><b>${escapeHtml(orderItemInlineLabel(item))}</b>${orderItemNoteHtml(item, "orders-item-note")}</span>
             <strong>${money(cartItemTotal(item))}</strong>
           </div>
-        `).join("")}
+        `
+      })),
+      ...correctionRecordsForBatch(order, group.batch).map((record, recordIndex) => ({
+        sortIndex: Number.isFinite(Number(record.originalIndex)) ? Number(record.originalIndex) : 10000 + recordIndex,
+        html: ordersCorrectionLineHtml(record)
+      }))
+    ].sort((a, b) => a.sortIndex - b.sortIndex);
+    return `
+      <div class="orders-item-group">
+        ${groups.length > 1 ? `<small>${escapeHtml(group.label)}</small>` : ""}
+        ${groupNote ? `<p class="orders-item-group-note"><b>Catatan:</b> ${escapeHtml(groupNote)}</p>` : ""}
+        ${displayLines.map(line => line.html).join("")}
       </div>
     `;
   }).join("");
   const actions = [
     order.paymentStatus !== "Lunas" && order.status !== "Dibatalkan" ? `<button class="btn green" type="button" onclick="event.preventDefault(); event.stopPropagation(); payUnpaidOrder('${order.id}')">Bayar</button>` : "",
+    canCorrectOrder(order) ? `<button class="btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); openOrderCorrection('${order.id}')">Koreksi Pesanan</button>` : "",
     canMoveOrderTable(order) ? `<button class="btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); openMoveOrderTableDialog('${order.id}', ${options.returnToUnpaid ? "'unpaid'" : "'orders'"})">Pindahkan Meja</button>` : "",
     canCancelOrder(order) ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openCancelOrderDialog('${order.id}', ${options.returnToUnpaid ? "true" : "false"})">Batalkan</button>` : "",
     canDeleteOrderCard(order) ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openDeleteOrderDialog('${order.id}')">Hapus</button>` : ""
@@ -12920,7 +13462,10 @@ function orderCenterCard(order, options = {}) {
           </div>
           <span>${dateTime(order.createdAt)}</span>
         </div>
-        <span class="orders-status-pill ${compactStatus.className}">${escapeHtml(compactStatus.label)}</span>
+        <div class="orders-card-statuses">
+          <span class="orders-status-pill ${compactStatus.className}">${escapeHtml(compactStatus.label)}</span>
+          ${orderCorrectionBadgeHtml(order)}
+        </div>
       </div>
       <div class="orders-card-meta">
         <span>${escapeHtml(order.type || "-")}</span>
@@ -14189,6 +14734,7 @@ function orderReportRecord(order) {
     type: order.type || "Dine In",
     customer: customerDisplayName(order.customer),
     paymentMethod: order.paymentMethod || "Belum dipilih",
+    paymentBreakdown: normalizePaymentBreakdown(order.paymentBreakdown || order.payment_breakdown || {}),
     paymentStatus: order.paymentStatus || "Belum lunas",
     status: order.status || "",
     subtotal,
@@ -14210,6 +14756,7 @@ function importedReportRecord(row) {
     type: row.type || "Import",
     customer: row.customer || "-",
     paymentMethod: row.paymentMethod || "Cash dan Piutang",
+    paymentBreakdown: normalizePaymentBreakdown(row.paymentBreakdown || row.payment_breakdown || {}),
     paymentStatus: row.paymentStatus || "Lunas",
     subtotal: Number(row.subtotal ?? row.total ?? 0),
     discount: Number(row.discount || 0),
@@ -14247,6 +14794,30 @@ function rawRecordInRange(record, range) {
   return date >= range.start && date <= range.end;
 }
 
+function mergeReportRecordsForDisplay(existing, incoming) {
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+  const existingHasItems = Boolean((existing.items || []).length);
+  const incomingHasItems = Boolean((incoming.items || []).length);
+  const base = !existingHasItems && incomingHasItems ? incoming : existing;
+  const other = base === existing ? incoming : existing;
+  const incomingBreakdown = normalizePaymentBreakdown(incoming.paymentBreakdown || incoming.payment_breakdown || {});
+  const existingBreakdown = normalizePaymentBreakdown(existing.paymentBreakdown || existing.payment_breakdown || {});
+  const mergedFields = {
+    paymentMethod: base.paymentMethod || other.paymentMethod,
+    paymentStatus: base.paymentStatus || other.paymentStatus,
+    paidAt: base.paidAt || base.paid_at || other.paidAt || other.paid_at,
+    createdAt: base.createdAt || base.created_at || other.createdAt || other.created_at
+  };
+  if (paymentBreakdownHasAmount(incomingBreakdown)) {
+    return { ...base, ...mergedFields, paymentBreakdown: incomingBreakdown };
+  }
+  if (paymentBreakdownHasAmount(existingBreakdown)) {
+    return { ...base, ...mergedFields, paymentBreakdown: existingBreakdown };
+  }
+  return { ...base, ...mergedFields, paymentBreakdown: normalizePaymentBreakdown(base.paymentBreakdown || base.payment_breakdown || {}) };
+}
+
 function reportSourceRecords(range = null) {
   const deletedKeys = new Set(state.deletedReportKeys || []);
   const localRecords = [
@@ -14257,14 +14828,15 @@ function reportSourceRecords(range = null) {
     return isReportableRecord(record) && recordInRange(record, range) && !deletedKeys.has(key);
   });
   const merged = new Map();
-  for (const record of localRecords) merged.set(reportRecordKey(record), record);
+  for (const record of localRecords) {
+    const key = reportRecordKey(record);
+    merged.set(key, mergeReportRecordsForDisplay(merged.get(key), record));
+  }
   for (const record of supabaseReportRecords.filter(record => isReportableRecord(record) && recordInRange(record, range))) {
     const key = reportRecordKey(record);
     if (deletedKeys.has(key)) continue;
     const existing = merged.get(key);
-    const existingHasItems = Boolean((existing?.items || []).length);
-    const incomingHasItems = Boolean((record.items || []).length);
-    if (!existing || (!existingHasItems && incomingHasItems)) merged.set(key, record);
+    merged.set(key, mergeReportRecordsForDisplay(existing, record));
   }
   return [...merged.values()].sort((a, b) => reportRecordTime(b) - reportRecordTime(a));
 }
@@ -15416,5 +15988,6 @@ function resetDemo() {
 
 initializePersistentState();
 render();
+
 
 

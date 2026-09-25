@@ -17,14 +17,14 @@ function renderDashboard() {
   const productSoldOutAlerts = dashboardProductSoldOutAlerts();
   const rawMaterialAlertCount = dashboardRawMaterialAlerts(Number.POSITIVE_INFINITY).length;
   const productSoldOutAlertCount = dashboardProductSoldOutAlerts(Number.POSITIVE_INFINITY).length;
-  const financialSummary = dashboardFinancialSummary(financialRange);
   const orderSummary = typeof reportOrderSummary === "function"
     ? reportOrderSummary(financialRange)
     : { loaded: false, byType: {}, totalDone: 0 };
-  const financialRecords = financialSummary.loaded ? financialSummary.rows : dashboardFallbackFinancialRecords(financialRange);
+  const financialRecords = dashboardFinancialRecords(financialRange);
   const sales = financialRecords.reduce((sum, record) => sum + Number(record.total || 0), 0);
   const profit = financialRecords.reduce((sum, record) => sum + Number(record.profit || 0), 0);
-  const transactionCount = financialRecords.reduce((sum, record) => sum + Number(record.count || record.transaction_count || 1), 0);
+  const paidTransactionCount = financialRecords.reduce((sum, record) => sum + Number(record.count || record.transaction_count || 1), 0);
+  const transactionCount = Math.max(paidTransactionCount, periodOrders.length);
   const availableProducts = state.products.filter(product => product.active && !product.soldOut).length;
   const categories = productCategories();
   const latest = [...periodOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 4);
@@ -345,10 +345,12 @@ function dashboardFallbackFinancialRecords(range) {
 
 function dashboardFinancialRecords(range) {
   const summary = dashboardFinancialSummary(range);
-  if (summary.loaded) {
+  const fallback = dashboardFallbackFinancialRecords(range);
+  const hasSummaryValue = summary.rows.some(row => Number(row.total || 0) || Number(row.profit || 0));
+  if (summary.loaded && (hasSummaryValue || !fallback.length)) {
     return summary.rows;
   }
-  return dashboardFallbackFinancialRecords(range);
+  return fallback;
 }
 
 function isDashboardOrderInRange(order, range) {

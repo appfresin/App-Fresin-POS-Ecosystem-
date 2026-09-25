@@ -152,7 +152,13 @@
   }
 
   function homeOrderTotal(order) {
-    return typeof orderTotal === "function" ? orderTotal(order) : Number(order?.grandTotal || order?.subtotal || 0);
+    const explicitTotal = Number(order?.grandTotal ?? order?.grand_total ?? 0);
+    const subtotal = Number(order?.subtotal || 0);
+    const discount = Number(order?.discount || 0);
+    const tax = Number(order?.tax ?? order?.tax_amount ?? 0);
+    const serviceFee = Number(order?.serviceFee ?? order?.service_fee ?? 0);
+    const componentTotal = subtotal - discount + tax + serviceFee + homeDeliveryFee(order);
+    return Math.max(0, explicitTotal, componentTotal);
   }
 
   function homeDeliveryFee(order) {
@@ -888,13 +894,28 @@
     return String(payload.paymentUrl || payload.payment_url || "").trim();
   }
 
+  function homePaymentPayloadAmount(payload) {
+    if (!payload || typeof payload !== "object") return 0;
+    const amount = Number(payload.paymentAmount || payload.amount || 0);
+    return Number.isFinite(amount) ? Math.round(amount) : 0;
+  }
+
   function homePaymentGatewayPayload(order) {
     const payload = order?.paymentGatewayPayload && typeof order.paymentGatewayPayload === "object" && !Array.isArray(order.paymentGatewayPayload)
       ? { ...order.paymentGatewayPayload }
       : {};
-    const paymentUrl = String(order?.paymentUrl || homePaymentUrlFromPayload(payload) || "").trim();
+    const paymentUrl = String(homePaymentUrlFromPayload(payload) || order?.paymentUrl || "").trim();
     if (paymentUrl) payload.paymentUrl = paymentUrl;
     return payload;
+  }
+
+  function homePaymentNeedsRefresh(order) {
+    const gatewayPayload = homePaymentGatewayPayload(order);
+    const paymentUrl = order?.paymentUrl || homePaymentUrlFromPayload(gatewayPayload);
+    const storedAmount = homePaymentPayloadAmount(gatewayPayload);
+    const currentAmount = Math.round(homeOrderTotal(order));
+    if (!paymentUrl && !order?.paymentQrUrl) return true;
+    return Boolean(order?.paymentReference && storedAmount !== currentAmount);
   }
 
   function homeIsDevelopmentPayment() {
@@ -942,7 +963,7 @@
         reference: order.paymentReference,
         amount: homeOrderTotal(order),
         qrUrl: order.paymentQrUrl || "",
-        paymentUrl: order.paymentUrl || homePaymentUrlFromPayload(gatewayPayload) || "",
+        paymentUrl: homePaymentUrlFromPayload(gatewayPayload) || order.paymentUrl || "",
         status: order.paymentGatewayStatus || "",
         error: order.paymentError || "",
         loading: order.paymentLoading === true
@@ -952,8 +973,11 @@
       const provider = homePaymentProvider();
       if (!order || homeIsPaid(order) || provider !== "duitku") return false;
       if (homeOrderKind(order) === "DELIVERY" && !homeDeliveryCanPay(order)) return false;
-      const paymentUrl = order.paymentUrl || homePaymentUrlFromPayload(order.paymentGatewayPayload);
-      if ((order.paymentQrUrl || paymentUrl) && order.paymentReference) return true;
+      const gatewayPayload = homePaymentGatewayPayload(order);
+      const paymentUrl = homePaymentUrlFromPayload(gatewayPayload) || order.paymentUrl;
+      const storedAmount = homePaymentPayloadAmount(gatewayPayload);
+      const currentAmount = Math.round(homeOrderTotal(order));
+      if ((order.paymentQrUrl || paymentUrl) && order.paymentReference && storedAmount === currentAmount) return true;
       if (!supabaseReadable() || !supabaseClient?.functions?.invoke) {
         order.paymentError = "Koneksi pembayaran belum siap.";
         saveState();
@@ -983,7 +1007,7 @@
         order.paymentGatewayStatus = data.transactionStatus || order.paymentGatewayStatus || "pending";
         order.paymentQrUrl = data.qrUrl || order.paymentQrUrl || "";
         order.paymentUrl = data.paymentUrl || order.paymentUrl || "";
-        if (order.paymentUrl) order.paymentGatewayPayload = { ...homePaymentGatewayPayload(order), paymentUrl: order.paymentUrl };
+        if (order.paymentUrl) order.paymentGatewayPayload = { ...homePaymentGatewayPayload(order), paymentUrl: order.paymentUrl, paymentAmount: data.amount || currentAmount };
         order.paymentExpiryTime = data.expiryTime || order.paymentExpiryTime || "";
         order.paymentError = "";
         await homeSyncOrderExtras(order);
@@ -1687,14 +1711,13 @@
 
   function homePaymentPage(order) {
     const payment = PaymentService.createPayment(order);
-    if (!homeIsPaid(order) && payment.provider === "duitku" && !payment.qrUrl && !payment.paymentUrl && !payment.error && !payment.loading) {
+    if (!homeIsPaid(order) && payment.provider === "duitku" && homePaymentNeedsRefresh(order) && !payment.error && !payment.loading) {
       window.setTimeout(() => PaymentService.ensurePayment(order), 0);
     }
     return `
       <section class="customer-home-payment-card">
         <div class="customer-home-total-row"><span>Total Pembayaran</span><strong>${homeMoney(payment.amount)}</strong></div>
         ${PaymentQRCode(payment)}
-        <p>Menunggu pembayaran...</p>
         ${homeCanUseTemporaryDummyPayment(order) ? `
           <div class="customer-home-dummy-panel">
             <small>Testing sementara integrasi QRIS</small>
@@ -1702,13 +1725,40 @@
             <button class="self-order-primary" type="button" onclick="CustomerOrder.dummyPaymentSuccess()">Anggap Terbayar untuk Test</button>
           </div>
         ` : ""}
-        ${homeIsDevelopmentPayment() ? `
-          <div class="customer-home-dev-panel">
-            <small>Development mock payment</small>
-            <button class="self-order-primary" type="button" onclick="CustomerOrder.mockPaymentSuccess()">Simulasi Pembayaran Berhasil</button>
-          </div>
-        ` : ""}
       </section>
+    `;
+  }
+
+  function homeOrderItemTotal(item) {
+    if (typeof cartItemTotal === "function") return cartItemTotal(item);
+    const addonsTotal = (item?.addons || []).reduce((sum, addon) => sum + Number(addon.price || 0) * Number(addon.qty || 0), 0);
+    return (Number(item?.price || 0) * Number(item?.qty || 0)) + addonsTotal;
+  }
+
+  function homeOrderSummaryCard(order) {
+    const kind = homeOrderKind(order);
+    const items = order?.items || order?.cart || [];
+    return `
+      <div class="self-order-success-detail customer-home-order-summary">
+        <span><b>Nomor pesanan</b><strong>${homeEscape(order?.number || "-")}</strong></span>
+        <span><b>Layanan</b><strong>${kind === "DELIVERY" ? "Delivery" : "Ambil Sendiri"}</strong></span>
+        <span class="customer-home-order-summary-total">
+          <b>Total Pembayaran</b><strong>${homeMoney(homeOrderTotal(order))}</strong>
+        </span>
+        <details class="customer-home-payment-breakdown">
+          <summary><span>Lihat detail</span></summary>
+          <div>
+            ${items.length ? items.map(item => `
+              <span class="customer-home-payment-breakdown-item">
+                <b>${Number(item.qty || 0)}x ${homeEscape(item.name || "Produk")}</b>
+                <strong>${homeMoney(homeOrderItemTotal(item))}</strong>
+              </span>
+            `).join("") : `<span class="customer-home-payment-breakdown-item"><b>Pesanan</b><strong>${homeMoney(homeOrderSubtotal(order))}</strong></span>`}
+            ${kind === "DELIVERY" ? `<span class="customer-home-payment-breakdown-fee"><b>Ongkir</b><strong>${homeMoney(homeDeliveryFee(order))}</strong></span>` : ""}
+            <span class="customer-home-payment-breakdown-grand"><b>Total</b><strong>${homeMoney(homeOrderTotal(order))}</strong></span>
+          </div>
+        </details>
+      </div>
     `;
   }
 
@@ -1798,43 +1848,17 @@
     const canPay = kind !== "DELIVERY" || homeDeliveryCanPay(order);
     const waitingDriverBeforePayment = kind === "DELIVERY" && !paid && !canPay;
     const driverSearchExpired = kind === "DELIVERY" && !paid && status === "NO_DRIVER_AVAILABLE";
-    const heroTitle = driverSearchExpired ? "Driver belum tersedia" : waitingDriverBeforePayment ? "Mencari driver" : paid ? "Pembayaran berhasil" : "Menunggu pembayaran";
-    const nextText = driverSearchExpired
-      ? "Belum ada driver yang menerima pesanan. Kamu bisa mencoba mencari driver lagi."
-      : waitingDriverBeforePayment
-      ? "Kami sedang mencarikan driver. Halaman pembayaran akan muncul setelah driver ditemukan."
-      : !paid
-      ? "Order belum masuk dapur sebelum pembayaran berhasil."
-      : kind === "DELIVERY"
-        ? (status === "SEARCHING_DRIVER" || status === "NO_DRIVER_AVAILABLE" ? "Sedang mencarikan driver yang tersedia untuk pesanan Anda." : homeStatusLabel(order))
-        : homeStatusLabel(order);
     return `
       <main class="self-order-main success customer-home-status">
         <section class="customer-home-tracking-card">
-          <div class="customer-home-status-hero">
-            <div class="customer-home-status-mark ${paid ? "paid" : ""}" aria-hidden="true">${paid ? "✓" : "!"}</div>
-            <div>
-              <h3>${homeEscape(heroTitle)}</h3>
-              <p>${homeEscape(nextText)}</p>
-            </div>
-          </div>
           ${waitingDriverBeforePayment || driverSearchExpired ? homeRenderDriverSearchPanel(order) : ""}
           ${!paid && canPay ? homePaymentPage(order) : ""}
-          <div class="self-order-success-detail">
-            <span><b>Nomor pesanan</b><strong>${homeEscape(order.number || "-")}</strong></span>
-            <span><b>Layanan</b><strong>${kind === "DELIVERY" ? "Delivery" : "Ambil Sendiri"}</strong></span>
-            ${kind === "DELIVERY" ? `<span><b>Lokasi</b><strong>${order.deliveryLocation ? "Pin tersimpan" : "-"}</strong></span>` : ""}
-            <span><b>Status</b><strong>${homeEscape(homeStatusLabel(order))}</strong></span>
-            ${kind === "DELIVERY"
-              ? `<span><b>Total pesanan</b><strong>${homeMoney(homeOrderSubtotal(order))}</strong></span>
-                 <span><b>Ongkir</b><strong>${homeMoney(homeDeliveryFee(order))}</strong></span>`
-              : `<span><b>Total pesanan</b><strong>${homeMoney(homeOrderTotal(order))}</strong></span>`}
-          </div>
-          ${homeDriverCard(order)}
+          ${homeOrderSummaryCard(order)}
           <section class="customer-home-status-panel">
             <h4>Status Pesanan</h4>
             ${homeProgress(order)}
           </section>
+          ${homeDriverCard(order)}
           ${homeDevStatusButtons(order)}
           <button class="self-order-primary" type="button" onclick="CustomerOrder.startNewOrder()">Pesan Lagi</button>
         </section>

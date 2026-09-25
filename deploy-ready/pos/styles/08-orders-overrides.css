@@ -6284,6 +6284,24 @@
   font-size: 10.5px;
 }
 
+.view-orders .orders-card-actions .orders-print-receipt-btn,
+.view-orders .orders-card-actions .orders-print-receipt-btn.btn.green {
+  background: var(--green) !important;
+  border-color: var(--green) !important;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+}
+
+.view-orders .orders-card-actions .orders-print-receipt-btn:hover,
+.view-orders .orders-card-actions .orders-print-receipt-btn:focus,
+.view-orders .orders-card-actions .orders-print-receipt-btn:focus-visible,
+.view-orders .orders-card-actions .orders-print-receipt-btn:active {
+  background: var(--green-dark) !important;
+  border-color: var(--green-dark) !important;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+}
+
 @media (min-width: 1180px) {
   .view-orders .orders-list-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
