@@ -3093,7 +3093,7 @@ async function loadStockMovementsFromSupabase(options = {}) {
           .select(columns)
           .order("created_at", { ascending: false });
         if (options.auditOnly) {
-          query = query.eq("movement_type", "audit").gte("created_at", since)
+          query = query.eq("movement_type", "audit").neq("qty", 0).gte("created_at", since)
             .range(offset, offset + pageSize - 1);
         } else {
           query = query.limit(pageSize);
