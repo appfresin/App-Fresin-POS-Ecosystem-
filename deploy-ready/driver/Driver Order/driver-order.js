@@ -2,6 +2,7 @@
   "use strict";
 
   const PROFILE_KEY = "kasirin_driver_profile_v1";
+  const STORE_SETTINGS_ROW_ID = "54a5801f-b78f-44a5-aca8-846d33fa292e";
   const VIEW_KEY = "kasirin_driver_view_v1";
   const WALLET_DATE_KEY = "kasirin_driver_wallet_date_v1";
   const WALLET_DATE_TO_KEY = "kasirin_driver_wallet_date_to_v1";
@@ -265,9 +266,8 @@
   async function driverAuthFallbackFromSettings(client, staffCode, pin) {
     const { data, error } = await client
       .from("store_settings")
-      .select("self_order_settings,updated_at")
-      .order("updated_at", { ascending: false })
-      .limit(1)
+      .select("self_order_settings")
+      .eq("id", STORE_SETTINGS_ROW_ID)
       .maybeSingle();
     if (error) throw error;
     const staff = data?.self_order_settings?.staff || {};

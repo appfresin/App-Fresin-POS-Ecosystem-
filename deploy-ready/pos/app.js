@@ -3,6 +3,7 @@ const LOCAL_DB_NAME = "omnipos_local_db";
 const LOCAL_DB_VERSION = 1;
 const LOCAL_DB_STORE = "app_state";
 const SUPABASE_URL = "https://pjkotqianxecaawqompo.supabase.co";
+const STORE_SETTINGS_ROW_ID = "54a5801f-b78f-44a5-aca8-846d33fa292e";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBqa290cWlhbnhlY2Fhd3FvbXBvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2NzM2MTQsImV4cCI6MjEwMjI0OTYxNH0.GkcoOopO65X1hYGDz6h6blHkwZSH7Pl3WNAvQWoGlJc";
 const LEGACY_CASHIER_SUPABASE_URL = "https://osoiyzyrxrykkewdlrze.supabase.co";
 const LEGACY_CASHIER_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9zb2l5enlyeHJ5a2tld2RscnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2OTIyNjMsImV4cCI6MjEwMjI2ODI2M30.xf0qXKu43DAX2m7kI5PJaI1O-cHajNQI1rPrq1EgYzQ";
@@ -103,19 +104,12 @@ const ACCESS_VIEW_OPTIONS = [
   { id: "driver", label: "Driver" }
 ];
 
-const DEFAULT_STAFF_MEMBERS = [
-  { id: "owner", username: "owner", name: "Owner", role: "owner", pin: "0000", active: true },
-  { id: "manager", username: "manager", name: "Manager", role: "manager", pin: "2222", active: true },
-  { id: "kasir", username: "kasir", name: "Kasir", role: "kasir", pin: "1111", active: true },
-  { id: "dapur", username: "dapur", name: "Dapur", role: "dapur", pin: "3333", active: true }
-];
-
 const initialState = {
   outlet: "Outlet Utama",
   activeUser: "Admin Toko",
   staff: {
     activeStaffId: "",
-    members: DEFAULT_STAFF_MEMBERS.map(member => ({ ...member }))
+    members: []
   },
   cashSession: {
     open: true,
@@ -320,6 +314,7 @@ let masterSyncLoadedAt = 0;
 let masterSyncAttempted = false;
 let masterSyncStartedAt = 0;
 let masterSyncUiTimedOut = false;
+let stockOpnameHistoryVisitRequested = false;
 let selfOrderCatalogLoadingGuardTimer = null;
 let nativePushTokenRegisterKey = "";
 let nativePushTokenRegistering = false;
@@ -1337,6 +1332,12 @@ function clearPersistedStaffSession(options = {}) {
 
 function normalizeStaffState() {
   state.staff ||= {};
+  if (state.staff.sourceSettingsId !== STORE_SETTINGS_ROW_ID) {
+    state.staff.members = [];
+    state.staff.deletedStaffIds = [];
+    state.staff.deletedStaffUsernames = [];
+    state.staff.remoteSynced = false;
+  }
   const defaultAccess = Object.fromEntries(Object.entries(ROLE_DEFINITIONS).map(([role, definition]) => [role, [...definition.views]]));
   const validViews = ACCESS_VIEW_OPTIONS.map(option => option.id);
   const existingMembers = Array.isArray(state.staff.members) ? state.staff.members : [];
@@ -1357,12 +1358,7 @@ function normalizeStaffState() {
     state.staff.roleAccess[role] = filtered.length ? filtered : [...views];
   });
   state.staff.roleAccess.owner = [...validViews];
-  const shouldSeedDefaultStaff = state.staff.remoteSynced !== true;
-  const mergedMembers = shouldSeedDefaultStaff
-    ? DEFAULT_STAFF_MEMBERS
-      .filter(member => !deletedStaffIds.has(member.id))
-      .map(member => ({ ...member }))
-    : [];
+  const mergedMembers = [];
   existingMembers.forEach(member => {
     if (!member || member.active === false || deletedStaffIds.has(member.id)) return;
     const normalizedMenuAccess = Array.isArray(member.menuAccess)
@@ -2995,9 +2991,10 @@ async function selectMasterDataFromSupabase(addonColumns) {
 }
 
 function stockMovementKey(move) {
+  const timestamp = Date.parse(move?.at || "");
   const naturalKey = [
     move?.productId || "",
-    move?.at || "",
+    Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : move?.at || "",
     Number(move?.qty || 0),
     move?.reason || ""
   ].join("|");
@@ -3012,6 +3009,20 @@ function stockMovementActor(move) {
   return match?.[1]?.trim() || "-";
 }
 
+function isStockOpnameAuditMovement(move) {
+  return move?.movementType === "audit" || /^Audit stok opname\b/i.test(String(move?.reason || ""));
+}
+
+function stockOpnameHistorySince(now = Date.now()) {
+  const cutoff = new Date(now);
+  const day = cutoff.getDate();
+  cutoff.setDate(1);
+  cutoff.setMonth(cutoff.getMonth() - 2);
+  const lastDay = new Date(cutoff.getFullYear(), cutoff.getMonth() + 1, 0).getDate();
+  cutoff.setDate(Math.min(day, lastDay));
+  return cutoff.toISOString();
+}
+
 function mergeSupabaseStockMovements(serverMovements = []) {
   const merged = [];
   const seen = new Set();
@@ -3021,9 +3032,26 @@ function mergeSupabaseStockMovements(serverMovements = []) {
     seen.add(key);
     merged.push(move);
   });
+  const cutoff = Date.parse(stockOpnameHistorySince());
+  let otherCount = 0;
   state.stockMovements = merged
     .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
-    .slice(0, 300);
+    .filter(move => {
+      if (move.pendingSync) return true;
+      if (isStockOpnameAuditMovement(move)) return Date.parse(move.at || "") >= cutoff;
+      otherCount += 1;
+      return otherCount <= 300;
+    });
+}
+
+function stockOpnameHistoryVisible() {
+  return view === "stock-opname" && sessionStorage.getItem("stock_opname_tab") === "riwayat";
+}
+
+async function refreshStockOpnameHistory() {
+  if (!stockOpnameHistoryVisible() || !localDbReady || !supabaseReadable() || stockOpnameHistoryVisitRequested) return false;
+  stockOpnameHistoryVisitRequested = true;
+  return loadStockMovementsFromSupabase({ auditOnly: true, render: true });
 }
 
 function pendingStockMovements() {
@@ -3056,25 +3084,38 @@ function normalizeSupabaseStockMovement(row) {
 async function loadStockMovementsFromSupabase(options = {}) {
   if (!supabaseReadable() || !localDbReady) return false;
   try {
-    let { data, error } = await supabaseClient
-      .from("stock_movements")
-      .select(`${STOCK_MOVEMENT_COLUMNS}, products(local_id,name)`)
-      .order("created_at", { ascending: false })
-      .limit(300);
-    if (error) {
-      const { data: fallbackData, error: fallbackError } = await supabaseClient
-        .from("stock_movements")
-        .select(STOCK_MOVEMENT_COLUMNS)
-        .order("created_at", { ascending: false })
-        .limit(300);
-      data = fallbackData;
-      error = fallbackError;
+    const since = options.auditOnly ? stockOpnameHistorySince() : "";
+    const pageSize = options.auditOnly ? 500 : 300;
+    const rows = [];
+    for (let offset = 0; ; offset += pageSize) {
+      const selectPage = columns => {
+        let query = supabaseClient.from("stock_movements")
+          .select(columns)
+          .order("created_at", { ascending: false });
+        if (options.auditOnly) {
+          query = query.eq("movement_type", "audit").gte("created_at", since)
+            .range(offset, offset + pageSize - 1);
+        } else {
+          query = query.limit(pageSize);
+        }
+        return query;
+      };
+      let { data, error } = await selectPage(`${STOCK_MOVEMENT_COLUMNS}, products(local_id,name)`);
+      if (error) {
+        ({ data, error } = await selectPage(STOCK_MOVEMENT_COLUMNS));
+      }
+      if (error) {
+        if (isSupabaseMissingRelationOrColumnError(error)) return false;
+        throw error;
+      }
+      rows.push(...(data || []));
+      if (!options.auditOnly || (data || []).length < pageSize) break;
     }
-    if (error) {
-      if (isSupabaseMissingRelationOrColumnError(error)) return false;
-      throw error;
+    if (options.auditOnly) {
+      state.stockMovements = (state.stockMovements || []).filter(move =>
+        !isStockOpnameAuditMovement(move) || move.pendingSync);
     }
-    mergeSupabaseStockMovements((data || []).map(normalizeSupabaseStockMovement));
+    mergeSupabaseStockMovements(rows.map(normalizeSupabaseStockMovement));
     if (options.render && shouldRenderAfterRealtimeLoad("master")) render();
     return true;
   } catch (error) {
@@ -3984,7 +4025,7 @@ async function syncStockMovementsToSupabase(movements = []) {
       if (!inserted) return false;
       movement.pendingSync = false;
     }
-    await loadStockMovementsFromSupabase();
+    if (!stockOpnameHistoryVisible()) await loadStockMovementsFromSupabase();
     saveState();
     broadcastRealtimeEvent("products");
     return true;
@@ -4921,6 +4962,7 @@ function staffSyncPayload() {
 function applyStaffSyncPayload(staffPayload) {
   if (!staffPayload || typeof staffPayload !== "object") return;
   state.staff ||= {};
+  state.staff.sourceSettingsId = STORE_SETTINGS_ROW_ID;
   state.staff.remoteSynced = true;
   const remoteIds = new Set(Array.isArray(staffPayload.members) ? staffPayload.members.map(member => member?.id).filter(Boolean) : []);
   const remoteNames = new Set(Array.isArray(staffPayload.members)
@@ -4976,9 +5018,8 @@ async function fetchStaffPayloadFromSupabase() {
   if (!supabaseReadable()) return null;
   const { data, error } = await supabaseClient
     .from("store_settings")
-    .select("self_order_settings,updated_at")
-    .order("updated_at", { ascending: false })
-    .limit(1)
+    .select("self_order_settings")
+    .eq("id", STORE_SETTINGS_ROW_ID)
     .maybeSingle();
   if (error) throw error;
   const selfOrderSettings = data?.self_order_settings && typeof data.self_order_settings === "object"
@@ -5156,14 +5197,13 @@ function isMissingStoreSettingsJsonError(error) {
 
 async function selectStoreSettingsRow() {
   const fullColumns = "id,store_name,store_address,store_phone,receipt_store_name,receipt_footer,receipt_width,receipt_show_table,receipt_show_qr,database_mode,sync_endpoint,auto_backup,self_order_settings,updated_at";
-  let result = await supabaseClient.from("store_settings").select(fullColumns).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  let result = await supabaseClient.from("store_settings").select(fullColumns).eq("id", STORE_SETTINGS_ROW_ID).maybeSingle();
   if (result.error && isMissingStoreSettingsJsonError(result.error)) {
     storeSettingsJsonUnavailable = true;
     result = await supabaseClient
       .from("store_settings")
       .select("id,store_name,store_address,store_phone,receipt_store_name,receipt_footer,receipt_width,receipt_show_table,receipt_show_qr,database_mode,sync_endpoint,auto_backup,updated_at")
-      .order("updated_at", { ascending: false })
-      .limit(1)
+      .eq("id", STORE_SETTINGS_ROW_ID)
       .maybeSingle();
   }
   if (result.error) throw result.error;
@@ -5187,10 +5227,8 @@ async function loadStoreSettingsFromSupabase(options = {}) {
       applyStaffSyncPayload(staffSync);
       normalizeState();
       saveState();
-    } else if (supabaseWritable()) {
-      await syncStoreSettingsToSupabase({ silent: true });
+      storeSettingsLoadedAt = Date.now();
     }
-    storeSettingsLoadedAt = Date.now();
     if (shouldRenderAfterRealtimeLoad("settings")) render();
   } catch (error) {
     console.error("Supabase settings load failed", error);
@@ -5204,6 +5242,10 @@ async function syncStoreSettingsToSupabase(options = {}) {
   if (!supabaseWritable()) return false;
   try {
     const existing = await selectStoreSettingsRow();
+    if (!existing?.id) {
+      if (!options.silent) toast("Pengaturan outlet belum tersedia di Supabase. Coba lagi setelah koneksi pulih.");
+      return false;
+    }
     const payload = storeSettingsPayload();
     if (storeSettingsJsonUnavailable && options.requireJson) {
       const message = "Kolom self_order_settings belum ada di Supabase. Jalankan docs/self_order_settings_sync.sql agar staff tersimpan online.";
@@ -5214,9 +5256,10 @@ async function syncStoreSettingsToSupabase(options = {}) {
     const writePayload = storeSettingsJsonUnavailable
       ? Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "self_order_settings"))
       : payload;
-    const { error } = existing?.id
-      ? await supabaseClient.from("store_settings").update(writePayload).eq("id", existing.id)
-      : await supabaseClient.from("store_settings").insert(writePayload);
+    if (!options.staffChanged && existing.self_order_settings?.staff && writePayload.self_order_settings) {
+      writePayload.self_order_settings.staff = existing.self_order_settings.staff;
+    }
+    const { error } = await supabaseClient.from("store_settings").update(writePayload).eq("id", existing.id);
     if (error) throw error;
     storeSettingsLoadedAt = Date.now();
     broadcastRealtimeEvent("settings");
@@ -5327,7 +5370,9 @@ async function loadMasterDataFromSupabase(options = {}) {
     state.addons = serverAddons;
     state.products = serverProducts;
     normalizeState();
-    if (shouldLoadStockMovementsWithMaster(options)) await loadStockMovementsFromSupabase();
+    if (shouldLoadStockMovementsWithMaster(options) && !stockOpnameHistoryVisible()) {
+      await loadStockMovementsFromSupabase();
+    }
     saveState();
     await reconcileActiveLimitedStockCartReservations(options.reason || "master-load");
 
@@ -7187,10 +7232,12 @@ function render() {
   }
   normalizeStaffState();
   if (!activeStaff()) {
+    stockOpnameHistoryVisitRequested = false;
     app.innerHTML = renderStaffLoginScreen();
     return;
   }
   view = normalizeView(view);
+  if (!stockOpnameHistoryVisible()) stockOpnameHistoryVisitRequested = false;
   const scrollSnapshot = captureViewScrollState(view);
   if (view === "reports") {
     requestActiveReportData();
@@ -7243,6 +7290,7 @@ function render() {
   restoreViewScrollState(scrollSnapshot);
   if (view === "pos") restorePosCategoryScroll();
   if (view === "pos") hydratePosProductImages();
+  if (stockOpnameHistoryVisible()) refreshStockOpnameHistory();
 }
 
 function renderSelfOrderStandalone() {
@@ -7669,7 +7717,7 @@ async function saveStaffMember(event) {
       toast("Staff ditambahkan.");
     }
     saveState();
-    await syncStoreSettingsToSupabase({ requireJson: true }).catch(error => console.error("Staff settings sync failed", error));
+    await syncStoreSettingsToSupabase({ requireJson: true, staffChanged: true }).catch(error => console.error("Staff settings sync failed", error));
     render();
   } finally {
     stopLoading();
@@ -7769,7 +7817,7 @@ async function removeStaffMember(id) {
   }
   normalizeStaffState();
   saveState();
-  syncStoreSettingsToSupabase({ requireJson: true }).catch(error => console.error("Staff delete settings sync failed", error));
+  syncStoreSettingsToSupabase({ requireJson: true, staffChanged: true }).catch(error => console.error("Staff delete settings sync failed", error));
   toast("Staff dihapus.");
   render();
 }
