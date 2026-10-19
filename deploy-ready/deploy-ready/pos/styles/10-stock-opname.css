@@ -1,0 +1,522 @@
+/* Stock opname owns its final layout here. Keep this file loaded after legacy overrides. */
+
+.view-stock-opname .topbar {
+  min-height: 48px !important;
+  padding: 5px 12px !important;
+}
+
+.view-stock-opname .topbar-title {
+  gap: 10px !important;
+}
+
+.view-stock-opname .topbar h2 {
+  font-size: 20px !important;
+  font-weight: 800 !important;
+  line-height: 1.15 !important;
+}
+
+.view-stock-opname .toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+}
+
+.view-stock-opname .stock-page {
+  position: relative !important;
+  gap: 9px !important;
+  max-width: 100% !important;
+  padding-inline: 0 !important;
+}
+
+.view-stock-opname .stock-opname-qr-btn,
+.view-kitchen .stock-opname-qr-btn {
+  display: grid !important;
+  width: 42px;
+  height: 38px;
+  min-height: 38px !important;
+  padding: 0 !important;
+  place-items: center;
+  border-radius: 13px !important;
+  border: 1px solid rgba(15, 139, 111, 0.28) !important;
+  background: linear-gradient(135deg, #0f8b6f, #10b981) !important;
+  color: #fff !important;
+  box-shadow: 0 12px 24px rgba(15, 139, 111, 0.2) !important;
+}
+
+.view-stock-opname .stock-opname-qr-btn svg,
+.view-kitchen .stock-opname-qr-btn svg {
+  width: 18px !important;
+  height: 18px !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2.1 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+.view-stock-opname .stock-module-tabs {
+  padding: 4px;
+  gap: 4px;
+  border-radius: 14px;
+}
+
+.view-stock-opname .stock-module-tabs button {
+  min-height: 34px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.view-stock-opname .stock-inventory-filter-grid {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 7px !important;
+  overflow: visible !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card {
+  min-width: 0 !important;
+  min-height: 64px !important;
+  padding: 10px 6px !important;
+  display: grid !important;
+  place-content: center !important;
+  text-align: center !important;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.danger {
+  background: linear-gradient(135deg, #fff7f7, #ffe7e9) !important;
+  border-color: rgba(239, 68, 68, 0.2) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.warning {
+  background: linear-gradient(135deg, #fffdf1, #fff3bd) !important;
+  border-color: rgba(245, 158, 11, 0.22) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.primary {
+  background: linear-gradient(135deg, #ecfdf5, #d1fae5) !important;
+  border-color: rgba(15, 139, 111, 0.22) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.primary span,
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.primary strong {
+  color: #0f8b6f !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.clickable:not(.danger):not(.warning):not(.primary) {
+  background: linear-gradient(135deg, #eff6ff, #dbeafe) !important;
+  border-color: rgba(37, 99, 235, 0.18) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.clickable:active {
+  transform: translateY(1px) scale(0.985) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.danger.active {
+  background: #dc2626 !important;
+  border-color: #b91c1c !important;
+  box-shadow: 0 14px 28px rgba(220, 38, 38, 0.24) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.warning.active {
+  background: #f59e0b !important;
+  border-color: #d97706 !important;
+  box-shadow: 0 14px 28px rgba(245, 158, 11, 0.24) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.primary.active {
+  background: #0f8b6f !important;
+  border-color: #0b765e !important;
+  box-shadow: 0 14px 28px rgba(15, 139, 111, 0.28) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.clickable.active:not(.danger):not(.warning):not(.primary) {
+  background: #2563eb !important;
+  border-color: #1d4ed8 !important;
+  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.22) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.active span,
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.active strong {
+  color: #fff !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card span {
+  display: block !important;
+  overflow: hidden !important;
+  font-size: 10px !important;
+  line-height: 1.05 !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card strong {
+  font-size: 21px !important;
+  line-height: 1 !important;
+}
+
+.view-stock-opname .stock-toolbar-card {
+  padding: 8px;
+  border-radius: 14px;
+}
+
+.view-stock-opname .stock-search-field {
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 12px;
+}
+
+.view-stock-opname .stock-search-field svg {
+  width: 18px !important;
+  height: 18px !important;
+  color: var(--green) !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2.2 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+.view-stock-opname .stock-list-card {
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.view-stock-opname .stock-section-head {
+  margin-bottom: 8px;
+}
+
+.view-stock-opname .stock-section-head h3 {
+  font-size: 17px;
+}
+
+.view-stock-opname .stock-section-head p {
+  font-size: 11px;
+}
+
+.view-stock-opname .stock-product-card {
+  min-height: 58px;
+  padding: 8px;
+  border-radius: 12px;
+}
+
+.view-stock-opname .stock-product-main {
+  width: 100%;
+}
+
+.view-stock-opname .stock-product-token {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.view-stock-opname .stock-product-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.view-stock-opname .stock-product-title {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  width: 100% !important;
+}
+
+.view-stock-opname .stock-product-title strong {
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.15;
+}
+
+.view-stock-opname .stock-product-title .pill {
+  flex: 0 0 auto !important;
+  margin-left: auto !important;
+}
+
+.view-stock-opname .stock-opname-list {
+  gap: 8px !important;
+}
+
+.view-stock-opname .stock-opname-item {
+  grid-template-columns: auto auto minmax(0, 1fr) !important;
+  align-items: start !important;
+  gap: 8px !important;
+  min-height: 0 !important;
+  padding: 9px !important;
+}
+
+.view-stock-opname .stock-opname-check {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 11px !important;
+}
+
+.view-stock-opname .stock-opname-check span {
+  width: 20px !important;
+  height: 20px !important;
+  border-radius: 7px !important;
+}
+
+.view-stock-opname .stock-opname-check input:checked + span::after {
+  content: "\2713" !important;
+  color: #fff !important;
+  font-size: 14px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+}
+
+.view-stock-opname .stock-audit-last {
+  color: #64748b !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  line-height: 1.25 !important;
+}
+
+.view-stock-opname .stock-audit-entry {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 7px !important;
+  margin-top: 5px !important;
+}
+
+.view-stock-opname .stock-audit-entry label {
+  display: grid !important;
+  gap: 3px !important;
+}
+
+.view-stock-opname .stock-audit-entry label span {
+  color: #64748b !important;
+  font-size: 10.5px !important;
+  font-weight: 800 !important;
+}
+
+.view-stock-opname .stock-audit-entry b,
+.view-stock-opname .stock-audit-entry input {
+  width: 100% !important;
+  min-height: 34px !important;
+  border: 1px solid #d5dee9 !important;
+  border-radius: 10px !important;
+  background: #f8fafc !important;
+  color: #0f172a !important;
+  font-size: 13px !important;
+  font-weight: 800 !important;
+  padding: 0 10px !important;
+}
+
+.view-stock-opname .stock-audit-entry .stock-previous-display b {
+  border-color: transparent !important;
+  background: transparent !important;
+  min-height: 24px !important;
+  padding: 0 !important;
+  color: #0f766e !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+.view-stock-opname .stock-audit-entry input {
+  background: #fff !important;
+  outline: none !important;
+}
+
+.view-stock-opname .stock-audit-entry input:focus {
+  border-color: rgba(15, 139, 111, 0.55) !important;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12) !important;
+}
+
+.view-stock-opname .stock-audit-submit.is-status {
+  border: 1px solid rgba(15, 118, 110, 0.22) !important;
+  background: #ecfdf5 !important;
+  color: #065f46 !important;
+  opacity: 1 !important;
+  cursor: default !important;
+  white-space: normal !important;
+  line-height: 1.35 !important;
+}
+
+.view-stock-opname .stock-audit-submit.is-status.success {
+  border-color: #0f8b6f !important;
+  background: linear-gradient(135deg, #0f8b6f, #10b981) !important;
+  color: #fff !important;
+  white-space: nowrap !important;
+}
+
+.view-stock-opname .stock-audit-submit.is-status.pending,
+.view-stock-opname .stock-audit-submit.is-status.warning {
+  border-color: rgba(245, 158, 11, 0.28) !important;
+  background: #fffbeb !important;
+  color: #92400e !important;
+}
+
+.view-stock-opname .stock-audit-submit.is-status.error {
+  border-color: rgba(220, 38, 38, 0.24) !important;
+  background: #fef2f2 !important;
+  color: #991b1b !important;
+}
+
+.view-stock-opname .stock-opname-adjust,
+.view-stock-opname .stock-opname-item .stock-product-meta,
+.view-stock-opname .stock-opname-item .stock-variant-details {
+  display: none !important;
+}
+
+.modal-card:has(.stock-opname-qr-modal) {
+  width: min(356px, calc(100vw - 32px)) !important;
+  max-width: min(356px, calc(100vw - 32px)) !important;
+  padding: 14px !important;
+  border-radius: 24px !important;
+}
+
+.stock-opname-qr-modal {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.stock-opname-qr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 0;
+  padding: 12px;
+  border: 1px solid rgba(15, 139, 111, 0.2);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 92% 0%, rgba(80, 185, 143, 0.18), transparent 36%),
+    linear-gradient(135deg, #ecfdf5, #ffffff);
+}
+
+.stock-opname-qr-head h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.stock-opname-qr-head p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stock-opname-qr-head .modal-close-x {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  font-size: 20px;
+  box-shadow: none;
+}
+
+.stock-opname-qr-box {
+  display: grid;
+  padding: 8px;
+  place-items: center;
+  border: 1px solid rgba(15, 139, 111, 0.24);
+  border-radius: 20px;
+  background: linear-gradient(180deg, #ffffff, #f8fffc);
+}
+
+.stock-opname-qr-box img,
+.stock-opname-qr-svg {
+  width: min(232px, 68vw);
+  height: auto;
+  display: block;
+  border-radius: 12px;
+}
+
+.stock-opname-qr-link {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(100, 116, 139, 0.16);
+  border-radius: 14px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+  word-break: break-all;
+}
+
+@media (max-width: 640px) {
+  .view-stock-opname .content {
+    padding: 5px 4px 14px !important;
+  }
+
+  .view-stock-opname .topbar {
+    min-height: 44px !important;
+    padding: 4px 8px !important;
+  }
+
+  .view-stock-opname .mobile-header-menu {
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 12px !important;
+  }
+
+  .view-stock-opname .mobile-header-menu svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+
+  .view-stock-opname .topbar h2 {
+    font-size: 17px !important;
+  }
+
+  .view-stock-opname .topbar p {
+    display: none !important;
+  }
+
+  .view-stock-opname .stock-page {
+    gap: 8px !important;
+    padding-inline: 0 !important;
+  }
+
+  .view-stock-opname .stock-opname-qr-btn,
+  .view-kitchen .stock-opname-qr-btn {
+    width: 38px;
+    height: 34px;
+    min-height: 34px !important;
+    border-radius: 11px !important;
+  }
+
+  .view-stock-opname .stock-inventory-filter-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  .view-stock-opname .stock-inventory-filter-grid .stock-summary-card {
+    min-width: 0 !important;
+    min-height: 58px !important;
+    padding: 8px 4px !important;
+  }
+
+  .view-stock-opname .stock-inventory-filter-grid .stock-summary-card span {
+    font-size: 8.5px;
+  }
+
+  .view-stock-opname .stock-inventory-filter-grid .stock-summary-card strong {
+    font-size: 19px;
+  }
+
+  .view-stock-opname .stock-product-title strong {
+    font-size: 13px;
+  }
+
+  .view-stock-opname .stock-opname-item {
+    grid-template-columns: auto 38px minmax(0, 1fr) !important;
+    padding: 8px !important;
+  }
+
+  .view-stock-opname .stock-audit-entry {
+    gap: 6px !important;
+  }
+
+  .view-stock-opname .stock-audit-entry b,
+  .view-stock-opname .stock-audit-entry input {
+    min-height: 32px !important;
+    font-size: 12px !important;
+    padding-inline: 8px !important;
+  }
+}

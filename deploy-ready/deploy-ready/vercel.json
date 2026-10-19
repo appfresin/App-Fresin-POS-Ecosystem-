@@ -1,0 +1,68 @@
+{
+  "cleanUrls": true,
+  "trailingSlash": true,
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "https://www.fresin.id/pos/",
+      "permanent": false
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "fresinapp.vercel.app"
+        }
+      ],
+      "destination": "https://www.fresin.id/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "pos-so-app.vercel.app"
+        }
+      ],
+      "destination": "https://www.fresin.id/:path*",
+      "permanent": true
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/duitku/callback",
+      "destination": "https://pjkotqianxecaawqompo.supabase.co/functions/v1/duitku-payment-webhook"
+    },
+    {
+      "source": "/pos",
+      "destination": "/pos/"
+    },
+    {
+      "source": "/self-order",
+      "destination": "/self-order/"
+    },
+    {
+      "source": "/self-order/:path*",
+      "destination": "/self-order/"
+    },
+    {
+      "source": "/delivery",
+      "destination": "/delivery/"
+    },
+    {
+      "source": "/delivery/:path*",
+      "destination": "/delivery/"
+    },
+    {
+      "source": "/driver",
+      "destination": "/driver/"
+    },
+    {
+      "source": "/driver/:path*",
+      "destination": "/driver/"
+    }
+  ]
+}
+

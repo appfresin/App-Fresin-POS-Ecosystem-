@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <meta http-equiv="refresh" content="0; url=/pos/" />
+  <title>Kasirin POS</title>
+  <style>
+    :root {
+      color: #0f2a3f;
+      background: #f8fafc;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at center, #e6f5ef 0, #f8fafc 52%, #f8fafc 100%);
+    }
+
+    main {
+      width: min(360px, calc(100vw - 32px));
+      padding: 28px;
+      border: 1px solid #d8e7df;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 18px 44px rgba(15, 42, 63, 0.12);
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+
+    p {
+      margin: 0 0 18px;
+      color: #52677b;
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    a {
+      display: block;
+      padding: 13px 18px;
+      border-radius: 16px;
+      background: #15946f;
+      color: #fff;
+      font-weight: 800;
+      text-decoration: none;
+    }
+  </style>
+  <script>
+    window.location.replace("/pos/");
+  </script>
+</head>
+<body>
+  <main>
+    <h1>Memuat Kasirin POS</h1>
+    <p>Jika halaman tidak berpindah otomatis, buka halaman POS.</p>
+    <a href="/pos/">Buka POS</a>
+  </main>
+</body>
+</html>
