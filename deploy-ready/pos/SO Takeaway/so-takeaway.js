@@ -501,6 +501,7 @@
 
     let renderedCompletion = false;
     selfOrderSubmitting = true;
+    selfOrderSubmitStartedAt = Date.now();
     try {
       sessionStorage.setItem("self_order_payment", "cash");
       render();
@@ -559,7 +560,7 @@
       order.limitedStockCommitToken = stockCommit.token || "";
       state.orders.unshift(order);
       saveState();
-      const synced = await syncOrderToSupabase(order, { silent: true });
+      const synced = await submitSelfOrderConfirmed(order);
       if (!synced) {
         if (stockCommit.token) await restoreLimitedStockCommit(order.number);
         state.orders = state.orders.filter(item => item.id !== order.id);
@@ -589,6 +590,7 @@
       selfOrderSubmitError = error?.userMessage || "Gagal mengirim pesanan, cek koneksi anda lalu coba lagi";
     } finally {
       selfOrderSubmitting = false;
+      selfOrderSubmitStartedAt = 0;
       if (!renderedCompletion) render();
     }
   }

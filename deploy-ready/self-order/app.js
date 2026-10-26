@@ -185,6 +185,7 @@ let view = normalizeView(currentHashView() || defaultInitialView());
 let cart = [];
 let selfOrderCart = loadSelfOrderCart();
 let selfOrderSubmitting = false;
+let selfOrderSubmitStartedAt = 0;
 let selfOrderSubmitError = "";
 let selfOrderTableChecking = false;
 let moveOrderTableSubmitting = false;
@@ -299,6 +300,8 @@ let localDbDirtyBeforeLoad = false;
 let localDbSaveQueue = Promise.resolve();
 let localDbStatus = "IndexedDB sedang disiapkan";
 let syncQueueProcessing = false;
+const orderSyncLocks = new Map();
+let orderSyncSequence = 0;
 let lastMasterSyncError = null;
 let masterSyncLoading = false;
 let masterSyncLoaded = false;
@@ -3314,19 +3317,49 @@ function syncRetryDelayMs(attempts) {
   return retrySteps[Math.min(Math.max(0, attempts - 1), retrySteps.length - 1)];
 }
 
-function markOrderSyncPending(order, error) {
+function nextOrderSyncSequence() {
+  orderSyncSequence = Math.max(orderSyncSequence,
+    ...(state.syncQueue || []).map(item => Number(item.requestSequence || 0))) + 1;
+  return orderSyncSequence;
+}
+
+function markOrderSyncPending(order, error, options = {}) {
   if (!order) return;
   const queueId = orderSyncQueueId(order);
   if (!queueId) return;
   state.syncQueue ||= [];
   const existing = state.syncQueue.find(item => item.type === "order" && item.orderId === queueId);
+  const requestSequence = options.requestSequence || nextOrderSyncSequence();
+  const newerQueued = Number(existing?.requestSequence || 0) > requestSequence;
+  if (newerQueued && (options.statusOnly || existing.syncMode !== "status")) {
+    order.syncStatus = "pending";
+    return;
+  }
   const attempts = Number(existing?.attempts || 0) + 1;
   const now = Date.now();
+  const syncMode = options.statusOnly === true && (!existing || existing.syncMode === "status") ? "status" : "full";
+  let payload = JSON.parse(JSON.stringify(options.payload || order));
+  if (newerQueued && existing.payload) {
+    for (const key of ["status", "confirmedAt", "preparedAt", "readyAt", "completedAt", "cancelledAt", "cancelReason", "preparedItems"]) {
+      if (Object.prototype.hasOwnProperty.call(existing.payload, key)) payload[key] = existing.payload[key];
+    }
+  }
+  if (options.statusOnly && existing?.syncMode !== "status" && existing?.payload) {
+    payload = { ...existing.payload };
+    for (const key of ["status", "confirmedAt", "preparedAt", "readyAt", "completedAt", "cancelledAt", "cancelReason", "preparedItems"]) {
+      if (Object.prototype.hasOwnProperty.call(order, key)) payload[key] = order[key];
+    }
+    payload = JSON.parse(JSON.stringify(payload));
+  }
   const queueItem = {
     id: existing?.id || uid(),
     type: "order",
     orderId: queueId,
     orderNumber: order.number || "",
+    syncMode,
+    payload,
+    revision: Number(existing?.revision || 0) + 1,
+    requestSequence: Math.max(requestSequence, Number(existing?.requestSequence || 0)),
     attempts,
     lastError: error?.message || "Koneksi Supabase belum tersedia",
     lastAttemptAt: new Date(now).toISOString(),
@@ -3339,12 +3372,40 @@ function markOrderSyncPending(order, error) {
   else state.syncQueue.push(queueItem);
 }
 
-function markOrderSynced(order) {
+function markOrderSynced(order, options = {}) {
   if (!order) return;
   const queueId = orderSyncQueueId(order);
+  const pending = (state.syncQueue || []).find(item => item.type === "order" && item.orderId === queueId);
+  const newerQueued = options.requestSequence !== undefined
+    ? Number(pending?.requestSequence || 0) > options.requestSequence
+    : options.queueRevision !== undefined && Number(pending?.revision || 0) !== options.queueRevision;
+  if (pending && newerQueued) {
+    order.syncStatus = "pending";
+    return;
+  }
+  if (options.statusOnly && pending && pending.syncMode !== "status") {
+    pending.requestSequence = Math.max(Number(pending.requestSequence || 0), Number(options.requestSequence || 0));
+    if (pending.payload) {
+      for (const key of ["status", "confirmedAt", "preparedAt", "readyAt", "completedAt", "cancelledAt", "cancelReason", "preparedItems"]) {
+        if (Object.prototype.hasOwnProperty.call(order, key)) pending.payload[key] = JSON.parse(JSON.stringify(order[key] ?? null));
+      }
+    }
+    order.syncStatus = "pending";
+    return;
+  }
   order.syncStatus = "synced";
   order.syncError = "";
   order.syncUpdatedAt = new Date().toISOString();
+  const localOrder = (state.orders || []).find(item => orderSyncQueueId(item) === queueId || item.number === order.number);
+  if (localOrder && localOrder !== order) {
+    if (options.statusOnly) {
+      for (const key of ["supabaseId", "status", "confirmedAt", "preparedAt", "readyAt", "completedAt", "cancelledAt", "cancelReason", "preparedItems", "syncStatus", "syncError", "syncUpdatedAt"]) {
+        if (Object.prototype.hasOwnProperty.call(order, key)) localOrder[key] = order[key];
+      }
+    } else {
+      Object.assign(localOrder, order);
+    }
+  }
   state.syncQueue = (state.syncQueue || []).filter(item => !(item.type === "order" && item.orderId === queueId));
   scheduleKitchenOptimisticOrderMutationClear(order);
 }
@@ -4270,14 +4331,23 @@ async function processSyncQueue(reason = "manual") {
       .filter(item => ["order", "master"].includes(item.type) && (isManualRetry || !item.nextAttemptAt || new Date(item.nextAttemptAt).getTime() <= now))
       .slice(0, 20);
     for (const item of pendingItems) {
+      if (!state.syncQueue.some(current => current.id === item.id)) continue;
       if (item.type === "order") {
-        const order = state.orders.find(candidate => orderSyncQueueId(candidate) === item.orderId || candidate.number === item.orderNumber);
+        const order = state.orders.find(candidate => orderSyncQueueId(candidate) === item.orderId || candidate.number === item.orderNumber)
+          || (item.payload ? JSON.parse(JSON.stringify(item.payload)) : null);
         if (!order) {
           state.syncQueue = state.syncQueue.filter(candidate => candidate.id !== item.id);
           saveState();
           continue;
         }
-        await syncOrderToSupabase(order, { fromQueue: true, silent: true });
+        const queuedOrder = item.payload ? {
+          ...order, ...JSON.parse(JSON.stringify(item.payload)),
+          id: order.id, supabaseId: order.supabaseId || item.payload.supabaseId
+        } : order;
+        if (!state.orders.includes(order)) state.orders.unshift(order);
+        await syncOrderToSupabase(queuedOrder, {
+          fromQueue: true, silent: true, statusOnly: item.syncMode === "status", requestSequence: item.requestSequence
+        });
         continue;
       }
       if (item.type === "master") {
@@ -4326,7 +4396,7 @@ function toastOrderSyncOutcome(order, successMessage) {
   }
   syncPromise
     .then(synced => {
-      toast(synced ? successMessage : offlineOrderSyncMessage(), synced ? 2400 : 4800);
+      toast(synced ? successMessage : (order.syncConflict || offlineOrderSyncMessage()), synced ? 2400 : 4800);
       if (!synced && view === "pos") render();
     })
     .catch(error => {
@@ -4386,16 +4456,111 @@ async function retryMasterSyncQueue() {
   }
 }
 
+async function acquireOrderSyncLock(order) {
+  const key = order.number || order.supabaseId || order.id;
+  const previous = orderSyncLocks.get(key);
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  orderSyncLocks.set(key, pending);
+  if (previous) await previous;
+  return () => {
+    if (orderSyncLocks.get(key) === pending) orderSyncLocks.delete(key);
+    release();
+  };
+}
+
+async function updateSupabaseOrderStatus(order) {
+  const payload = { status: order.status, updated_at: new Date().toISOString() };
+  for (const [localKey, remoteKey] of [
+    ["confirmedAt", "confirmed_at"], ["preparedAt", "prepared_at"],
+    ["readyAt", "ready_at"], ["completedAt", "completed_at"], ["cancelledAt", "cancelled_at"]
+  ]) {
+    if (order[localKey]) payload[remoteKey] = order[localKey];
+  }
+  if (supabaseSupportsPreparedItems && order.items?.length && order.status === "Selesai") {
+    payload.prepared_items = order.preparedItems || {};
+  }
+  if (order.status === "Dibatalkan") payload.cancel_reason = order.cancelReason || "";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let query = supabaseClient.from("orders").update(payload);
+    query = order.supabaseId ? query.eq("id", order.supabaseId) : query.eq("order_number", order.number);
+    const result = await query.select("id").single();
+    if (!result.error) return result;
+    const message = String(result.error.message || "").toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(payload, "prepared_items") && message.includes("prepared_items")) {
+      supabaseSupportsPreparedItems = false;
+      delete payload.prepared_items;
+    } else if (Object.prototype.hasOwnProperty.call(payload, "cancel_reason") && message.includes("cancel_reason")) {
+      delete payload.cancel_reason;
+    } else {
+      return result;
+    }
+  }
+  return { data: null, error: new Error("Gagal memperbarui status pesanan.") };
+}
+
+async function submitSelfOrderConfirmed(order) {
+  const startedAt = selfOrderSubmitStartedAt || Date.now();
+  const synced = await syncOrderToSupabase(order, { silent: true });
+  if (!synced) return false;
+  const remaining = Math.max(0, Math.min(400, 400 - (Date.now() - startedAt)));
+  if (remaining) await new Promise(resolve => window.setTimeout(resolve, remaining));
+  return Boolean(String(order.supabaseId || "").trim())
+    && order.syncStatus === "synced"
+    && !orderHasPendingLocalSync(order);
+}
+
 async function syncOrderToSupabase(order, options = {}) {
   if (!order) return false;
+  const snapshot = JSON.parse(JSON.stringify(order));
+  const localOrder = order;
+  localOrder.syncConflict = "";
+  order = snapshot;
+  options = {
+    ...options, payload: snapshot,
+    requestSequence: options.requestSequence || nextOrderSyncSequence(),
+    queueRevision: Number((state.syncQueue || []).find(item => item.type === "order" && item.orderId === orderSyncQueueId(order))?.revision || 0)
+  };
+  const orderItems = options.statusOnly ? [] : (snapshot.items || []);
+  const itemsSyncedAt = new Date().toISOString();
+  const itemSubtotal = orderItems.reduce((sum, item) => sum + cartItemTotal(item), 0);
+  const expectedSubtotal = Number(snapshot.subtotal);
+  if (!options.statusOnly && (!orderItems.length || !Number.isFinite(itemSubtotal)
+    || (Number.isFinite(expectedSubtotal) && Math.abs(expectedSubtotal - itemSubtotal) > 0.01))) {
+    const error = new Error("Rincian item pesanan belum tersedia. Muat ulang pesanan sebelum menyimpan.");
+    const existingPayload = (state.syncQueue || []).find(item => item.type === "order"
+      && item.orderId === orderSyncQueueId(order) && item.payload?.items?.length)?.payload;
+    markOrderSyncPending(localOrder, error, { ...options, payload: existingPayload || snapshot });
+    saveState();
+    if (!options.silent) toast(error.message, 4800);
+    return false;
+  }
   if (!canAttemptSupabaseSync()) {
-    markOrderSyncPending(order, new Error(navigator.onLine === false ? "Browser offline" : "Supabase belum termuat"));
+    markOrderSyncPending(localOrder, new Error(navigator.onLine === false ? "Browser offline" : "Supabase belum termuat"), options);
     saveState();
     if (!options.silent && view !== "selforder") toast(offlineOrderSyncMessage(), 4800);
     return false;
   }
+  const releaseLock = await acquireOrderSyncLock(order);
   try {
+    if (options.fromQueue) {
+      const queued = (state.syncQueue || []).find(item => item.type === "order"
+        && (item.orderId === orderSyncQueueId(order) || item.orderNumber === order.number));
+      if (!queued || (queued.requestSequence && queued.requestSequence !== options.requestSequence)) return true;
+    }
     await ensureSupabaseProfile();
+    if (options.statusOnly) {
+      const { data, error } = await updateSupabaseOrderStatus(order);
+      if (error) throw error;
+      if (!data?.id) throw new Error("Pesanan belum tersedia di server.");
+      order.supabaseId = data.id;
+      localOrder.supabaseId = data.id;
+      markOrderSynced(localOrder, options);
+      invalidateReportCaches();
+      saveState();
+      if (view === "reports") requestActiveReportData(true);
+      return true;
+    }
     const orderPayload = {
       order_number: order.number,
       source: order.source || "Kasir",
@@ -4427,6 +4592,7 @@ async function syncOrderToSupabase(order, options = {}) {
     if (orderError) throw orderError;
     const supabaseOrderId = orderRows.id;
     order.supabaseId = supabaseOrderId;
+    localOrder.supabaseId = supabaseOrderId;
     saveState();
 
     const { data: existingItems, error: existingItemsError } = await supabaseClient
@@ -4435,14 +4601,8 @@ async function syncOrderToSupabase(order, options = {}) {
       .eq("order_id", supabaseOrderId);
     if (existingItemsError) throw existingItemsError;
     const existingItemIds = (existingItems || []).map(item => item.id);
-    if (existingItemIds.length) {
-      const { error: deleteAddonsError } = await supabaseClient.from("order_item_addons").delete().in("order_item_id", existingItemIds);
-      if (deleteAddonsError) throw deleteAddonsError;
-    }
-    const { error: deleteItemsError } = await supabaseClient.from("order_items").delete().eq("order_id", supabaseOrderId);
-    if (deleteItemsError) throw deleteItemsError;
 
-    const itemRows = (order.items || []).map((item, index) => {
+    const itemRows = orderItems.map((item, index) => {
       const itemCategory = orderItemKitchenNotificationCategory(item);
       return {
         order_id: supabaseOrderId,
@@ -4460,6 +4620,8 @@ async function syncOrderToSupabase(order, options = {}) {
           stockTracked: item.stockTracked === true,
           stockVariantKey: item.stockVariantKey || cartItemVariantKey(item),
           clientLineId: item.lineId || "",
+          clientSyncCreatedAt: itemsSyncedAt,
+          clientSyncComplete: false,
           clientOrderIndex: index,
           orderBatch: orderItemBatch(item),
           orderBatchCreatedAt: orderItemBatchCreatedAt(item),
@@ -4469,41 +4631,72 @@ async function syncOrderToSupabase(order, options = {}) {
       };
     });
     let savedItems = [];
-    if (itemRows.length) {
+    try {
       const { data, error } = await supabaseClient.from("order_items").insert(itemRows).select("id");
       if (error) throw error;
       savedItems = data || [];
-    }
+      if (savedItems.length !== itemRows.length) throw new Error("Rincian pesanan belum tersimpan lengkap.");
 
-    const addonRows = [];
-    (order.items || []).forEach((item, index) => {
-      const orderItemId = savedItems[index]?.id;
-      if (!orderItemId) return;
-      (item.addons || []).forEach(addon => {
-        addonRows.push({
-          order_item_id: orderItemId,
-          addon_id: null,
-          addon_name: addon.name,
-          qty: Number(addon.qty || 1),
-          price: Number(addon.price || 0),
-          cost: Number(addon.cost || 0)
+      const addonRows = [];
+      orderItems.forEach((item, index) => {
+        const orderItemId = savedItems[index]?.id;
+        if (!orderItemId) return;
+        (item.addons || []).forEach(addon => {
+          addonRows.push({
+            order_item_id: orderItemId,
+            addon_id: null,
+            addon_name: addon.name,
+            qty: Number(addon.qty || 1),
+            price: Number(addon.price || 0),
+            cost: Number(addon.cost || 0)
+          });
         });
       });
-    });
-    if (addonRows.length) {
-      const { error } = await supabaseClient.from("order_item_addons").insert(addonRows);
-      if (error) {
-        const missingCostColumn = error.code === "42703" || String(error.message || "").toLowerCase().includes("cost");
-        if (!missingCostColumn) throw error;
-        const compatibleRows = addonRows.map(({ cost, ...row }) => row);
-        const { error: retryError } = await supabaseClient.from("order_item_addons").insert(compatibleRows);
-        if (retryError) throw retryError;
+      if (addonRows.length) {
+        const { error } = await supabaseClient.from("order_item_addons").insert(addonRows);
+        if (error) {
+          const missingCostColumn = error.code === "42703" || String(error.message || "").toLowerCase().includes("cost");
+          if (!missingCostColumn) throw error;
+          const compatibleRows = addonRows.map(({ cost, ...row }) => row);
+          const { error: retryError } = await supabaseClient.from("order_item_addons").insert(compatibleRows);
+          if (retryError) throw retryError;
+        }
       }
+      // Readers only use a replacement after its addons are complete.
+      const completedRows = itemRows.map((item, index) => ({
+        ...item, id: savedItems[index].id,
+        variant_data: { ...item.variant_data, clientSyncComplete: true }
+      }));
+      const { data: completedItems, error: completedError } = await supabaseClient.from("order_items")
+        .upsert(completedRows, { onConflict: "id" }).select("id");
+      if (completedError) throw completedError;
+      if (completedItems?.length !== itemRows.length) throw new Error("Rincian pesanan belum siap dibaca.");
+    } catch (error) {
+      // Only roll back this attempt; the previous item details remain available.
+      const insertedIds = savedItems.map(item => item.id).filter(Boolean);
+      if (insertedIds.length) {
+        try {
+          const addonsCleanup = await supabaseClient.from("order_item_addons").delete().in("order_item_id", insertedIds);
+          if (addonsCleanup.error) throw addonsCleanup.error;
+          const itemsCleanup = await supabaseClient.from("order_items").delete().eq("order_id", supabaseOrderId).in("id", insertedIds);
+          if (itemsCleanup.error) throw itemsCleanup.error;
+        } catch (cleanupError) {
+          console.warn("Incomplete order replacement cleanup failed", cleanupError);
+        }
+      }
+      throw error;
+    }
+    // Publish the replacement before removing the captured old rows.
+    if (existingItemIds.length) {
+      const { error: deleteAddonsError } = await supabaseClient.from("order_item_addons").delete().in("order_item_id", existingItemIds);
+      if (deleteAddonsError) throw deleteAddonsError;
+      const { error: deleteItemsError } = await supabaseClient.from("order_items").delete().eq("order_id", supabaseOrderId).in("id", existingItemIds);
+      if (deleteItemsError) throw deleteItemsError;
     }
 
-    const { error: paymentDeleteError } = await supabaseClient.from("payments").delete().eq("order_id", supabaseOrderId);
-    if (paymentDeleteError) throw paymentDeleteError;
     if (order.paymentStatus === "Lunas") {
+      const { error: paymentDeleteError } = await supabaseClient.from("payments").delete().eq("order_id", supabaseOrderId);
+      if (paymentDeleteError) throw paymentDeleteError;
       const paymentPayload = {
         order_id: supabaseOrderId,
         method: order.paymentMethod || "Tunai",
@@ -4521,10 +4714,13 @@ async function syncOrderToSupabase(order, options = {}) {
       }
       if (paymentError) throw paymentError;
     }
-    markOrderSynced(order);
+    const { error: finalizeError } = await supabaseClient.from("orders")
+      .update({ updated_at: new Date().toISOString() }).eq("id", supabaseOrderId).select("id").single();
+    if (finalizeError) throw finalizeError;
     if (order.pendingPushEventType && !options.fromQueueStatusOnly) {
-      delete order.pendingPushEventType;
+      delete localOrder.pendingPushEventType;
     }
+    markOrderSynced(localOrder, options);
     invalidateReportCaches();
     saveState();
     if (view === "reports") {
@@ -4533,62 +4729,73 @@ async function syncOrderToSupabase(order, options = {}) {
     return true;
   } catch (error) {
     console.error("Supabase order sync failed", error);
-    markOrderSyncPending(order, error);
+    if (error.code === "ORDER_ALREADY_PAID") {
+      const message = "Pesanan sudah lunas di perangkat lain. Data pembayaran dimuat ulang.";
+      state.syncQueue = (state.syncQueue || []).filter(item => !(item.type === "order"
+        && (item.orderId === orderSyncQueueId(order) || item.orderNumber === order.number)
+        && item.payload?.paymentStatus !== "Lunas"));
+      for (const current of new Set([localOrder, ...state.orders.filter(item => item.number === order.number)])) {
+        current.paymentStatus = "Lunas";
+        current.syncStatus = orderHasPendingLocalSync(current) ? "pending" : "synced";
+        current.syncConflict = message;
+      }
+      saveState();
+      requestLiveOrderRefresh({ reason: "orders-refresh", force: true, silent: true, orderIds: [error.orderId] });
+      if (!options.silent) toast(message, 4800);
+      return false;
+    }
+    markOrderSyncPending(localOrder, error, options);
     saveState();
     if (!options.silent && view !== "selforder") toast(offlineOrderSyncMessage(), 4800);
     return false;
+  } finally {
+    releaseLock();
   }
 }
 
 async function upsertSupabaseOrderPayload(orderPayload) {
+  const { data: current, error: readError } = await supabaseClient.from("orders")
+    .select("id,payment_status,updated_at").eq("order_number", orderPayload.order_number).maybeSingle();
+  if (readError) return { data: null, error: readError };
+  if (current?.payment_status === "Lunas" && orderPayload.payment_status !== "Lunas") {
+    return { data: null, error: { code: "ORDER_ALREADY_PAID", orderId: current.id, message: "Pesanan sudah lunas." } };
+  }
   let writePayload = { ...orderPayload };
   if (!supabaseSupportsPreparedItems) delete writePayload.prepared_items;
   if (!supabaseSupportsOrderNotificationCategories) delete writePayload.notification_categories;
-  let result = await supabaseClient
-    .from("orders")
-    .upsert(writePayload, { onConflict: "order_number" })
-    .select("id")
-    .single();
-  const missingCancelReason = result.error
-    && (result.error.code === "42703" || String(result.error.message || "").toLowerCase().includes("cancel_reason"));
-  if (missingCancelReason) {
-    const { cancel_reason, ...payloadWithoutCancelReason } = writePayload;
-    writePayload = payloadWithoutCancelReason;
-    result = await supabaseClient
-      .from("orders")
-      .upsert(writePayload, { onConflict: "order_number" })
-      .select("id")
-      .single();
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let query;
+    if (current) {
+      query = supabaseClient.from("orders").update(writePayload).eq("id", current.id);
+      if (current.updated_at) query = query.eq("updated_at", current.updated_at);
+      if (current.payment_status) query = query.eq("payment_status", current.payment_status);
+    } else {
+      query = supabaseClient.from("orders").insert(writePayload);
+    }
+    const result = await query.select("id").single();
+    if (!result.error) return result;
+    if (current && result.error.code === "PGRST116") {
+      return { data: null, error: new Error("Pesanan berubah di perangkat lain. Muat ulang pesanan sebelum menyimpan.") };
+    }
+    const message = String(result.error.message || "").toLowerCase();
+    const missingColumn = ["cancel_reason", "notification_categories", "prepared_items"].find(column =>
+      Object.prototype.hasOwnProperty.call(writePayload, column) && message.includes(column));
+    if (!missingColumn) return result;
+    delete writePayload[missingColumn];
+    if (missingColumn === "notification_categories") supabaseSupportsOrderNotificationCategories = false;
+    if (missingColumn === "prepared_items") supabaseSupportsPreparedItems = false;
   }
-  const missingNotificationCategories = result.error
-    && (result.error.code === "42703" || String(result.error.message || "").toLowerCase().includes("notification_categories"));
-  if (missingNotificationCategories && supabaseSupportsOrderNotificationCategories) {
-    supabaseSupportsOrderNotificationCategories = false;
-    delete writePayload.notification_categories;
-    result = await supabaseClient
-      .from("orders")
-      .upsert(writePayload, { onConflict: "order_number" })
-      .select("id")
-      .single();
-  }
-  const missingPreparedItems = result.error
-    && (result.error.code === "42703" || String(result.error.message || "").toLowerCase().includes("prepared_items"));
-  if (!missingPreparedItems || !supabaseSupportsPreparedItems) return result;
-  supabaseSupportsPreparedItems = false;
-  const { prepared_items, cancel_reason, notification_categories, ...compatiblePayload } = orderPayload;
-  return supabaseClient
-    .from("orders")
-    .upsert(compatiblePayload, { onConflict: "order_number" })
-    .select("id")
-    .single();
+  return { data: null, error: new Error("Gagal menyimpan pesanan.") };
 }
 
 async function syncOrderPreparedItemsToSupabase(order, options = {}) {
   if (!order || !supabaseSupportsPreparedItems || !canAttemptSupabaseSync()) return false;
+  const preparedItems = JSON.parse(JSON.stringify(order.preparedItems || {}));
+  const releaseLock = await acquireOrderSyncLock(order);
   try {
     await ensureSupabaseProfile();
     const payload = {
-      prepared_items: order.preparedItems || {},
+      prepared_items: preparedItems,
       updated_at: new Date().toISOString()
     };
     let query = supabaseClient.from("orders").update(payload);
@@ -4609,6 +4816,8 @@ async function syncOrderPreparedItemsToSupabase(order, options = {}) {
     console.error("Supabase prepared item sync failed", error);
     if (!options.silent && view !== "selforder") toast("Checklist belum terkirim, cek koneksi lalu coba lagi.", 3600);
     return false;
+  } finally {
+    releaseLock();
   }
 }
 
@@ -5302,7 +5511,11 @@ function liveOrderSyncSince(options = {}) {
 }
 
 async function loadRecentOrdersFromSupabase(options = {}) {
-  if (!supabaseReadable() || realtimeOrdersLoading) return;
+  if (!supabaseReadable()) return;
+  if (realtimeOrdersLoading) {
+    (options.orderIds || []).filter(Boolean).forEach(id => realtimePendingOrderIds.add(String(id)));
+    return;
+  }
   if (!localDbReady) {
     pendingLiveOrderRefreshAfterLocalDbReady = {
       reason: options.reason || "orders-refresh",
@@ -5396,6 +5609,7 @@ async function loadRecentOrdersFromSupabase(options = {}) {
   } finally {
     realtimeOrdersLoading = false;
     flushPendingNativePushOrderRefresh();
+    if (realtimePendingOrderIds.size) scheduleRealtimeRefresh("orders");
   }
 }
 
@@ -5541,6 +5755,7 @@ function dedupeSupabaseOrderItemRows(itemRows = []) {
   const rows = [];
   const indexes = new Map();
   itemRows.forEach(item => {
+    if (item.variant_data?.clientSyncComplete === false) return;
     const key = supabaseOrderItemDedupeKey(item);
     if (!key) {
       rows.push(item);
@@ -5552,7 +5767,9 @@ function dedupeSupabaseOrderItemRows(itemRows = []) {
       rows.push(item);
       return;
     }
-    rows[existingIndex] = item;
+    const previousTime = Date.parse(rows[existingIndex].variant_data?.clientSyncCreatedAt || "") || 0;
+    const incomingTime = Date.parse(item.variant_data?.clientSyncCreatedAt || "") || 0;
+    if (incomingTime >= previousTime) rows[existingIndex] = item;
   });
   return rows;
 }
@@ -5632,6 +5849,15 @@ function normalizeSupabaseLiveOrder(orderRow, itemRows = [], addonsByItemId = ne
     syncStatus: "synced",
     syncError: ""
   };
+  const pending = (state.syncQueue || []).find(item => item.type === "order"
+    && item.orderNumber === orderRow.order_number && item.syncMode !== "status" && item.payload?.items?.length);
+  if (pending && orderRow.payment_status === "Lunas" && pending.payload.paymentStatus !== "Lunas") {
+    state.syncQueue = state.syncQueue.filter(item => item !== pending);
+  } else if (pending) {
+    Object.assign(normalizedOrder, JSON.parse(JSON.stringify(pending.payload)), {
+      id: normalizedOrder.id, supabaseId: orderRow.id, syncStatus: "pending", syncError: pending.lastError || ""
+    });
+  }
   return sanitizeKitchenPreparedItems(applyPendingKitchenOrderMutation(normalizedOrder, existing));
 }
 
@@ -9852,6 +10078,7 @@ async function selfOrderCreateOrder() {
   }
   let renderedCompletion = false;
   selfOrderSubmitting = true;
+  selfOrderSubmitStartedAt = Date.now();
   try {
   sessionStorage.setItem("self_order_payment", "cash");
   syncSelfOrderTableFromUrl();
@@ -9928,7 +10155,7 @@ async function selfOrderCreateOrder() {
     state.orders.unshift(order);
   }
   saveState();
-  const synced = await syncOrderToSupabase(order, { silent: true });
+  const synced = await submitSelfOrderConfirmed(order);
   if (!synced) {
     if (stockCommit.token) await restoreLimitedStockCommit(order.number);
     if (openOrder && previousOpenOrder) Object.assign(openOrder, previousOpenOrder);
@@ -9964,6 +10191,7 @@ async function selfOrderCreateOrder() {
     selfOrderSubmitError = error?.userMessage || "Gagal mengirim pesanan, cek koneksi anda lalu coba lagi";
   } finally {
     selfOrderSubmitting = false;
+    selfOrderSubmitStartedAt = 0;
     if (!renderedCompletion) render();
   }
 }
@@ -11516,14 +11744,27 @@ function unpaidOrders() {
 
 function orderAdditionalItems(existingItems = [], nextItems = []) {
   const previousByKey = (existingItems || []).reduce((map, item) => {
-    map.set(cartItemKey(item), Number(item.qty || 0));
+    map.set(cartItemKey(item), item);
     return map;
   }, new Map());
   return (nextItems || [])
     .map(item => {
-      const previousQty = previousByKey.get(cartItemKey(item)) || 0;
+      const previous = previousByKey.get(cartItemKey(item));
+      const previousQty = Number(previous?.qty || 0);
       const qty = Number(item.qty || 0) - previousQty;
-      return qty > 0 ? unlockCartItemForOrder({ ...item, qty }) : null;
+      if (!(qty > 0)) return null;
+      const additional = unlockCartItemForOrder({ ...item, qty });
+      if (previous) {
+        const previousAddons = new Map((previous.addons || []).map(addon => [addon.id || addon.name, Number(addon.qty || 0)]));
+        additional.addons = (item.addons || []).map(addon => ({
+          ...addon, qty: Math.max(0, Number(addon.qty || 0) - (previousAddons.get(addon.id || addon.name) || 0))
+        })).filter(addon => addon.qty > 0);
+        const discount = Math.max(0, itemDiscountAmount(item) - itemDiscountAmount(previous));
+        additional.discount = discount;
+        additional.discountValue = discount;
+        additional.discountType = "rp";
+      }
+      return additional;
     })
     .filter(Boolean);
 }
@@ -12632,6 +12873,7 @@ function nextKitchenAction(status) {
 function advanceOrder(id) {
   const order = state.orders.find(item => item.id === id);
   if (!order) return;
+  if (!order.items?.length) return toast("Rincian pesanan belum tersedia. Muat ulang pesanan terlebih dahulu.", 4800);
   if (order.status === "Sedang Disiapkan" && !areAllKitchenItemsPrepared(order)) {
     return toast("Centang semua item yang sudah siap terlebih dahulu.");
   }
@@ -12658,7 +12900,7 @@ function advanceOrder(id) {
     preparedItems: order.preparedItems
   });
   saveState();
-  syncOrderToSupabase(order).then(synced => {
+  syncOrderToSupabase(order, { statusOnly: true }).then(synced => {
     if (synced) scheduleKitchenOptimisticOrderMutationClear(order);
   });
   broadcastRealtimeEvent("orders");
@@ -12787,7 +13029,7 @@ async function cancelOrder(id, reason = "") {
   } else {
     loadMasterDataFromSupabase({ reason: "limited-stock-restore", force: true, silent: true });
   }
-  Promise.resolve(syncOrderToSupabase(order))
+  Promise.resolve(syncOrderToSupabase(order, { statusOnly: true }))
     .catch(error => console.error("Cancel order sync failed", error))
     .finally(() => cancelOrderProcessingIds.delete(id));
   broadcastRealtimeEvent("products");
