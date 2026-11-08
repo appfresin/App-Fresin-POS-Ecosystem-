@@ -45,17 +45,128 @@
 
 .so-takeaway-active-card {
   display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid #d5eadf;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #d7e0f4;
   border-radius: 8px;
-  background: #f4fbf7;
-  color: #18372a;
+  background: #f0f4fc;
+  color: #435e91;
 }
 
-.so-takeaway-active-card strong {
-  font-size: 1.8rem;
+.so-takeaway-active-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.so-takeaway-active-copy > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #66758b;
+}
+
+.so-takeaway-active-copy > strong {
+  font-size: 18px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
   letter-spacing: 0;
+}
+
+.so-takeaway-active-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #d7e0f4;
+  border-radius: 8px;
+  background: #fff;
+  color: #435e91;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.so-takeaway-active-link::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-top: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.so-takeaway-active-link:hover,
+.so-takeaway-active-link:focus-visible {
+  background: #e7eefb;
+  color: #234d88;
+  border-color: #b8c9e8;
+}
+
+.self-order-app:has(.so-takeaway-topbar) .self-order-cart-list > .empty {
+  padding: 24px 16px;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: #728098;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.6;
+  letter-spacing: 0;
+}
+
+.so-takeaway-status-highlight {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  max-width: 100%;
+  text-align: center;
+}
+
+.so-takeaway-status-highlight > .so-takeaway-status-chip {
+  max-width: 100%;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: #e9effb;
+  color: #435e91;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.so-takeaway-status-highlight.is-accepted > .so-takeaway-status-chip,
+.so-takeaway-status-highlight.is-completed > .so-takeaway-status-chip {
+  background: #e6f4ee;
+  color: #20634e;
+}
+
+.so-takeaway-status-highlight.is-processing > .so-takeaway-status-chip {
+  background: #fff3de;
+  color: #855d14;
+}
+
+.so-takeaway-status-highlight.is-cancelled > .so-takeaway-status-chip {
+  background: #fcecee;
+  color: #a63144;
+}
+
+.so-takeaway-detail-card > span > b {
+  flex: 0 0 auto;
+}
+
+.so-takeaway-detail-card .so-takeaway-payment-copy {
+  min-width: 0;
+  max-width: 58%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  text-align: right;
+  line-height: 1.45;
 }
 
 .so-takeaway-number {
@@ -238,12 +349,42 @@
   pointer-events: auto;
 }
 
-.so-takeaway-card {
-  border-color: #b9dec9;
+.orders-card.so-takeaway-card {
+  border-color: #b8d5f5;
+  background: linear-gradient(120deg, #fff 35%, #e5f1ff);
+}
+
+.so-takeaway-card .so-takeaway-order-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+}
+
+.so-takeaway-card .so-takeaway-order-heading .so-takeaway-type-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #e5f1ff;
+  color: #16519b;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+.so-takeaway-card .so-takeaway-order-number {
+  color: #193c63;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .so-takeaway-card .unpaid-compact-head strong {
-  color: #14532d;
+  color: #16519b;
 }
 
 .so-takeaway-badge {
@@ -253,8 +394,8 @@
   min-height: 24px;
   padding: 4px 8px;
   border-radius: 999px;
-  background: #fff7ed;
-  color: #9a3412;
+  background: #e5f1ff;
+  color: #16519b;
   font-size: 0.72rem;
   font-weight: 800;
 }
@@ -262,6 +403,33 @@
 .so-takeaway-pay-btn {
   width: fit-content;
   min-width: 86px;
+}
+
+.so-takeaway-card .btn.so-takeaway-process-btn {
+  background: #1764b5;
+  border-color: #1764b5;
+  color: #fff;
+}
+
+.so-takeaway-card .btn.so-takeaway-process-btn:hover,
+.so-takeaway-card .btn.so-takeaway-process-btn:focus-visible {
+  background: #124d8d;
+  border-color: #124d8d;
+  color: #fff;
+}
+
+.so-takeaway-card .btn.so-takeaway-process-btn:disabled {
+  opacity: .65;
+  cursor: wait;
+}
+
+.so-takeaway-card .orders-item-line > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.so-takeaway-card .orders-item-line > strong {
+  flex-shrink: 0;
 }
 
 @media (max-width: 560px) {
