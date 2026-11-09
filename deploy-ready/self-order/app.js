@@ -164,7 +164,6 @@ const initialState = {
     orderNotificationVolume: 70,
     orderNotificationReminderSeconds: 180,
     printerConnection: "Bluetooth",
-    printerPrintMode: "formatted",
     printerDevice: "",
     printerDeviceId: ""
   },
@@ -532,8 +531,7 @@ function devicePrinterSettings(settings = {}) {
   return {
     printerConnection: String(settings.printerConnection || "Bluetooth").trim() || "Bluetooth",
     printerDevice: String(settings.printerDevice || "").trim(),
-    printerDeviceId: String(settings.printerDeviceId || "").trim(),
-    printerPrintMode: settings.printerPrintMode === "text" ? "text" : "formatted"
+    printerDeviceId: String(settings.printerDeviceId || "").trim()
   };
 }
 
@@ -8224,7 +8222,6 @@ function printReceiptWithNativeBridge(order) {
     receipt: receiptPrintModel(order),
     width: state.settings?.receiptWidth || "58mm",
     printerConnection: state.settings?.printerConnection || "Bluetooth",
-    printerPrintMode: state.settings?.printerPrintMode === "text" ? "text" : "formatted",
     printerDevice: state.settings?.printerDevice || "",
     ...(printerDeviceId ? { printerDeviceId } : {})
   };
@@ -15992,7 +15989,6 @@ async function savePrinterSettings(event) {
   const form = new FormData(event.target);
   try {
     state.settings.printerConnection = String(form.get("printerConnection") || "Bluetooth");
-    state.settings.printerPrintMode = (form.get("printerPrintMode") || state.settings.printerPrintMode) === "text" ? "text" : "formatted";
     state.settings.printerDevice = String(form.get("printerDevice") || state.settings.printerDevice || "").trim();
     saveNativeDefaultPrinter({
       name: state.settings.printerDevice,
