@@ -234,6 +234,25 @@
 
 .so-takeaway-detail-card {
   margin-top: 4px;
+  padding: 14px;
+  border: 1px solid #d5e0f3;
+  border-radius: 8px;
+  background: #f1f5fd;
+  box-shadow: none;
+}
+
+.so-takeaway-detail-card > span {
+  border-bottom-color: #dce5f3;
+}
+
+.so-takeaway-success .so-takeaway-detail-card b {
+  color: #657995;
+}
+
+.so-takeaway-detail-card .so-takeaway-total-row strong {
+  color: #254d82;
+  font-size: 16px;
+  font-weight: 850;
 }
 
 .so-takeaway-number-inline {
@@ -241,10 +260,10 @@
   align-items: center;
   min-height: 28px;
   padding: 3px 10px;
-  border: 1px solid #b9dec9;
+  border: 1px solid #cbdafa;
   border-radius: 8px;
-  background: #f4fbf7;
-  color: #14532d;
+  background: #dfe9fc;
+  color: #355587;
   letter-spacing: 0;
 }
 

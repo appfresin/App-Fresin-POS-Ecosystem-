@@ -334,8 +334,8 @@
       <div class="self-order-success-detail so-takeaway-detail-card">
         <span><b>Nomor pesanan</b><strong class="so-takeaway-number-inline">${soTakeawayEscape(number)}</strong></span>
         <span><b>Nama pemesan</b><strong>${customer ? soTakeawayEscape(customer) : "-"}</strong></span>
-        <span><b>Total pembayaran</b><strong>${soTakeawayMoney(total)}</strong></span>
-        <span><b>Pembayaran</b><strong class="so-takeaway-payment-copy">${soTakeawayIsPaid(order) ? "Lunas" : "Di kasir saat pesanan selesai"}</strong></span>
+        <span class="so-takeaway-total-row"><b>Total pembayaran</b><strong>${soTakeawayMoney(total)}</strong></span>
+        <span><b>Pembayaran</b><strong class="so-takeaway-payment-copy">${soTakeawayIsPaid(order) ? "Lunas" : "Nanti di kasir"}</strong></span>
       </div>
     `;
   }
@@ -565,7 +565,7 @@
       saveState();
       const synced = await submitSelfOrderConfirmed(order);
       if (!synced) {
-        if (stockCommit.token) await restoreLimitedStockCommit(order.number);
+        if (stockCommit.token) await restoreLimitedStockCommit(order.number, "submit_failed");
         state.orders = state.orders.filter(item => item.id !== order.id);
         state.syncQueue = (state.syncQueue || []).filter(item => item.orderId !== orderSyncQueueId(order));
         saveState();

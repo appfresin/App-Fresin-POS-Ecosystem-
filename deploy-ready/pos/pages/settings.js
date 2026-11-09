@@ -565,11 +565,11 @@ function renderPrinterSettingsTab() {
   return `
     <section class="settings-panel settings-single-panel printer-settings-panel">
       <div class="section-title">
-        <div><h3>Pilih Printer</h3><p>Atur perangkat cetak struk dan label.</p></div>
+        <div><h3>Pilih Printer</h3><p>Atur printer untuk perangkat ini.</p></div>
       </div>
       <div class="printer-note">
         <span>i</span>
-        <p>Perangkat terpasang akan terisi dari printer Bluetooth yang tersambung atau dipilih dari perangkat ini.</p>
+        <p>Pilihan printer tersimpan di perangkat ini dan tidak mengubah printer di HP atau tablet lain, meskipun memakai toko atau akun yang sama.</p>
       </div>
       <form class="printer-form" onsubmit="savePrinterSettings(event)">
         <div class="printer-connect-row">

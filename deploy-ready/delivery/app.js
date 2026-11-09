@@ -1,4 +1,5 @@
 const STORAGE_KEY = "omnipos_mvp_state_v1";
+const DEVICE_PRINTER_STORAGE_KEY = "kasirin_device_printer_v1";
 const LOCAL_DB_NAME = "omnipos_local_db";
 const LOCAL_DB_VERSION = 1;
 const LOCAL_DB_STORE = "app_state";
@@ -534,6 +535,47 @@ function loadState() {
   }
 }
 
+function devicePrinterSettings(settings = {}) {
+  return {
+    printerConnection: String(settings.printerConnection || "Bluetooth").trim() || "Bluetooth",
+    printerDevice: String(settings.printerDevice || "").trim(),
+    printerDeviceId: String(settings.printerDeviceId || "").trim()
+  };
+}
+
+function readDevicePrinterSettings() {
+  try {
+    const value = JSON.parse(localStorage.getItem(DEVICE_PRINTER_STORAGE_KEY) || "null");
+    if (!value || Array.isArray(value) || typeof value !== "object") return null;
+    if (!["printerConnection", "printerDevice", "printerDeviceId"].every(key => typeof value[key] === "string")) return null;
+    return devicePrinterSettings(value);
+  } catch {
+    return null;
+  }
+}
+
+function saveDevicePrinterSettings() {
+  const printer = devicePrinterSettings(state.settings);
+  Object.assign(state.settings, printer);
+  try {
+    localStorage.setItem(DEVICE_PRINTER_STORAGE_KEY, JSON.stringify(printer));
+  } catch (error) {
+    // The regular IndexedDB state still persists this device's selection.
+    console.warn("Device printer preference save failed", error);
+  }
+}
+
+function applyDevicePrinterSettings() {
+  const printer = readDevicePrinterSettings();
+  if (printer) {
+    Object.assign(state.settings, printer);
+    return;
+  }
+  Object.assign(state.settings, devicePrinterSettings(state.settings));
+  // Do not seed empty startup defaults before IndexedDB has restored legacy settings.
+  if (state.settings.printerDevice || state.settings.printerDeviceId) saveDevicePrinterSettings();
+}
+
 function saveState() {
   const persistedState = persistedStateSnapshot(state);
   if (!localDbReady) localDbDirtyBeforeLoad = true;
@@ -731,6 +773,7 @@ function normalizeState() {
   state.categories ||= [];
   normalizeStaffState();
   state.settings = { ...initialState.settings, ...(state.settings || {}) };
+  applyDevicePrinterSettings();
   if (String(state.settings.receiptStoreName || "").trim().toUpperCase() === "OMNIPOS") {
     state.settings.receiptStoreName = "Kasirin!";
   }
@@ -3365,6 +3408,35 @@ function orderSyncQueueId(order) {
   return order?.id || order?.number || "";
 }
 
+function orderIsRetiredTakeawayExpiryCancellation(order) {
+  return String(order?.source || "").trim().toLowerCase() === "self order"
+    && String(order?.type || "").trim().toLowerCase() === "take away"
+    && order?.status === "Dibatalkan"
+    && /^pesanan takeaway kedaluwarsa otomatis karena belum dibayar\.?$/i.test(String(order.cancelReason || order.cancel_reason || "").trim());
+}
+
+function rejectRetiredTakeawayExpiryCancellation(order, options = {}) {
+  if (!orderIsRetiredTakeawayExpiryCancellation(order)) return false;
+  const matches = item => item.orderId === orderSyncQueueId(order) || item.orderNumber === order.number;
+  state.syncQueue = (state.syncQueue || []).filter(item => !(item.type === "order" && matches(item)
+    && orderIsRetiredTakeawayExpiryCancellation(item.payload || order)));
+  const message = "Pembatalan otomatis Take Away sudah dinonaktifkan. Status pesanan dimuat ulang dari server.";
+  for (const current of new Set([order, ...(state.orders || []).filter(item => item.id === order.id || item.number === order.number)])) {
+    if (!orderIsRetiredTakeawayExpiryCancellation(current)) continue;
+    current.syncStatus = orderHasPendingLocalSync(current) ? "pending" : "blocked";
+    current.syncError = message;
+    if (current.takeawayStatus === "EXPIRED") current.takeawayStatus = "";
+    clearKitchenOptimisticOrderMutation(current);
+  }
+  saveState();
+  if (order.supabaseId) {
+    Promise.resolve(requestLiveOrderRefresh({ reason: "orders-refresh", force: true, silent: true, orderIds: [order.supabaseId] }))
+      .catch(error => console.warn("Takeaway canonical refresh failed", error));
+  }
+  if (!options.silent) toast(message, 4800);
+  return true;
+}
+
 function invalidateReportCaches() {
   supabaseReportLoadKey = "";
   supabaseReportsLoadedAt = 0;
@@ -4415,6 +4487,7 @@ async function processSyncQueue(reason = "manual") {
           ...order, ...JSON.parse(JSON.stringify(item.payload)),
           id: order.id, supabaseId: order.supabaseId || item.payload.supabaseId
         } : order;
+        if (rejectRetiredTakeawayExpiryCancellation(queuedOrder, { silent: true })) continue;
         if (!state.orders.includes(order)) state.orders.unshift(order);
         await syncOrderToSupabase(queuedOrder, {
           fromQueue: true, silent: true, statusOnly: item.syncMode === "status", requestSequence: item.requestSequence
@@ -4583,6 +4656,7 @@ async function submitSelfOrderConfirmed(order) {
 
 async function syncOrderToSupabase(order, options = {}) {
   if (!order) return false;
+  if (rejectRetiredTakeawayExpiryCancellation(order, options)) return false;
   const snapshot = JSON.parse(JSON.stringify(order));
   const localOrder = order;
   localOrder.syncConflict = "";
@@ -5281,9 +5355,6 @@ function normalizeStoreSettingsRow(row) {
     orderNotificationReminderSeconds: Number.isFinite(Number(selfOrderSettings.notifications?.reminderIntervalSeconds))
       ? Math.max(10, Math.min(3600, Number(selfOrderSettings.notifications.reminderIntervalSeconds)))
       : 180,
-    printerConnection: selfOrderSettings.printer?.connection || state.settings.printerConnection || "Bluetooth",
-    printerDevice: selfOrderSettings.printer?.device || state.settings.printerDevice || "",
-    printerDeviceId: selfOrderSettings.printer?.deviceId || state.settings.printerDeviceId || "",
     staffSync: selfOrderSettings.staff || null,
     masterDeletedProducts: normalizeDeletedProductMarkers(selfOrderSettings.masterDeletedProducts || []),
     masterDeletedCategories: normalizeDeletedNameMarkers(selfOrderSettings.masterDeletedCategories || []),
@@ -5339,11 +5410,6 @@ function storeSettingsPayload() {
         tone: settings.orderNotificationTone || "bell",
         volume: Math.max(0, Math.min(100, Number(settings.orderNotificationVolume || 70))),
         reminderIntervalSeconds: Math.max(10, Math.min(3600, Number(settings.orderNotificationReminderSeconds || 180)))
-      },
-      printer: {
-        connection: settings.printerConnection || "Bluetooth",
-        device: settings.printerDevice || "",
-        deviceId: settings.printerDeviceId || ""
       },
       staff: staffSyncPayload(),
       masterDeletedProducts: normalizeDeletedProductMarkers(state.deletedProducts || []),
@@ -8295,6 +8361,7 @@ function printReceiptWithNativeBridge(order) {
   const nativeBridge = window.KasirinNative;
   const printReceipt = androidBridge?.printReceipt || nativeBridge?.printReceipt;
   if (typeof printReceipt !== "function") return false;
+  const printerDeviceId = String(state.settings?.printerDeviceId || "").trim();
   const payload = {
     orderNumber: displayOrderNumber(order?.number || order?.id || "struk"),
     html: printableReceiptHtml(order),
@@ -8303,7 +8370,7 @@ function printReceiptWithNativeBridge(order) {
     width: state.settings?.receiptWidth || "58mm",
     printerConnection: state.settings?.printerConnection || "Bluetooth",
     printerDevice: state.settings?.printerDevice || "",
-    printerDeviceId: state.settings?.printerDeviceId || ""
+    ...(printerDeviceId ? { printerDeviceId } : {})
   };
   try {
     if (androidBridge?.printReceipt) androidBridge.printReceipt(JSON.stringify(payload));
@@ -8738,10 +8805,14 @@ async function commitLimitedStockReservations(items, orderNumber, source = limit
   }
 }
 
-async function restoreLimitedStockCommit(orderNumber) {
+async function restoreLimitedStockCommit(orderNumber, intent = "") {
   if (!orderNumber || !canAttemptSupabaseSync()) return false;
   try {
-    const { data, error } = await supabaseClient.rpc("restore_limited_stock_commit", { p_order_number: orderNumber });
+    const explicitTakeawayRestore = /^T\d+$/i.test(orderNumber) && ["manual_delete", "submit_failed"].includes(intent);
+    const rpcName = explicitTakeawayRestore ? "restore_takeaway_stock_with_intent" : "restore_limited_stock_commit";
+    const payload = { p_order_number: orderNumber };
+    if (explicitTakeawayRestore) payload.p_intent = intent;
+    const { data, error } = await supabaseClient.rpc(rpcName, payload);
     if (error) throw error;
     const result = Array.isArray(data) ? data[0] : data;
     return result?.restored === true;
@@ -13152,7 +13223,25 @@ async function cancelOrder(id, reason = "") {
     return false;
   }
   cancelOrderProcessingIds.add(id);
-  const remotelyRestored = hasLimitedStock ? await restoreLimitedStockCommit(order.number) : false;
+  let remotelyRestored = false;
+  try {
+    if (hasLimitedStock && order.source === "Self Order" && order.type === "Take Away" && /^T\d+$/i.test(order.number)) {
+      const { data, error } = await supabaseClient.rpc("cancel_takeaway_pay_later_order", {
+        p_order_number: order.number, p_reason: reason.trim()
+      });
+      if (error) throw error;
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!result?.order_id) throw new Error("Server belum mengonfirmasi pembatalan.");
+      remotelyRestored = Boolean(result.stock_restored);
+    } else {
+      remotelyRestored = hasLimitedStock ? await restoreLimitedStockCommit(order.number) : false;
+    }
+  } catch (error) {
+    console.error("Cancel order confirmation failed", error);
+    cancelOrderProcessingIds.delete(id);
+    toast("Pembatalan belum berhasil disimpan. Periksa koneksi lalu coba lagi.", 4800);
+    return false;
+  }
   order.status = "Dibatalkan";
   order.cancelledAt = new Date().toISOString();
   order.cancelReason = reason.trim();
@@ -13256,7 +13345,7 @@ async function restoreOrderStockBeforeDelete(order) {
     const product = state.products.find(candidate => candidate.id === item.productId);
     return item.stockTracked === true || limitedStockRequiresOnline(product, item.stockVariantKey || cartItemVariantKey(item));
   });
-  const remotelyRestored = hasLimitedStock ? await restoreLimitedStockCommit(order.number) : false;
+  const remotelyRestored = hasLimitedStock ? await restoreLimitedStockCommit(order.number, "manual_delete") : false;
   const touchedProductIds = applyLimitedStockItems(order.items, 1, `Hapus pesanan ${order.number}`);
   for (const item of order.items || []) {
     for (const addon of item.addons || []) {
@@ -16009,8 +16098,8 @@ function scanNativePrinters() {
         address: state.settings.printerDeviceId
       });
       audit("Printer Bluetooth APK dipilih", state.settings.printerDevice);
+      saveDevicePrinterSettings();
       saveState();
-      syncStoreSettingsToSupabase({ silent: true }).catch(error => console.error("Printer settings sync failed", error));
       toast("Printer Bluetooth APK dipilih.");
       render();
       resolve(true);
@@ -16059,8 +16148,8 @@ async function scanPrinters() {
     state.settings.printerDevice = device.name || "Printer Bluetooth";
     state.settings.printerDeviceId = device.id || "";
     audit("Printer Bluetooth dipilih", state.settings.printerDevice);
+    saveDevicePrinterSettings();
     saveState();
-    syncStoreSettingsToSupabase({ silent: true }).catch(error => console.error("Printer settings sync failed", error));
     toast("Printer Bluetooth dipilih.");
     render();
   } catch (error) {
@@ -16082,16 +16171,11 @@ async function savePrinterSettings(event) {
       address: state.settings.printerDeviceId
     });
     audit("Pengaturan printer disimpan", state.settings.printerDevice || state.settings.printerConnection);
+    saveDevicePrinterSettings();
     saveState();
-    try {
-      const synced = await syncStoreSettingsToSupabase({ silent: true });
-      toast(state.settings.printerDevice
-        ? (synced ? "Printer disimpan online." : "Printer disimpan lokal.")
-        : "Koneksi printer disimpan. Pindai perangkat untuk memilih printer.");
-    } catch (error) {
-      console.error("Printer settings sync failed", error);
-      toast(state.settings.printerDevice ? "Printer disimpan lokal." : "Koneksi printer disimpan lokal.");
-    }
+    toast(state.settings.printerDevice
+      ? "Printer disimpan untuk perangkat ini."
+      : "Koneksi printer disimpan untuk perangkat ini. Pindai untuk memilih printer.");
     render();
   } finally {
     stopLoading();
