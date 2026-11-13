@@ -1469,3 +1469,6 @@ th {
   text-transform: uppercase;
   letter-spacing: .04em;
 }
+
+.success-icon.pos-success-asik { background: transparent; box-shadow: none; }
+.success-icon.pos-success-asik svg { display: block; width: 76px; height: 76px; fill: none; stroke: none; }

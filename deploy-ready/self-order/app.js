@@ -33,7 +33,7 @@ const EGRESS_SAVER_ORDER_LIMIT = 120;
 const EGRESS_SAVER_ORDER_LOOKBACK_HOURS = 30;
 const EGRESS_SAVER_MASTER_CACHE_MS = 6 * 60000;
 const EGRESS_SAVER_DELTA_OVERLAP_MS = 2 * 60000;
-const LIVE_ORDER_COLUMNS = "id,order_number,source,type,customer_name,service_info,note,status,payment_status,subtotal,discount,tax_amount,service_fee,delivery_fee,grand_total,print_receipt,prepared_items,created_at,updated_at,confirmed_at,prepared_at,ready_at,completed_at,cancelled_at,cancel_reason";
+const LIVE_ORDER_COLUMNS = "id,order_number,source,type,customer_name,service_info,note,status,payment_status,subtotal,discount,tax_amount,service_fee,delivery_fee,grand_total,print_receipt,prepared_items,created_at,updated_at,confirmed_at,prepared_at,ready_at,completed_at,cancelled_at,cancel_reason,customer_order_type,customer_order_status,customer_phone,pickup_time,payment_provider,driver_id";
 const LIVE_ORDER_ITEM_COLUMNS = "id,order_id,product_name,sku,qty,price,cost,discount,variant_label,variant_data,note";
 const LIVE_ORDER_ADDON_COLUMNS = "order_item_id,addon_id,addon_name,qty,price,cost";
 const LIVE_ORDER_PAYMENT_COLUMNS = "order_id,method,received_amount,change_amount,payment_breakdown,paid_at";
@@ -164,6 +164,7 @@ const initialState = {
     orderNotificationVolume: 70,
     orderNotificationReminderSeconds: 180,
     printerConnection: "Bluetooth",
+    printerPrintMode: "formatted",
     printerDevice: "",
     printerDeviceId: ""
   },
@@ -531,7 +532,8 @@ function devicePrinterSettings(settings = {}) {
   return {
     printerConnection: String(settings.printerConnection || "Bluetooth").trim() || "Bluetooth",
     printerDevice: String(settings.printerDevice || "").trim(),
-    printerDeviceId: String(settings.printerDeviceId || "").trim()
+    printerDeviceId: String(settings.printerDeviceId || "").trim(),
+    printerPrintMode: settings.printerPrintMode === "text" ? "text" : "formatted"
   };
 }
 
@@ -1684,7 +1686,8 @@ function selfOrderPromoImageMarkup(image, alt, fallbackImage = "", options = nul
 }
 
 function productImageOrToken(product, className = "", size = 360) {
-  const photo = mediaImageTag(product.imageName, `Foto ${product.name}`, className, size);
+  const photo = mediaImageTag(product.imageName, `Foto ${product.name}`, className, size)
+    .replace("<img ", '<img data-self-order-photo onload="this.dataset.loaded=\'1\'" ');
   const initials = String(product.name || "PR").slice(0, 2).toUpperCase();
   const token = `<span class="${escapeHtml(className)} self-order-product-token media-fallback-token" ${photo ? "hidden" : ""}>${escapeHtml(initials)}</span>`;
   if (photo) return `${photo}${token}`;
@@ -3233,6 +3236,20 @@ function orderTableKey(value) {
   return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
+function orderIsCustomerHomeOrder(order) {
+  const mode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || order?.order_mode || "").trim().toUpperCase();
+  if (["DELIVERY", "PICKUP_PREORDER"].includes(mode)) return true;
+  const source = String(order?.source || "").trim().toLowerCase();
+  const type = String(order?.type || "").trim().toLowerCase();
+  const number = String(order?.number || order?.order_number || "").trim();
+  return source === "self order" && ["delivery", "take away"].includes(type) && /^[DP]\d{1,6}$/i.test(number);
+}
+
+function orderUsesOutletPayment(order) {
+  return orderIsCustomerHomeOrder(order)
+    && ["cash_at_outlet", "courier_cash"].includes(String(order?.paymentProvider || order?.payment_provider || "").toLowerCase());
+}
+
 function isCashierSource(source) {
   const value = String(source || "").toLowerCase();
   return value.includes("kasir") || value.includes("kasirin") || value.includes("pos");
@@ -4662,6 +4679,15 @@ async function syncOrderToSupabase(order, options = {}) {
       notification_categories: orderPushNotificationCategories(order),
       prepared_items: order.preparedItems || {}
     };
+    if (orderUsesOutletPayment(order) && !order.supabaseId) Object.assign(orderPayload, {
+      customer_order_type: order.customerOrderType || order.orderMode,
+      customer_order_status: order.customerOrderStatus || "WAITING_ACCEPTANCE",
+      customer_phone: order.customerPhone || "", pickup_time: order.pickupTime || null,
+      payment_provider: order.paymentProvider, public_order_token: order.publicOrderToken || "",
+      delivery_address: order.deliveryAddress || "", delivery_note: order.deliveryNote || "",
+      delivery_location: order.deliveryLocation || "", delivery_latitude: order.deliveryLatitude ?? null,
+      delivery_longitude: order.deliveryLongitude ?? null
+    });
     const { data: orderRows, error: orderError } = await upsertSupabaseOrderPayload(orderPayload);
     if (orderError) throw orderError;
     const supabaseOrderId = orderRows.id;
@@ -5891,6 +5917,13 @@ function normalizeSupabaseLiveOrder(orderRow, itemRows = [], addonsByItemId = ne
     status: orderRow.status || "Pesanan Baru",
     paymentStatus: orderRow.payment_status || "Belum dibayar",
     paymentMethod: payment?.method || existing?.paymentMethod || "Belum dipilih",
+    customerOrderType: orderRow.customer_order_type || existing?.customerOrderType || "",
+    orderMode: orderRow.customer_order_type || existing?.orderMode || "",
+    customerOrderStatus: orderRow.customer_order_status || existing?.customerOrderStatus || "",
+    customerPhone: orderRow.customer_phone || existing?.customerPhone || "",
+    pickupTime: orderRow.pickup_time || existing?.pickupTime || "",
+    driverId: orderRow.driver_id || existing?.driverId || "",
+    paymentProvider: orderRow.payment_provider || existing?.paymentProvider || "",
     receivedAmount: Number(payment?.received_amount || existing?.receivedAmount || 0),
     changeAmount: Number(payment?.change_amount || existing?.changeAmount || 0),
     paymentBreakdown: payment?.payment_breakdown || existing?.paymentBreakdown || {},
@@ -6298,7 +6331,8 @@ async function loadSupabaseOrderDetailForReport(record) {
       paymentStatus: orderRow.payment_status || record.paymentStatus,
       subtotal: Number(orderRow.subtotal ?? record.subtotal ?? 0),
       discount: Number(orderRow.discount ?? record.discount ?? 0),
-      total: Number(orderRow.grand_total ?? record.total ?? 0),
+      total: Math.max(0, Number(orderRow.grand_total ?? record.total ?? 0)
+        - (orderRow.payment_provider === "courier_cash" ? Number(orderRow.delivery_fee || 0) : 0)),
       profit: Number(orderRow.profit_total ?? record.profit ?? 0),
       receivedAmount: Number(payment.received_amount || 0),
       changeAmount: Number(payment.change_amount || 0),
@@ -7309,6 +7343,7 @@ function refreshPosOrRender(options = {}) {
 }
 
 function render() {
+  if (IS_SELF_ORDER_APP && window.FRESIN_GATEWAY_BOOT_PENDING === true) return;
   captureActiveModalDraft();
   if (IS_SELF_ORDER_APP) {
     renderSelfOrderStandalone();
@@ -8222,6 +8257,7 @@ function printReceiptWithNativeBridge(order) {
     receipt: receiptPrintModel(order),
     width: state.settings?.receiptWidth || "58mm",
     printerConnection: state.settings?.printerConnection || "Bluetooth",
+    printerPrintMode: state.settings?.printerPrintMode === "text" ? "text" : "formatted",
     printerDevice: state.settings?.printerDevice || "",
     ...(printerDeviceId ? { printerDeviceId } : {})
   };
@@ -9118,7 +9154,7 @@ function renderCartSuccess() {
   }
   return `
     <div class="success-card">
-      <div class="success-icon">&#10003;</div>
+      <div class="success-icon pos-success-asik" aria-hidden="true">${selfOrderAsikIcon("success")}</div>
       <strong>${escapeHtml(result.title)}</strong>
       <p>${escapeHtml(result.message)}</p>
       <div class="success-meta">
@@ -9560,7 +9596,7 @@ function renderSelfOrderUpsellCard(context = "cart") {
   return `
     <section class="self-order-upsell-card ${isPayment ? "payment" : "cart"}">
       <div class="self-order-upsell-head">
-        <span class="self-order-upsell-icon" aria-hidden="true">${navIcon("sparkles")}</span>
+        <span class="self-order-upsell-icon" aria-hidden="true">${selfOrderAsikIcon("recommend")}</span>
         <div>
           <h4>${escapeHtml(title)}</h4>
           <p>${escapeHtml(subtitle)}</p>
@@ -9573,7 +9609,7 @@ function renderSelfOrderUpsellCard(context = "cart") {
             <span class="self-order-upsell-media">${productImageOrToken(entry.product, "self-order-upsell-img", 240)}</span>
             <strong>${escapeHtml(entry.name)}</strong>
             <span class="self-order-upsell-price">+ ${entry.priceLabel}</span>
-            <button type="button" onclick="selfOrderAddUpsellProduct('${escapeHtml(entry.key)}', '${escapeHtml(context)}')" aria-label="Tambah ${escapeHtml(entry.name)}">+</button>
+            <button type="button" onclick="selfOrderAddUpsellProduct('${escapeHtml(entry.key)}', '${escapeHtml(context)}')" aria-label="Tambah ${escapeHtml(entry.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
           </article>
         `).join("")}
       </div>
@@ -10275,6 +10311,7 @@ function renderSelfOrder() {
     : step === "table-check" ? renderSelfOrderTableCheck()
     : step === "table-decision" ? renderSelfOrderTableDecision()
     : step === "payment" ? renderSelfOrderPayment()
+    : step === "receipt" ? window.SOTakeaway.renderReceiptPage()
     : step === "success" ? renderSelfOrderSuccess()
     : renderSelfOrderMenu();
   const navStep = selfOrderNavStep(step);
@@ -10374,8 +10411,8 @@ function renderSelfOrderCatalog() {
   return `
     <section class="self-order-categories" aria-label="Kategori produk" onscroll="rememberSelfOrderCategoryScroll(this)">
       ${categories.map(item => `
-        <button class="${item === safeCategory ? "active" : ""}" type="button" onclick='selfOrderSetCategory(${JSON.stringify(item)})'>
-          ${escapeHtml(item)}
+        <button class="${IS_SELF_ORDER_APP && window.FresinGateway?.menuVisualsEnabled() ? "fresin-category-chip " : ""}${item === safeCategory ? "active" : ""}" type="button" onclick='selfOrderSetCategory(${JSON.stringify(item)})'>
+          ${IS_SELF_ORDER_APP && window.FresinGateway?.categoryVisual ? window.FresinGateway.categoryVisual(item, activeProducts) : ""}${escapeHtml(item)}
         </button>
       `).join("")}
     </section>
@@ -10790,9 +10827,9 @@ function renderSelfOrderPayment() {
     ? `<span class="self-order-btn-spinner" aria-hidden="true"></span><span>Mengirim pesanan</span>`
     : "Selesaikan Pesanan";
   return `
-    <main class="self-order-main payment">
-      <div class="self-order-section-head">
-        <div><span>Pembayaran</span><h3>Total ${money(selfOrderSubtotal())}</h3></div>
+    <main class="self-order-main payment self-order-table-payment">
+      <div class="self-order-section-head self-order-payment-head">
+        <span>Pembayaran</span><h3>${money(selfOrderSubtotal())}</h3>
       </div>
       <section class="self-order-payment-shell">
         <div class="self-order-checkout">
@@ -10816,24 +10853,31 @@ function renderSelfOrderSuccess() {
   const moveInline = selfOrderMoveTableInlineVisible() && canMove;
   const currentTable = liveOrder?.serviceInfo || order?.table || "A-1";
   const orderCreatedAt = liveOrder?.createdAt || order?.createdAt || "";
+  const successHero = window.SOTakeaway?.renderHero?.({
+    title: "Pesanan diterima",
+    note: `Pesananmu akan diantar ke meja ${currentTable}.`,
+    tone: "accepted"
+  }) || `<div class="self-order-success-mark" aria-hidden="true">✓</div><h2>Pesanan diterima</h2>`;
   return `
-    <main class="self-order-main success">
-      <section class="self-order-success-card">
-        <div class="self-order-success-mark" aria-hidden="true">✓</div>
-        <h2>Pesanan diterima</h2>
-        <p class="self-order-success-warning">Mohon Tidak Pindah Meja</p>
-        <p class="self-order-success-warning-hint">(klik tombol dibawah jika pindah meja)</p>
-        <div class="self-order-success-detail">
-          <span><b>Nomor meja</b><strong>${escapeHtml(order?.table || "A-1")}</strong></span>
+    <main class="self-order-main success so-takeaway-success fresin-so-success">
+      <section class="self-order-success-card so-takeaway-status-card">
+        ${successHero}
+        <div class="fresin-so-table-notice">
+          <span class="fresin-so-table-notice-icon" aria-hidden="true">${selfOrderAsikIcon("table")}</span>
+          <div><p class="self-order-success-warning">Mohon Tidak Pindah Meja</p>
+          <p class="self-order-success-warning-hint">(klik tombol dibawah jika pindah meja)</p></div>
+        </div>
+        <div class="self-order-success-detail so-takeaway-detail-card">
+          <span><b>Nomor meja</b><strong class="so-takeaway-number-inline">${escapeHtml(currentTable)}</strong></span>
           <span><b>Nomor order</b><strong>${escapeHtml(displayOrderNumber(order?.number || "-"))}</strong></span>
           <span><b>Waktu order</b><strong>${escapeHtml(orderCreatedAt ? timeOnly(orderCreatedAt) : "-")}</strong></span>
-          <span><b>Nominal</b><strong>${money(order?.checkoutTotal ?? order?.total ?? 0)}</strong></span>
-          <span><b>Status bayar</b><strong>Bayar di Kasir saat pulang</strong></span>
+          <span class="so-takeaway-total-row"><b>Nominal</b><strong>${money(order?.checkoutTotal ?? order?.total ?? 0)}</strong></span>
+          <span><b>Status bayar</b><strong class="so-takeaway-payment-copy">Bayar di Kasir saat pulang</strong></span>
           <span><b>Nama pelanggan</b><strong>${customer ? escapeHtml(customer) : "-"}</strong></span>
         </div>
-        <p>Pesanan akan diproses ±20 menit. Untuk tambah pesanan, scan ulang QR Code atau klik tombol di bawah. Terima kasih!</p>
+        <p class="fresin-so-order-hint">Pesanan akan diproses ±20 menit. Untuk tambah pesanan, scan ulang QR Code atau klik tombol di bawah. Terima kasih!</p>
         <div class="self-order-success-actions">
-          <button class="self-order-primary" type="button" onclick="selfOrderShowMenu()">Pesan Lagi</button>
+          ${window.SOTakeaway.renderSuccessActions("selfOrderShowMenu()")}
           ${moveInline ? renderSelfOrderSuccessMoveInline(currentTable) : ""}
           <button class="self-order-secondary" type="button" ${moveInline ? "data-move-table-submit" : ""} onclick="${moveInline && liveOrder ? `confirmMoveOrderTable('${liveOrder.id}', 'selforder')` : "openSelfOrderMoveTableDialog()"}" ${hasOrderReference ? "" : "disabled"}>${moveInline ? "Konfirmasi Pindah Meja" : "Pindah Meja"}</button>
         </div>
@@ -10936,29 +10980,30 @@ function renderSelfOrderBottomNav(step) {
   `;
 }
 
+function selfOrderAsikIcon(kind) {
+  const art = {
+    menu: `<path d="M13 12h16c5 0 7 2 7 5v36H16a5 5 0 0 1-5-5V17a5 5 0 0 1 2-5Z" fill="#fff8e9"/><path d="M36 17c0-3 3-5 7-5h10v36H42c-4 0-6 2-6 5V17Z" fill="#efd5a5"/><path d="M20 22h9M20 29h9M20 36h7M43 23h5M43 30h5M36 19v33"/><path d="M19 12v8l4-3 4 3v-8" fill="#e6b76b"/>`,
+    cart: `<path d="M11 16h7l6 29h26l6-22H20" fill="#fff8e9"/><path d="M24 30h28l-4 13H27Z" fill="#efd5a5"/><path d="M31 29v10M41 29v10"/><circle cx="29" cy="52" r="4" fill="#e5b96e"/><circle cx="47" cy="52" r="4" fill="#e5b96e"/><path d="M29 23v-9h16v9" fill="#e9f0df"/><path d="m34 18 3 3 5-6" stroke="#708c4c"/>`,
+    payment: `<path d="m15 24 31-12 4 17" fill="#fff5dc"/><path d="M12 23h37a5 5 0 0 1 5 5v23H14a5 5 0 0 1-5-5V28a5 5 0 0 1 3-5Z" fill="#e6bf80"/><path d="M43 32h13v12H43a6 6 0 0 1 0-12Z" fill="#fff8e9"/><circle cx="46" cy="38" r="1.6" fill="#aa7b3b"/><path d="M17 30h16" stroke="#fff4de"/><circle cx="47" cy="16" r="8" fill="#f5d58e"/><path d="M47 12v8m-3-6h5m-5 4h5"/>`,
+    table: `<ellipse cx="32" cy="27" rx="19" ry="7" fill="#fff8e9"/><path d="M32 34v18m-9 0h18M8 30v14h11m-11-5v13m11-8v8M56 30v14H45m11-5v13m-11-8v8"/><path d="M27 20v-7h10v7" fill="#efd5a5"/>`,
+    success: `<circle cx="30" cy="31" r="27" fill="#fff1d8" stroke="none"/><path d="M19 12h21l8 8v31H19V12Z" fill="#fffaf0"/><path d="M40 12v9h8M25 28h14M25 34h11M25 40h7"/><circle cx="47" cy="47" r="12" fill="#e9f2df" stroke="#718e4d"/><path d="m41 47 4 4 8-9" stroke="#4f7c41" stroke-width="2.7"/>`,
+    recommend: `<circle cx="29" cy="34" r="20" fill="#efd5a5"/><circle cx="29" cy="34" r="14" fill="#fff8e9"/><circle cx="29" cy="34" r="5" fill="#d2a264"/><path d="m17 27 3 1m17 10 3-1m-22 5 3-1m4-21 1 3m8 20 1 3"/><path d="m47 9 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z" fill="#e9bc64"/>`
+  };
+  return `<svg class="self-order-asik-icon" viewBox="0 0 64 64" fill="none" aria-hidden="true"><g stroke="#a6783d" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">${art[kind] || art.menu}</g></svg>`;
+}
+
 function selfOrderTabIcon(id) {
   const count = selfOrderItemsTotal();
-  if (id === "cart") {
-    return `
-      <span class="self-order-nav-icon cart-icon" aria-hidden="true">
-        <svg viewBox="0 0 48 48"><path d="M9 12h5l4 22h20l4-16H17"/><circle cx="20" cy="40" r="2"/><circle cx="36" cy="40" r="2"/></svg>
-        ${count ? `<em>${count}</em>` : ""}
-      </span>
-    `;
-  }
-  if (id === "payment") {
-    return `
-      <span class="self-order-nav-icon payment-icon" aria-hidden="true">
-        <svg viewBox="0 0 48 48"><path d="M11 17h28a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H11a4 4 0 0 1-4-4V21a4 4 0 0 1 4-4Z"/><path d="M13 17l23-8 2 8"/><path d="M35 28h8"/><circle cx="35" cy="28" r="2"/></svg>
-        <i></i>
-      </span>
-    `;
-  }
-  return `
-    <span class="self-order-nav-icon menu-icon" aria-hidden="true">
-      <svg viewBox="0 0 48 48"><path d="M15 16h18M15 24h18M15 32h18"/><circle cx="10" cy="16" r="2"/><circle cx="10" cy="24" r="2"/><circle cx="10" cy="32" r="2"/></svg>
-    </span>
-  `;
+  const kind = id === "cart" ? "cart" : id === "payment" ? "payment" : "menu";
+  const paths = {
+    menu: '<rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 8h6M9 12h6M9 16h4"/>',
+    cart: '<path d="M3 4h2l3 12h10l3-9H6M9 11h9"/><circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/>',
+    payment: '<path d="M5 7V5l12-2v4M5 7h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><path d="M16 12h5v5h-5a2.5 2.5 0 0 1 0-5Z"/>'
+  };
+  return `<span class="self-order-nav-icon ${kind}-icon" aria-hidden="true">
+    <svg class="self-order-line-icon" viewBox="0 0 24 24" fill="none">${paths[kind]}</svg>
+    ${kind === "cart" && count ? `<em>${count}</em>` : ""}
+  </span>`;
 }
 
 function posProductSearchText(product) {
@@ -12300,7 +12345,7 @@ async function submitOrder() {
     existingOrder.subtotal = subtotal;
     existingOrder.discount = discount;
     existingOrder.tax = tax;
-    existingOrder.grandTotal = grandTotal;
+    existingOrder.grandTotal = grandTotal + (orderUsesOutletPayment(existingOrder) ? Number(existingOrder.deliveryFee || 0) : 0);
     existingOrder.updatedAt = updateCreatedAt;
     existingOrder.paidAt = updateCreatedAt;
     if (additionalItems.length) {
@@ -15989,6 +16034,7 @@ async function savePrinterSettings(event) {
   const form = new FormData(event.target);
   try {
     state.settings.printerConnection = String(form.get("printerConnection") || "Bluetooth");
+    state.settings.printerPrintMode = (form.get("printerPrintMode") || state.settings.printerPrintMode) === "text" ? "text" : "formatted";
     state.settings.printerDevice = String(form.get("printerDevice") || state.settings.printerDevice || "").trim();
     saveNativeDefaultPrinter({
       name: state.settings.printerDevice,

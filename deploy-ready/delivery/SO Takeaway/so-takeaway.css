@@ -11,6 +11,177 @@
   gap: 16px;
 }
 
+/* Shared success layout for outlet Takeaway and customer cash orders. */
+.self-order-app:has(> .so-takeaway-success) { padding-bottom: 0; }
+.self-order-main.success.so-takeaway-success {
+  min-height: 0;
+  align-content: start;
+  place-items: stretch;
+  gap: 12px;
+  padding: 14px 14px 100px;
+}
+.so-takeaway-success > .so-takeaway-status-card {
+  width: 100%;
+  padding: 0;
+  gap: 12px;
+  justify-items: stretch;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.so-takeaway-result-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 21px 18px 17px;
+  border: 1px solid #245f9f;
+  border-radius: 24px;
+  background: #104985;
+  color: #fff;
+  text-align: left;
+  box-shadow: 0 13px 26px #17477725, inset 0 1px 0 #ffffff20;
+}
+.so-takeaway-result-hero::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 200px;
+  height: 200px;
+  right: -110px;
+  top: -70px;
+  border: 30px solid #ffffff09;
+  border-radius: 50%;
+  box-shadow: 0 0 0 30px #ffffff05;
+}
+.so-takeaway-result-spark { position: absolute; right: 17px; top: 13px; color: #ffe0a2; font-size: 22px; }
+.so-takeaway-result-heading { display: flex; align-items: center; gap: 13px; padding-right: 12px; }
+.so-takeaway-result-heading > div:last-child { min-width: 0; }
+.so-takeaway-result-heading .success-icon,
+.so-takeaway-result-heading .so-takeaway-mark {
+  flex: 0 0 49px;
+  display: grid;
+  place-items: center;
+  width: 49px;
+  height: 49px;
+  margin: 0;
+  border-radius: 17px;
+  background: #fff1d8;
+  color: #258064;
+  font-size: 32px;
+  line-height: 1;
+  box-shadow: 0 5px 12px #092f562b;
+}
+.so-takeaway-result-heading .so-takeaway-mark.expired { color: #ba3446; }
+.so-takeaway-result-eyebrow { display: block; margin-bottom: 5px; color: #ffe8bd; font-size: 11px; font-weight: 650; letter-spacing: .7px; }
+.so-takeaway-result-hero .so-takeaway-result-heading h2 { margin: 0; color: #fff; font-size: clamp(19px, 5.4vw, 25px); line-height: 1.18; letter-spacing: -.45px; }
+.so-takeaway-result-hero .so-takeaway-status-highlight { margin-top: 16px; justify-items: center; text-align: center; }
+.so-takeaway-result-hero .so-takeaway-status-highlight > .so-takeaway-status-chip {
+  padding: 8px 11px;
+  border: 1px solid #ffffff20;
+  border-radius: 11px;
+  background: #ffffff13;
+  color: #edf5ff;
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 500;
+}
+.so-takeaway-success .so-takeaway-detail-card {
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #c8dcf5;
+  border-radius: 20px;
+  background: #edf4ff;
+  box-shadow: 0 8px 18px #224f800d, inset 0 1px 0 #fff;
+}
+.so-takeaway-success .so-takeaway-detail-card > span { gap: 12px; padding: 7px 0; font-size: 12px; line-height: 1.4; }
+.so-takeaway-success .so-takeaway-detail-card > span:first-child {
+  margin: -10px -14px 2px; padding: 10px 14px; background: #dceaff; border-bottom: 1px solid #cbdcf1;
+}
+.so-takeaway-success .so-takeaway-detail-card > span:last-child { padding-bottom: 0; }
+.so-takeaway-success .so-takeaway-detail-card > span > b { flex-shrink: 1; font-weight: 500; }
+.so-takeaway-success .so-takeaway-detail-card > span > strong { min-width: 0; max-width: 65%; overflow-wrap: anywhere; font-size: 12px; }
+.so-takeaway-success .so-takeaway-detail-card .so-takeaway-number-inline { min-height: 25px; padding: 4px 9px; border-radius: 8px; background: #fff1d8; border-color: #f1dfbc; color: #164d80; }
+.so-takeaway-success .so-takeaway-detail-card .so-takeaway-total-row { margin: 5px 0 2px; padding: 9px 10px; border: 0; border-radius: 11px; background: #fff1d8; }
+.so-takeaway-success .so-takeaway-detail-card .so-takeaway-total-row strong { font-size: 16px; color: #164d80; }
+.fresin-so-success .fresin-so-table-notice { padding: 10px 13px; border: 1px solid #edddbd; border-radius: 14px; background: #fff5e5; text-align: left; }
+.fresin-so-success .fresin-so-table-notice .self-order-success-warning { margin: 0; color: #775627; font-size: 12px; font-weight: 700; }
+.fresin-so-success .fresin-so-table-notice .self-order-success-warning-hint { margin: 3px 0 0; color: #806e51; font-size: 11px; }
+.fresin-so-success .fresin-so-order-hint { margin: 0; padding: 0 2px; color: #657c97; text-align: left; font-size: 12px; line-height: 1.6; }
+.fresin-so-success .self-order-success-actions { width: 100%; gap: 9px; }
+.fresin-so-success .self-order-success-actions .self-order-primary { margin: 0; min-height: 44px; border-radius: 14px; background: #175892; color: #fff; font-size: 13px; }
+.fresin-so-success .self-order-success-actions .self-order-secondary { min-height: 42px; border: 1px solid #cadcf2; border-radius: 14px; background: #e5efff; color: #17518c; font-size: 12px; }
+.fresin-so-success .self-order-success-actions .self-order-primary:hover { background: #104979; color: #fff; }
+.fresin-so-success .self-order-success-actions .self-order-secondary:hover { background: #d9e8fc; color: #17518c; }
+.so-takeaway-success .so-takeaway-statusbar {
+  margin: 0;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid #dbe5f2;
+  border-radius: 19px;
+  background: #fff;
+}
+.so-takeaway-success .so-takeaway-statusbar > span { min-height: 74px; padding: 9px 5px; gap: 6px; border-radius: 12px; }
+.so-takeaway-success .so-takeaway-statusbar i { width: 26px; height: 26px; font-size: 12px; }
+.so-takeaway-success .so-takeaway-statusbar b { font-size: 10px; }
+.so-takeaway-success .so-takeaway-statusbar small { display: none; }
+.so-takeaway-success .so-takeaway-status-card > .self-order-primary {
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 12px 18px;
+  border-radius: 15px;
+  background: #175892;
+  color: #fff;
+  font-size: 13px;
+  box-shadow: 0 8px 17px #1a548b20;
+}
+.so-takeaway-success .so-takeaway-status-card > .self-order-primary:hover { background: #104979; color: #fff; }
+.self-order-main.so-takeaway-success > .customer-home-support { margin-top: 0; }
+
+.fresin-order-success-actions { width: 100%; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+.fresin-order-success-actions > button { width: 100%; min-height: 44px; margin: 0; padding: 12px 8px; border-radius: 14px; font-size: 12px; }
+.fresin-order-success-actions > .self-order-primary { background: #175892; color: #fff; box-shadow: 0 7px 15px #1a548b17; }
+.fresin-order-success-actions > .self-order-secondary { background: #e3edff; border: 1px solid #bdD3ef; color: #17518c; }
+.fresin-order-success-actions > .self-order-primary:hover { background: #104979; color: #fff; }
+.fresin-order-success-actions > .self-order-secondary:hover { background: #d6e6fc; color: #17518c; }
+.self-order-app:has(> .fresin-receipt-page) { padding-bottom: 0; }
+.fresin-receipt-page { display: grid; align-content: start; gap: 18px; padding: 20px 18px 104px; }
+.fresin-customer-receipt { position: relative; min-width: 0; margin: 9px 0; padding: 23px 20px 19px; border: 1px solid #e8ddc9; border-top: 0; border-bottom: 0; border-radius: 0; background: #fffdf7; box-shadow: 0 16px 30px #294f7914; color: #294864; }
+.fresin-customer-receipt::before { content: ""; position: absolute; bottom: calc(100% - 1px); left: -1px; right: -1px; height: 13px; background: linear-gradient(45deg,#fffdf7 50%,transparent 50%) 0 100%/16px 16px repeat-x,linear-gradient(315deg,#fffdf7 50%,transparent 50%) 0 100%/16px 16px repeat-x; filter: drop-shadow(0 -2px 0 #e8ddc9); }
+.fresin-customer-receipt::after { content: ""; position: absolute; top: calc(100% - 1px); left: -1px; right: -1px; height: 13px; background: linear-gradient(135deg,#fffdf7 50%,transparent 50%) 0 0/16px 16px repeat-x,linear-gradient(225deg,#fffdf7 50%,transparent 50%) 0 0/16px 16px repeat-x; filter: drop-shadow(0 2px 0 #e8ddc9); }
+.fresin-receipt-brand { display: grid; justify-items: center; gap: 8px; padding-bottom: 17px; }
+.fresin-receipt-emblem { display: grid; place-items: center; width: 48px; height: 48px; overflow: hidden; border-radius: 50%; background: #164c83; color: #ffe2aa; font-size: 26px; }
+.fresin-receipt-logo { display: block; width: 100%; height: 100%; object-fit: contain; }
+.fresin-receipt-brand strong { font-size: 18px; letter-spacing: -.4px; }
+.fresin-receipt-meta { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; padding: 13px 0; border-top: 1px dashed #d9cdb8; border-bottom: 1px dashed #d9cdb8; font-size: 11px; color: #7a7d7f; }
+.fresin-receipt-meta > strong { color: #1f537f; font-size: 12px; }
+.fresin-receipt-meta > span:nth-child(even) { text-align: right; }
+.fresin-receipt-items { display: grid; gap: 14px; padding: 19px 0; }
+.fresin-receipt-item { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; font-size: 12px; line-height: 1.4; }
+.fresin-receipt-item > div { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.fresin-receipt-item strong { font-weight: 650; }
+.fresin-receipt-item small { color: #899097; font-size: 10px; }
+.fresin-receipt-item > b { font-size: 11px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.fresin-receipt-totals { display: grid; gap: 9px; border-top: 1px dashed #d9cdb8; padding-top: 13px; }
+.fresin-receipt-totals > span { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+.fresin-receipt-totals b { font-weight: 400; color: #7c8690; }
+.fresin-receipt-totals strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.fresin-receipt-totals .fresin-receipt-grand { padding: 12px 0 3px; border-top: 2px solid #345f87; color: #164c83; font-size: 19px; }
+.fresin-receipt-totals:has(> .fresin-receipt-grand:only-child) { border-top: 0; padding-top: 0; }
+.fresin-receipt-grand b,.fresin-receipt-grand strong { color: inherit; font-weight: 800; }
+.fresin-receipt-payment { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; font-size: 11px; }
+.fresin-receipt-payment > span { color: #7c8690; }
+.fresin-receipt-payment > strong { color: #8c6c34; text-align: right; }
+.fresin-receipt-footer { display: grid; justify-items: center; gap: 5px; padding-top: 13px; border-top: 1px dashed #d9cdb8; text-align: center; }
+.fresin-receipt-footer p { margin: 0; font-size: 12px; color: #496984; }
+.fresin-receipt-footer > span { font-size: 10px; color: #9a968d; }
+.fresin-receipt-back.self-order-secondary { min-height: 44px; border: 1px solid #ccdcf0; border-radius: 14px; background: #e7f0fe; color: #245985; font-size: 12px; }
+.fresin-receipt-empty { margin: 0; color: #7c8690; font-size: 12px; line-height: 1.6; }
+
 .so-takeaway-mark {
   display: inline-grid;
   place-items: center;
@@ -160,7 +331,10 @@
   flex: 0 0 auto;
 }
 
+.so-takeaway-detail-card .so-takeaway-customer-copy,
 .so-takeaway-detail-card .so-takeaway-payment-copy {
+  font-family: inherit;
+  font-weight: 600;
   min-width: 0;
   max-width: 58%;
   overflow-wrap: anywhere;
@@ -483,3 +657,14 @@
     line-height: 1.2;
   }
 }
+
+/* Ikon asik: warm paper illustration, rounded outlines and a soft success seal. */
+.so-takeaway-result-heading .so-takeaway-success-icon.icon-asik { flex-basis: 58px; width: 58px; height: 58px; border-radius: 0; background: transparent; box-shadow: none; }
+.so-takeaway-success-icon.icon-asik svg { display: block; width: 58px; height: 58px; filter: drop-shadow(0 3px 5px #092f5620); }
+
+/* Keep the table reminder immediately visible below the success header. */
+.fresin-so-success .fresin-so-table-notice { display: grid; grid-template-columns: 43px minmax(0, 1fr); align-items: center; gap: 11px; padding: 14px; border: 1px solid #bcd1e9; border-left: 4px solid #d9ae65; border-radius: 18px; background: linear-gradient(120deg, #e2edfc, #f2f7ff); box-shadow: 0 7px 16px #214d7b0d, inset 0 1px 0 #fff; text-align: left; }
+.fresin-so-table-notice-icon { display: grid; place-items: center; width: 43px; height: 43px; border: 1px solid #efdcba; border-radius: 14px; background: #fff3dc; }
+.fresin-so-table-notice-icon svg { width: 35px; height: 35px; }
+.fresin-so-success .fresin-so-table-notice .self-order-success-warning { margin: 0; color: #1d5182; font-size: 13px; line-height: 1.4; font-weight: 750; }
+.fresin-so-success .fresin-so-table-notice .self-order-success-warning-hint { margin: 4px 0 0; color: #617b96; font-size: 11px; line-height: 1.55; }

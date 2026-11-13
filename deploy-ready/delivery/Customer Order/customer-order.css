@@ -3,6 +3,26 @@
   background: linear-gradient(180deg, #ffffff 0%, #f5f8ff 100%);
 }
 
+.customer-home-tracking-card.customer-home-orders-panel {
+  padding: 22px;
+  border: 1px solid #dce6f4;
+  border-radius: 25px;
+  background: linear-gradient(155deg, #fff 58%, #f0f6ff 100%);
+  box-shadow: 0 15px 35px rgba(29, 62, 105, .09), 0 4px 10px rgba(29, 62, 105, .035);
+}
+.customer-home-tracking-card.customer-home-orders-panel.is-empty { border-color: #ccdaf4; background: #e7efff; box-shadow: 0 16px 32px rgba(43, 79, 139, .13), inset 0 1px 0 rgba(255,255,255,.85); }
+.customer-home-orders-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.customer-home-orders-heading h3 { margin: 0; font-size: 18px; color: #203d60; }
+.customer-home-orders-heading>span { padding: 6px 9px; border-radius: 10px; background: #eaf2ff; color: #3767a4; font-size: 11px; font-weight: 750; }
+.customer-home-orders-empty { display: flex; flex-direction: column; align-items: center; padding: 13px 5px 17px; text-align: center; }
+.customer-home-empty-cart-icon { display: grid; place-items: center; width: 144px; height: 120px; margin: 0 0 19px; }
+.customer-home-empty-cart-icon svg { display: block; width: 144px; height: 120px; filter: drop-shadow(0 6px 7px rgba(52, 93, 151, .1)); }
+.customer-home-orders-panel .customer-home-orders-empty h3 { margin: 0; color: #1e3c61; font-size: 23px; line-height: 1.25; letter-spacing: -.7px; font-weight: 850; }
+.customer-home-orders-panel .customer-home-orders-empty p { max-width: 290px; margin: 12px 0 22px; color: #5e7597; font-size: 12px; line-height: 1.8; }
+.customer-home-orders-empty .customer-home-empty-menu.self-order-primary { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-width: 172px; width: auto; min-height: 45px; margin: 0; padding: 12px 18px; border-radius: 15px; background: #075ab9; color: #fff; font-size: 12px; font-weight: 750; box-shadow: 0 8px 17px rgba(7, 90, 185, .18); }
+.customer-home-empty-menu.self-order-primary:hover { background: #064e9f; color: #fff; }
+.customer-home-empty-menu svg { width: 17px; height: 17px; }
+
 .customer-home-topbar-back {
   border-radius: 999px;
   background: #eaf3ff;
@@ -324,7 +344,7 @@
 .customer-home-checkout .self-order-customer-field span {
   color: #14233d;
   font-size: 0.78rem;
-  font-weight: 900;
+  font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
 }
@@ -1708,3 +1728,142 @@
 
 
 
+
+.customer-home-checkout .fresin-service-strip { margin: 0 0 13px; padding: 10px; }
+.customer-home-checkout .self-order-customer-field>small { color: #6a809a; font-size: 11px; font-weight: 400; }
+.customer-home-pickup-timing { display: grid; gap: 8px; }
+.customer-home-pickup-timing .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.customer-home-pickup-timing > span { font-size: 13px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.customer-home-pickup-timing > small { color: #6a809a; font-size: 11px; line-height: 1.4; }
+.customer-home-timing-options { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.customer-home-timing-options > button {
+  min-height: 42px; padding: 10px 12px; border: 1px solid #d6e1f1; border-radius: 12px;
+  background: #f7f9ff; color: #58718f; font: inherit; font-size: 13px; cursor: pointer;
+}
+.customer-home-timing-options > button[aria-pressed="true"] { border-color: #8db7e8; background: #dfedff; color: #17568c; font-weight: 700; box-shadow: inset 0 1px 0 #fff; }
+.customer-home-timing-options > button:hover { border-color: #8db7e8; color: #17568c; }
+.customer-home-timing-options > button:focus-visible { outline: 2px solid #17568c; outline-offset: 2px; }
+
+.customer-home-support[hidden] { display: none !important; }
+.customer-home-support .customer-home-support-head { grid-template-columns: 32px minmax(0,1fr) 28px; }
+.customer-home-support-close { width: 28px; height: 28px; padding: 0; border: 1px solid #c9d4e3; border-radius: 9px; background: #f5f8fd; color: #356a9c; font-size: 20px; line-height: 1; cursor: pointer; }
+.customer-home-support-close:hover { background: #e8effa; color: #164c83; }
+.customer-home-checkout .customer-home-location-pin {
+  grid-template-columns: 42px minmax(0,1fr); padding: 13px; gap: 11px; border: 1px solid #bad2f1;
+  border-radius: 23px; background: #edf4ff; box-shadow: 0 12px 24px #24568a12,inset 0 1px 0 #fff;
+}
+.customer-home-checkout .customer-home-location-pin.is-pinned { border-color: #bad2f1; background: #edf4ff; }
+.customer-home-checkout .customer-home-location-pin.needs-confirmation { border-color: #e6cfaa; background: #fff6e7; }
+.customer-home-checkout .customer-home-location-visual {
+  border: 1px solid #efdfbd; border-radius: 14px;
+  background: linear-gradient(#2b6499 0 0) 50% 50%/26px 1.5px no-repeat,linear-gradient(90deg,#2b6499 0 0) 50% 50%/1.5px 26px no-repeat,#fff1d8;
+  box-shadow: 0 5px 12px #37628b10;
+}
+.customer-home-checkout .customer-home-location-copy > span { color: #6a809b; font-size: 10px; font-weight: 500; }
+.customer-home-checkout .customer-home-location-copy > strong { color: #194f80; font-size: 13px; line-height: 1.35; }
+.customer-home-checkout .customer-home-maplibre-map-card { border: 1px solid #cedcf0; border-radius: 17px; overflow: hidden; box-shadow: 0 5px 12px #204f7510; }
+.customer-home-checkout .customer-home-maplibre-map { height: clamp(260px,45dvh,340px); min-height: 260px; }
+.customer-home-checkout .customer-home-map-loading { min-height: 0; }
+.customer-home-checkout .customer-home-location-actions { gap: 8px; }
+.customer-home-checkout .customer-home-location-btn.self-order-secondary { min-height: 43px; border: 1px solid #175a94; border-radius: 13px; background: #175a94; color: #fff; font-size: 12px; box-shadow: 0 6px 12px #174f7f16; }
+.customer-home-checkout .customer-home-location-btn.self-order-secondary:hover { background: #124b7d; color: #fff; }
+.customer-home-checkout .customer-home-location-btn.is-confirmed { border-color: #bed9cf; background: #e4f1e9; color: #2a6d54; box-shadow: none; }
+.customer-home-checkout .customer-home-location-note { text-align: center; padding: 0 2px; border: 0; background: transparent; color: #6d8198; font-size: 11px; line-height: 1.5; }
+.customer-home-checkout .customer-home-location-note.warning { color: #8d6530; }
+.customer-home-map-locate-control.maplibregl-ctrl button {
+  position: relative; isolation: isolate; border: 1px solid #efce90; background: #fff1d8; color: #164f81;
+  box-shadow: 0 7px 16px #264b762d; animation: fresinLocateNudge 3.6s ease-in-out infinite;
+}
+.customer-home-map-locate-control.maplibregl-ctrl button::before { content: ""; position: absolute; inset: -4px; z-index: -1; border: 2px solid #e0b66e; border-radius: 18px; opacity: 0; pointer-events: none; animation: fresinLocateRing 3.6s ease-out infinite; }
+.customer-home-map-locate-control.maplibregl-ctrl button .customer-home-locate-label { color: #164f81; font-size: 8px; }
+.customer-home-map-locate-control.maplibregl-ctrl button:hover,
+.customer-home-map-locate-control.maplibregl-ctrl button:focus,
+.customer-home-map-locate-control.maplibregl-ctrl button:active,
+.customer-home-map-locate-control.maplibregl-ctrl button:focus-visible { background: #ffe5b6; color: #164f81; outline: 2px solid #316d9e; outline-offset: 2px; }
+.customer-home-map-locate-control.is-used button,
+.customer-home-map-locate-control.is-used button::before { animation: none; }
+.customer-home-maplibre-map .maplibregl-ctrl-attrib.maplibregl-compact { min-height: 24px; border-radius: 12px; background-color: #ffffffeb; box-shadow: 0 2px 6px #21446d15; }
+@keyframes fresinLocateNudge { 0%,65%,100% { transform: translateY(0); } 76% { transform: translateY(-4px); } 86% { transform: translateY(0); } 93% { transform: translateY(-2px); } }
+@keyframes fresinLocateRing { 0%,65%,100% { transform: scale(1); opacity: 0; } 70% { opacity: .7; } 94% { transform: scale(1.2); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .customer-home-map-locate-control:not([data-motion="on"]).maplibregl-ctrl button,
+  .customer-home-map-locate-control:not([data-motion="on"]).maplibregl-ctrl button::before { animation: none; }
+}
+
+/* Compact checkout keeps persistent accessible labels off the visual layout. */
+.customer-home-checkout .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.customer-home-checkout .customer-home-field-grid { gap: 10px; }
+.customer-home-checkout input::placeholder, .customer-home-checkout textarea::placeholder { color: #75869b; opacity: 1; }
+/* Match the blue customer header with translucent status chips. */
+.customer-home-driver-search-panel {
+  position: relative; isolation: isolate; gap: 16px; padding: 22px 18px;
+  border: 1px solid #ffffff30; border-radius: 25px;
+  background: radial-gradient(ellipse at 100% 0%, #5c9bd844, transparent 62%), linear-gradient(135deg, #123d72, #19578e 65%, #24669a);
+  box-shadow: inset 0 1px 0 #ffffff26, 0 12px 26px #183e6d20; color: #fff;
+}
+.customer-home-driver-search-panel::after { content: ""; position: absolute; z-index: -1; pointer-events: none; right: -100px; top: -100px; width: 260px; height: 260px; border: 1px solid #ffffff12; border-radius: 50%; box-shadow: 0 0 0 24px #ffffff04, 0 0 0 48px #ffffff03; }
+.customer-home-driver-search-panel.is-expired { border-color: #f3dfbb; background: linear-gradient(135deg, #fff5e3, #f9ead1); color: #75502b; }
+.customer-home-driver-search-copy h3 { color: inherit; font-size: 19px; line-height: 1.3; }
+.customer-home-driver-search-copy .customer-home-driver-search-chip { padding: 11px 13px; border: 1px solid #ffffff26; border-radius: 16px; background: #ffffff12; color: #edf5ff; font-size: 12px; line-height: 1.6; }
+.customer-home-driver-search-copy em { color: #cfdfef; font-size: 11px; line-height: 1.5; }
+.customer-home-driver-search-progress { height: 6px; margin-top: 4px; background: #ffffff26; }
+.customer-home-driver-search-progress span { background: linear-gradient(90deg, #8fc9ee, #ffe0a1); }
+.customer-home-driver-search-timer { color: #fff1d8; font-size: 29px; font-variant-numeric: tabular-nums; }
+.customer-home-driver-radar { background: conic-gradient(from 0deg, #ffffff00, #a6d8ee55, #ffe4ad66, #ffffff00); }
+.customer-home-driver-radar::before, .customer-home-driver-radar::after { border-color: #ffffff40; }
+.customer-home-driver-radar i { background: #fff1d8; border-color: #ffffff; box-shadow: 0 0 0 7px #ffffff12; }
+.customer-home-driver-search-panel.is-expired .customer-home-driver-search-chip { color: #75502b; border-color: #d8b88866; background: #ffffff80; }
+.customer-home-driver-search-panel.is-expired em { color: #75502b; }
+@media (prefers-reduced-motion: reduce) { .customer-home-driver-search-panel:not([data-motion="on"]) .customer-home-driver-radar { animation: none; } }
+.customer-home-driver-search-panel[data-motion="off"] .customer-home-driver-radar { animation: none; }
+.customer-home-driver-unavailable { display: grid; place-items: center; width: 104px; height: 96px; }
+.customer-home-driver-unavailable svg { width: 100%; height: 100%; filter: drop-shadow(0 5px 8px #88613113); }
+.customer-home-driver-search-panel.is-expired .self-order-primary { background: #8c642f; color: #fffaf0; box-shadow: 0 6px 14px #825b2b1c; }
+.customer-home-driver-search-panel.is-expired .self-order-primary:hover { background: #755126; }
+
+/* One continuous blue timeline, with a clear current step. */
+.self-order-app .customer-home-progress.customer-home-statusbar {
+  isolation: isolate;
+  gap: 0; padding: 14px 5px 12px; margin-top: 3px; border: 1px solid #d9e5f3;
+  border-radius: 19px; background: linear-gradient(150deg, #ffffff, #edf4fd);
+  box-shadow: inset 0 1px 0 #fff, 0 5px 14px #234f7d08;
+}
+.self-order-app .customer-home-progress.customer-home-statusbar > span {
+  position: relative; isolation: auto; min-height: 60px; padding: 0 2px; gap: 9px;
+  align-content: start; border: 0; border-radius: 0; background: transparent; color: #8092a9;
+}
+.self-order-app .customer-home-progress.customer-home-statusbar > span + span::before {
+  content: ""; position: absolute; z-index: 0; height: 2px; top: 14px; right: 50%; width: 100%; background: #dce6f2;
+}
+.self-order-app .customer-home-progress.customer-home-statusbar > span > i {
+  position: relative; z-index: 1;
+  width: 29px; height: 29px; box-sizing: border-box; border: 1px solid #d8e3f1;
+  background: #edf3fa; color: #8a9db4; font-size: 11px; font-weight: 700;
+  box-shadow: 0 0 0 4px #f7faff;
+}
+.self-order-app .customer-home-progress.customer-home-statusbar > span > b { font-size: 10px; font-weight: 600; line-height: 1.3; letter-spacing: -.1px; }
+.self-order-app .customer-home-progress.customer-home-statusbar > span.active { color: #174e83; background: transparent; }
+.self-order-app .customer-home-progress.customer-home-statusbar > span.active > i {
+  border-color: #235d96; background: linear-gradient(140deg, #3179b8, #164a82); color: #fff;
+  box-shadow: 0 0 0 4px #e1edfb, 0 3px 6px #164a821c;
+}
+.self-order-app .customer-home-progress.customer-home-statusbar > span.done { color: #416c92; }
+.self-order-app .customer-home-progress.customer-home-statusbar > span.done > i { border-color: #b7d0e8; background: #dbeaf9; color: #2d638f; }
+.self-order-app .customer-home-progress.customer-home-statusbar > span.done::before,
+.self-order-app .customer-home-progress.customer-home-statusbar > span.current::before { background: #aac9e6; }
+
+/* Status copy belongs with the progress timeline. */
+.customer-home-progress-card { width: 100%; box-sizing: border-box; padding: 13px; border: 1px solid #d2e1f3; border-radius: 21px; background: linear-gradient(145deg, #fff, #edf4ff); box-shadow: 0 6px 16px #23558a08; }
+.self-order-app .customer-home-progress-card > .customer-home-progress.customer-home-statusbar { padding: 4px 0 6px; margin: 0; border: 0; background: transparent; box-shadow: none; }
+.customer-home-current-status { margin: 5px 0 0; padding: 10px 12px; border: 1px solid #d4e3f6; border-radius: 12px; background: #e5effc; color: #245583; text-align: center; font-size: 12px; line-height: 1.5; font-weight: 600; }
+/* Driver identity with a friendly illustration and a spacious contact action. */
+.customer-home-driver-card { padding: 16px; border: 1px solid #cfdfef; border-radius: 21px; background: linear-gradient(135deg, #fff, #f0f6fd); box-shadow: 0 9px 22px #224f7b0a, inset 0 1px 0 #fff; }
+.customer-home-driver-main { display: grid; grid-template-columns: 58px minmax(0,1fr); gap: 12px; align-items: center; }
+.customer-home-driver-main .customer-home-driver-avatar { display: grid; place-items: center; width: 58px; height: 58px; border: 1px solid #edd9b7; border-radius: 19px; background: #fff5e3; box-shadow: inset 0 1px 0 #fff; }
+.customer-home-driver-avatar svg { display: block; width: 58px; height: 58px; }
+.customer-home-driver-main > div small { margin-bottom: 5px; color: #7c90a5; font-size: 11px; font-weight: 500; }
+.customer-home-driver-main > div strong { color: #214c74; font-size: 17px; line-height: 1.3; overflow-wrap: anywhere; }
+.customer-home-driver-main > .customer-home-driver-contact { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 11px 12px; border: 1px solid #d8e8dd; border-radius: 14px; background: #f0f7f2; }
+.customer-home-driver-contact small { color: #70877a; font-size: 10px; line-height: 1.45; text-align: left; }
+.customer-home-driver-card .customer-home-driver-whatsapp { min-height: 32px; padding: 4px 9px; border-radius: 10px; background: #e2efe6; color: #386c4b; font-size: 12px; font-weight: 700; }
+.customer-home-driver-card .customer-home-driver-whatsapp:hover { background: #d5e8dc; color: #285539; }

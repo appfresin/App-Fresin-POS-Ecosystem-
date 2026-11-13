@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <script>
+    (function () {
+      var legacyHosts = ["fresinapp.vercel.app", "pos-so-app.vercel.app", "fresin.id"];
+      if (legacyHosts.indexOf(window.location.hostname) === -1) return;
+      window.location.replace(
+        "https://www.fresin.id" +
+        window.location.pathname +
+        window.location.search +
+        window.location.hash
+      );
+    })();
+  </script>
+  <title>Fresin App</title>
+  <link rel="stylesheet" href="../delivery/styles/01-foundation-layout.css?v=sync-refresh1" />
+  <link rel="stylesheet" href="../delivery/styles/05-orders-modals.css?v=move-table-ux4-pos-driver-flow1" />
+  <link rel="stylesheet" href="../delivery/styles/08-orders-overrides.css?v=customer-legacy-empty1" />
+  <link rel="stylesheet" href="../delivery/styles/09-self-order.css?v=move-table-ux4-photo-ready1-ui-feedback1-so-polish2-pos-driver-flow1" />
+  <link rel="stylesheet" href="../delivery/SO Takeaway/so-takeaway.css?v=11-pay-later1-takeaway-ui2-notes1-receipt2-home-cash4-receipt3-asik-countdown1-name-font1-so-polish2" />
+  <link rel="stylesheet" href="../delivery/Customer Order/customer-order.css?v=75-gateway-empty3-cash3-ui-feedback1-status-ui2-pos-driver-flow1" />
+  <link rel="stylesheet" href="../Customer Gateway/customer-gateway.css?v=27-support-on-demand" />
+  <style>#app:empty::before{content:"Memuat Fresin App...";display:grid;min-height:100vh;place-items:center;font:600 16px system-ui;color:#334155;background:#f8fafc;}</style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    window.FRESIN_GATEWAY_BOOT_PENDING = true;
+    window.KASIRIN_APP_MODE = "self-order";
+    window.KASIRIN_DELIVERY_APP = true;
+    window.FRESIN_PICKUP_URL = "../self-order/";
+    window.CUSTOMER_ORDER_PAYMENT_PROVIDER = window.CUSTOMER_ORDER_PAYMENT_PROVIDER || "duitku";
+    window.GEOAPIFY_API_KEY = window.GEOAPIFY_API_KEY || "f35d1b3902ef4de083175cdcb5e761ad";
+    window.GEOAPIFY_MAP_STYLE = window.GEOAPIFY_MAP_STYLE || "osm-bright";
+    window.CUSTOMER_ORDER_SUPPORT_EMAIL = window.CUSTOMER_ORDER_SUPPORT_EMAIL || "fresin.indonesia@gmail.com";
+    window.CUSTOMER_ORDER_SUPPORT_PHONE = window.CUSTOMER_ORDER_SUPPORT_PHONE || "0822100069671";
+    window.CUSTOMER_ORDER_SUPPORT_ADDRESS = window.CUSTOMER_ORDER_SUPPORT_ADDRESS || "Jl. Prof. A. M. Ibrahim, Kec. Kota Sigli, Kab. Pidie, Aceh";
+    window.CUSTOMER_ORDER_SUPPORT_MAPS_URL = window.CUSTOMER_ORDER_SUPPORT_MAPS_URL || "";
+  </script>
+  <script src="../delivery/app.js?v=staff-source1-order-sync-safe1-submit-confirm1-takeaway-expiry-guard1-device-printer1-printer-compat1-gateway-boot1-menu3-home-cash4-receipt3-ui-feedback1-so-polish2-pos-driver-flow1"></script>
+  <script src="../delivery/SO Takeaway/so-takeaway.js?v=11-submit-confirm1-pay-later1-takeaway-ui2-notes1-takeaway-expiry-guard1-receipt2-home-cash4-receipt3-asik-countdown1-name-font1-so-polish2-pos-driver-flow1-delivery-card1"></script>
+  <script src="../delivery/Customer Order/customer-order.js?v=76-submit-confirm1-gateway5-cash4-ui-feedback1-status-ui2-asik-countdown1-pos-driver-flow1"></script>
+  <script src="../Customer Gateway/customer-gateway.js?v=27-support-on-demand"></script>
+</body>
+</html>
+
+
+
+
