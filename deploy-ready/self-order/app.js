@@ -209,10 +209,12 @@ let supabaseClient = null;
 let supabaseSession = null;
 let supabaseStatus = "Memuat koneksi...";
 let supabaseReportRecords = [];
+let supabaseReportCoverage = null;
 let supabaseReportsLoading = false;
 let supabaseReportsLoadedAt = 0;
 let supabaseReportLoadKey = "";
 let supabaseReportDetailCache = new Map();
+const reportOrderDetailLoadingKeys = new Set();
 let profitSummaryCache = { years: [], months: {}, days: {} };
 let profitSummaryLoading = false;
 let profitSummaryLoadingKeys = new Set();
@@ -2849,6 +2851,7 @@ function reportRenderAfterDataLoad() {
 }
 
 function renderWhenInteractionIdle() {
+  updateOrderNavigationBadges();
   if (isBlockingInteractionActive()) {
     deferredRealtimeRender = true;
     return false;
@@ -3190,6 +3193,27 @@ function addonProfit(addon) {
   return Math.max(0, (Number(addon?.price || 0) - addonCost(addon)) * Number(addon?.qty || 0));
 }
 
+function normalizePaymentBreakdown(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function paymentBreakdownHasAmount(value) {
+  const breakdown = normalizePaymentBreakdown(value);
+  return Object.values(breakdown).some(amount => {
+    const numeric = Number(amount || 0);
+    return Number.isFinite(numeric) && numeric > 0;
+  });
+}
+
 function orderTotal(order) {
   if (!order) return 0;
   const subtotal = Number(order.subtotal);
@@ -3388,6 +3412,7 @@ function rejectRetiredTakeawayExpiryCancellation(order, options = {}) {
 }
 
 function invalidateReportCaches() {
+  supabaseReportCoverage = null;
   supabaseReportLoadKey = "";
   supabaseReportsLoadedAt = 0;
   supabaseReportRecords = [];
@@ -3399,6 +3424,10 @@ function invalidateReportCaches() {
   legacyProfitSummaryLoadedAt = new Map();
   legacyCashierDataLoadedAt = 0;
   legacyCashierDataLoadKey = "";
+  supabaseProductSalesRecords = [];
+  supabaseProductSalesLoadedAt = 0;
+  supabaseProductSalesLoadKey = "";
+  supabaseProductSalesLastLoadOk = false;
 }
 
 function syncRetryDelayMs(attempts) {
@@ -6205,7 +6234,11 @@ async function refreshSelfOrderTableOrders(table, options = {}) {
   return loadSelfOrderTableOrdersFromSupabase(table, options);
 }
 
-function normalizeSupabaseReportRecord(row) {
+function normalizeSupabaseReportRecord(row, revenueOrder = null) {
+  const courierCash = revenueOrder?.payment_provider === "courier_cash";
+  const outletTotal = courierCash
+    ? Math.max(0, Number(revenueOrder.grand_total || 0) - Number(revenueOrder.delivery_fee || 0))
+    : Number(row.total || 0);
   return {
     id: row.id,
     number: row.number || row.importKey || "-",
@@ -6217,15 +6250,33 @@ function normalizeSupabaseReportRecord(row) {
     type: row.order_type || "Import",
     customer: row.customer_name || "-",
     paymentMethod: row.payment_method || "Belum dipilih",
-    paymentBreakdown: row.payment_breakdown || {},
+    paymentBreakdown: normalizePaymentBreakdown(row.payment_breakdown || {}),
     paymentStatus: row.payment_status || "Lunas",
     status: row.order_status || row.status || "",
     subtotal: Number(row.subtotal || 0),
     discount: Number(row.discount || 0),
-    total: Number(row.total || 0),
+    total: outletTotal,
+    outletRevenueVerified: courierCash,
     profit: Number(row.profit || 0),
     items: []
   };
+}
+
+async function hydrateReportOutletRevenue(rows) {
+  const deliveryRows = rows.filter(row => !row.imported && String(row.order_type || "").trim().toLowerCase() === "delivery");
+  const ids = [...new Set(deliveryRows.map(row => row.id).filter(Boolean))];
+  const revenueById = new Map();
+  for (let from = 0; from < ids.length; from += 100) {
+    const { data, error } = await supabaseClient.from("orders")
+      .select("id,payment_provider,delivery_fee,grand_total")
+      .in("id", ids.slice(from, from + 100));
+    if (error) throw new Error(error.message || "Rincian pendapatan delivery belum dapat diverifikasi.");
+    for (const order of data || []) revenueById.set(order.id, order);
+  }
+  if (deliveryRows.some(row => !revenueById.has(row.id))) {
+    throw new Error("Rincian pendapatan delivery belum dapat diverifikasi. Muat ulang laporan.");
+  }
+  return rows.map(row => normalizeSupabaseReportRecord(row, row.imported ? null : revenueById.get(row.id)));
 }
 
 function normalizeLegacySalesRow(row) {
@@ -6327,6 +6378,7 @@ async function loadSupabaseOrderDetailForReport(record) {
       type: orderRow.type || record.type,
       customer: orderRow.customer_name || record.customer,
       serviceInfo: orderRow.service_info || record.serviceInfo,
+      note: orderRow.note || record.note || "",
       paymentMethod: payment.method || record.paymentMethod,
       paymentStatus: orderRow.payment_status || record.paymentStatus,
       subtotal: Number(orderRow.subtotal ?? record.subtotal ?? 0),
@@ -6336,7 +6388,7 @@ async function loadSupabaseOrderDetailForReport(record) {
       profit: Number(orderRow.profit_total ?? record.profit ?? 0),
       receivedAmount: Number(payment.received_amount || 0),
       changeAmount: Number(payment.change_amount || 0),
-      paymentBreakdown: payment.payment_breakdown || record.paymentBreakdown || {},
+      paymentBreakdown: normalizePaymentBreakdown(payment.payment_breakdown || record.paymentBreakdown || record.payment_breakdown || {}),
       items
     };
 
@@ -6459,8 +6511,9 @@ async function loadSupabaseReportRecords(force = false, range = reportRange()) {
       if (!data || data.length < pageSize) break;
     }
     const merged = new Map();
-    for (const row of allRows.map(normalizeSupabaseReportRecord)) merged.set(reportRecordKey(row), row);
+    for (const row of await hydrateReportOutletRevenue(allRows)) merged.set(reportMergeKey(row), row);
     supabaseReportRecords = [...merged.values()];
+    supabaseReportCoverage = { start: new Date(range.start), end: new Date(range.end) };
     supabaseReportsLoadedAt = Date.now();
     supabaseReportLoadKey = loadKey;
     reportRenderAfterDataLoad();
@@ -7339,6 +7392,7 @@ function refreshPosPage(options = {}) {
 }
 
 function refreshPosOrRender(options = {}) {
+  updateOrderNavigationBadges();
   if (!refreshPosPage(options)) render();
 }
 
@@ -7378,7 +7432,7 @@ function render() {
           <p>Aplikasi toko, dapur, kasir</p>
         </div>
         <nav class="nav">
-          ${nav.map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" onclick="go('${id}')"><span class="nav-icon">${navIcon(id)}</span><span class="nav-label">${label}</span></button>`).join("")}
+          ${nav.map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" onclick="go('${id}')"><span class="nav-icon">${navIcon(id)}</span><span class="nav-label">${label}</span>${renderOrderNavigationBadge(id)}</button>`).join("")}
         </nav>
         <div class="sync-card">
           <strong>Mode lokal aktif</strong><br />
@@ -9061,13 +9115,13 @@ function renderSelfOrderOpenTableDecision(order, table, choice) {
   return `
     <section class="self-order-open-table-card" aria-live="polite">
       <div class="self-order-open-table-head">
-        <span class="self-order-open-table-icon" aria-hidden="true"><i></i></span>
+        <span class="self-order-open-table-icon" aria-hidden="true">${selfOrderAsikIcon("history")}</span>
         <strong>Apakah ini pesanan anda sebelumnya ?</strong>
       </div>
       <div class="self-order-open-table-meta">
-        <span>Meja: <b>${escapeHtml(table || "A-1")}</b></span>
-        <span>Nama: <b>${customer ? escapeHtml(customer) : "-"}</b></span>
-        <span>Status: <b>${escapeHtml(order?.paymentStatus || "Belum dibayar")}</b></span>
+        <span><span class="self-order-open-table-label">Meja</span><b>${escapeHtml(table || "A-1")}</b></span>
+        <span><span class="self-order-open-table-label">Nama</span><b>${customer ? escapeHtml(customer) : "-"}</b></span>
+        <span><span class="self-order-open-table-label">Status</span><b class="self-order-open-table-status">${escapeHtml(order?.paymentStatus || "Belum dibayar")}</b></span>
       </div>
       <div class="self-order-open-table-history">
         ${renderSelfOrderOpenTableHistory(order)}
@@ -9152,18 +9206,20 @@ function renderCartSuccess() {
   if (!result) {
     return `<div class="success-card"><strong>Belum ada hasil</strong><p>Proses atau simpan pesanan terlebih dahulu.</p><button class="btn green" onclick="setCartStep('items')">Kembali</button></div>`;
   }
+  const message = result.paid && result.message === "Pesanan belum bayar sudah dilunasi. Struk kasir siap dicetak."
+    ? "pesanan sudah lunas, struk kasir siap dicetak" : result.message;
   return `
     <div class="success-card">
       <div class="success-icon pos-success-asik" aria-hidden="true">${selfOrderAsikIcon("success")}</div>
       <strong>${escapeHtml(result.title)}</strong>
-      <p>${escapeHtml(result.message)}</p>
+      <p>${escapeHtml(message)}</p>
       <div class="success-meta">
         <span>No. Pesanan</span><b>${escapeHtml(displayOrderNumber(result.number))}</b>
         <span>Total</span><b>${money(result.total)}</b>
         ${result.paid ? `<span>Uang diterima</span><b>${money(result.receivedAmount || 0)}</b><span>Kembalian</span><b>${money(result.changeAmount || 0)}</b>` : `<span>Status bayar</span><b>Bayar nanti</b>`}
       </div>
       ${result.paid ? `<button class="btn receipt-success-btn" onclick="printLastReceipt()">Print struk</button>` : ""}
-      <button class="btn green" onclick="startNewSale()">Transaksi Baru</button>
+      <button class="btn green new-sale-success-btn" onclick="startNewSale()">Transaksi Baru</button>
     </div>
   `;
 }
@@ -9590,18 +9646,16 @@ function renderSelfOrderUpsellCard(context = "cart") {
   const products = selfOrderUpsellProducts(context, 2);
   if (!products.length) return "";
   const isPayment = context === "payment";
-  const title = isPayment ? "Rekomendasi sebelum checkout" : "Lengkapi pesananmu";
+  const title = isPayment ? "Rekomendasi Best Seller" : "Lengkapi pesananmu";
   const subtitle = isPayment ? "Tambahkan favorit lain sebelum pesanan dikirim" : "Pilihan favorit untuk tambah ke pesanan";
-  const badge = isPayment ? "Paling sering dipilih" : "Rekomendasi";
   return `
     <section class="self-order-upsell-card ${isPayment ? "payment" : "cart"}">
       <div class="self-order-upsell-head">
         <span class="self-order-upsell-icon" aria-hidden="true">${selfOrderAsikIcon("recommend")}</span>
         <div>
           <h4>${escapeHtml(title)}</h4>
-          <p>${escapeHtml(subtitle)}</p>
+          ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
         </div>
-        <b>${escapeHtml(badge)}</b>
       </div>
       <div class="self-order-upsell-list">
         ${products.map(entry => `
@@ -10753,8 +10807,8 @@ function renderSelfOrderCart() {
   const subtotal = selfOrderSubtotal();
   return `
     <main class="self-order-main cart">
-      <div class="self-order-section-head">
-        <div><span>Keranjang</span><h3>${selfOrderItemsTotal()} item</h3></div>
+      <div class="self-order-section-head self-order-cart-head">
+        <h3 class="self-order-cart-title">Pesanan <span class="self-order-cart-count">${selfOrderItemsTotal()} item</span></h3>
       </div>
       <section class="self-order-cart-list">
         ${selfOrderCart.map(item => `
@@ -10771,7 +10825,7 @@ function renderSelfOrderCart() {
                 <span>${Number(item.qty || 0)}</span>
                 <button type="button" onclick="selfOrderChangeQty('${item.lineId}', 1)">+</button>
               </div>
-              <button type="button" class="danger" onclick="selfOrderRemoveItem('${item.lineId}')" aria-label="Hapus">x</button>
+              <button type="button" class="danger" onclick="selfOrderRemoveItem('${item.lineId}')" aria-label="Hapus"><svg class="self-order-remove-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
             </div>
           </article>
         `).join("") || empty("Keranjang masih kosong.")}
@@ -10833,8 +10887,8 @@ function renderSelfOrderPayment() {
       </div>
       <section class="self-order-payment-shell">
         <div class="self-order-checkout">
-          <label class="self-order-customer-field ${isCustomerLocked ? "self-order-customer-lock-field" : ""}"><span>Nama</span><input id="selfOrderCustomer" value="${escapeHtml(customer)}" placeholder="Wajib" required aria-required="true" aria-describedby="selfOrderCustomerError" ${customerInputAttrs} /><small id="selfOrderCustomerError" class="self-order-customer-error" role="alert" hidden>Nama wajib diisi.</small></label>
-          <label class="wide"><span>Catatan</span><textarea id="selfOrderCheckoutNote" placeholder="Opsional" oninput="sessionStorage.setItem('self_order_checkout_note', this.value)">${escapeHtml(note)}</textarea></label>
+          <label class="self-order-customer-field ${isCustomerLocked ? "self-order-customer-lock-field" : ""}"><span class="self-order-field-label">Nama</span><input id="selfOrderCustomer" value="${escapeHtml(customer)}" placeholder="Nama pemesan" required aria-required="true" aria-describedby="selfOrderCustomerError" ${customerInputAttrs} /><small id="selfOrderCustomerError" class="self-order-customer-error" role="alert" hidden>Nama wajib diisi.</small></label>
+          <label class="wide"><span class="self-order-field-label">Catatan</span><textarea id="selfOrderCheckoutNote" placeholder="Catatan pesanan (opsional)" rows="2" oninput="sessionStorage.setItem('self_order_checkout_note', this.value)">${escapeHtml(note)}</textarea></label>
         </div>
       </section>
       ${renderSelfOrderUpsellCard("payment")}
@@ -10869,11 +10923,11 @@ function renderSelfOrderSuccess() {
         </div>
         <div class="self-order-success-detail so-takeaway-detail-card">
           <span><b>Nomor meja</b><strong class="so-takeaway-number-inline">${escapeHtml(currentTable)}</strong></span>
-          <span><b>Nomor order</b><strong>${escapeHtml(displayOrderNumber(order?.number || "-"))}</strong></span>
-          <span><b>Waktu order</b><strong>${escapeHtml(orderCreatedAt ? timeOnly(orderCreatedAt) : "-")}</strong></span>
+          <span><b>Nomor order</b><strong class="so-takeaway-detail-copy">${escapeHtml(displayOrderNumber(order?.number || "-"))}</strong></span>
+          <span><b>Waktu order</b><strong class="so-takeaway-detail-copy">${escapeHtml(orderCreatedAt ? timeOnly(orderCreatedAt) : "-")}</strong></span>
           <span class="so-takeaway-total-row"><b>Nominal</b><strong>${money(order?.checkoutTotal ?? order?.total ?? 0)}</strong></span>
           <span><b>Status bayar</b><strong class="so-takeaway-payment-copy">Bayar di Kasir saat pulang</strong></span>
-          <span><b>Nama pelanggan</b><strong>${customer ? escapeHtml(customer) : "-"}</strong></span>
+          <span><b>Nama pelanggan</b><strong class="so-takeaway-detail-copy">${customer ? escapeHtml(customer) : "-"}</strong></span>
         </div>
         <p class="fresin-so-order-hint">Pesanan akan diproses ±20 menit. Untuk tambah pesanan, scan ulang QR Code atau klik tombol di bawah. Terima kasih!</p>
         <div class="self-order-success-actions">
@@ -10982,6 +11036,7 @@ function renderSelfOrderBottomNav(step) {
 
 function selfOrderAsikIcon(kind) {
   const art = {
+    history: `<path d="M16 12h24l8 8v31l-5-3-5 3-5-3-5 3-5-3-7 3V12Z" fill="#fffaf0"/><path d="M40 12v9h8M23 25h15M23 32h10M23 39h8"/><circle cx="46" cy="43" r="12" fill="#e9f0df" stroke="#789555"/><path d="M46 36v8l5 3" stroke="#789555"/><path d="m10 17 2 3 4 1-4 1-2 4-1-4-4-1 4-1 1-3Z" fill="#e9bc64" stroke="none"/>`,
     menu: `<path d="M13 12h16c5 0 7 2 7 5v36H16a5 5 0 0 1-5-5V17a5 5 0 0 1 2-5Z" fill="#fff8e9"/><path d="M36 17c0-3 3-5 7-5h10v36H42c-4 0-6 2-6 5V17Z" fill="#efd5a5"/><path d="M20 22h9M20 29h9M20 36h7M43 23h5M43 30h5M36 19v33"/><path d="M19 12v8l4-3 4 3v-8" fill="#e6b76b"/>`,
     cart: `<path d="M11 16h7l6 29h26l6-22H20" fill="#fff8e9"/><path d="M24 30h28l-4 13H27Z" fill="#efd5a5"/><path d="M31 29v10M41 29v10"/><circle cx="29" cy="52" r="4" fill="#e5b96e"/><circle cx="47" cy="52" r="4" fill="#e5b96e"/><path d="M29 23v-9h16v9" fill="#e9f0df"/><path d="m34 18 3 3 5-6" stroke="#708c4c"/>`,
     payment: `<path d="m15 24 31-12 4 17" fill="#fff5dc"/><path d="M12 23h37a5 5 0 0 1 5 5v23H14a5 5 0 0 1-5-5V28a5 5 0 0 1 3-5Z" fill="#e6bf80"/><path d="M43 32h13v12H43a6 6 0 0 1 0-12Z" fill="#fff8e9"/><circle cx="46" cy="38" r="1.6" fill="#aa7b3b"/><path d="M17 30h16" stroke="#fff4de"/><circle cx="47" cy="16" r="8" fill="#f5d58e"/><path d="M47 12v8m-3-6h5m-5 4h5"/>`,
@@ -12371,7 +12426,7 @@ async function submitOrder() {
     cart = [];
     clearPosDraft();
     sessionStorage.setItem("pos_mobile_view", "items");
-    setLastResult("Pembayaran berhasil", additionalItems.length ? "Pesanan tambahan dikirim ke dapur. Struk kasir siap dicetak." : "Pesanan belum bayar sudah dilunasi. Struk kasir siap dicetak.", existingOrder);
+    setLastResult("Pembayaran berhasil", additionalItems.length ? "Pesanan tambahan dikirim ke dapur. Struk kasir siap dicetak." : "pesanan sudah lunas, struk kasir siap dicetak", existingOrder);
     audit("Pesanan belum bayar dilunasi", `${existingOrder.number} ${money(orderTotal(existingOrder))}`);
     saveState();
     const committedProductIds = new Set([...limitedStockItemTotals(additionalItems).values()].map(entry => entry.product.id));
@@ -12867,6 +12922,7 @@ function orderSequenceMap(orders = []) {
 
 function kitchenOrderNoteDisplay(order) {
   return String(order?.note || "")
+    .split(/(?:^|\r?\n)\s*(?:Kurir membayar harga produk di outlet|Pin lokasi\s*:|Patokan alamat\s*:|Jam pengambilan\s*:|Koordinat\s*:|Alamat (?:penerima|pengantaran)\s*:)/i)[0]
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(line => line && !/(google\.com\/maps|maps\?q=|pin lokasi|latitude|longitude|koordinat)/i.test(line))
@@ -12875,16 +12931,19 @@ function kitchenOrderNoteDisplay(order) {
 
 function kitchenCard(order, sequenceNumber = 0) {
   normalizeOrderBatches(order);
-  const next = nextKitchenAction(order.status);
+  const cancelled = orderIsCancelled(order);
+  const next = cancelled ? null : nextKitchenAction(order.status);
   const canFinish = order.status !== "Sedang Disiapkan" || areAllKitchenItemsPrepared(order);
-  const orderTitle = orderDisplayTitle(order);
   const kitchenType = String(order?.type || "").trim();
   const kitchenServiceInfo = typeof orderServiceInfoDisplay === "function"
     ? orderServiceInfoDisplay(order)
     : String(order?.serviceInfo || order?.service_info || "").trim();
-  const kitchenServiceInfoPill = kitchenServiceInfo && kitchenServiceInfo.toLowerCase() !== kitchenType.toLowerCase()
-    ? kitchenServiceInfo
-    : "";
+  const homeMode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || "").toUpperCase();
+  const pickupOrigin = String(order.serviceInfo ?? order.service_info ?? "");
+  const serviceLabel = kitchenType.toLowerCase() === "delivery" || homeMode === "DELIVERY" ? "Delivery"
+    : /^take[\s_-]*away$/i.test(kitchenType) || homeMode === "PICKUP_PREORDER"
+      ? (pickupOrigin === "Takeaway-Rumah" || (homeMode === "PICKUP_PREORDER" && pickupOrigin !== "Takeaway Outlet") ? "Takeaway-Rumah" : "Takeaway Outlet")
+    : kitchenServiceInfo || kitchenType || "Pesanan";
   const kitchenCustomer = customerDisplayName(order.customer);
   const kitchenOrderNote = kitchenOrderNoteDisplay(order);
   const carryoverLabel = typeof kitchenOrderIsCarryover === "function" && kitchenOrderIsCarryover(order)
@@ -12904,19 +12963,18 @@ function kitchenCard(order, sequenceNumber = 0) {
     : "";
   const actionButtons = [
     next ? `<button class="btn green" type="button" ${order.status === "Sedang Disiapkan" ? "data-kitchen-finish-button" : ""} onclick="event.preventDefault(); event.stopPropagation(); advanceOrder('${order.id}')" ${canFinish ? "" : "disabled"}>${next}</button>` : "",
-    canCancelOrder(order) ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openCancelOrderDialog('${order.id}')">Batalkan</button>` : ""
+    !cancelled && canCancelOrder(order) ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openCancelOrderDialog('${order.id}')">Batalkan</button>` : ""
   ].filter(Boolean).join("");
   return `
-    <div class="card kitchen-order-card" data-kitchen-order-id="${escapeHtml(order.id || "")}">
+    <div class="card kitchen-order-card ${cancelled ? "is-cancelled" : ""}" data-kitchen-order-id="${escapeHtml(order.id || "")}">
       <div class="kitchen-order-head">
         <div class="kitchen-order-titleline">
           <div>
             <div class="order-title-row">
               ${orderSequenceBadge(sequenceNumber)}
-              <strong>${escapeHtml(orderTitle)}</strong>
+              <span class="kitchen-service-chip">${escapeHtml(serviceLabel)}</span>
+              <strong>${escapeHtml(kitchenCustomer || "-")}</strong>
             </div>
-            <span>${dateTime(order.createdAt)}</span>
-            ${carryoverLabel}
           </div>
         </div>
         <div class="kitchen-order-statuses">
@@ -12925,18 +12983,23 @@ function kitchenCard(order, sequenceNumber = 0) {
         </div>
       </div>
       <div class="kitchen-order-meta">
+        <span class="kitchen-order-time">${dateTime(order.createdAt)}</span>
         ${kitchenType ? `<span class="pill">${escapeHtml(kitchenType)}</span>` : ""}
-        ${kitchenServiceInfoPill ? `<span class="pill">${escapeHtml(kitchenServiceInfoPill)}</span>` : ""}
-        ${kitchenCustomer ? `<span class="pill">${escapeHtml(kitchenCustomer)}</span>` : ""}
+        <span class="pill">${escapeHtml(displayOrderNumber(order.number))}</span>
+        ${carryoverLabel}
       </div>
-      ${kitchenOrderNote ? `<p class="kitchen-order-note">${escapeHtml(kitchenOrderNote)}</p>` : ""}
+      ${cancelled ? `<p class="orders-item-group-note kitchen-cancellation-note"><b>Keterangan pembatalan:</b> ${escapeHtml(order.cancelReason || "Pesanan dibatalkan.")}</p>` : ""}
+      ${order.pickupTime || (groups.length <= 1 && kitchenOrderNote) ? `<div class="kitchen-order-notes">
+        ${order.pickupTime ? `<p class="orders-item-group-note so-takeaway-pickup-note"><b>Jam pengambilan:</b> ${escapeHtml(order.pickupTime)}</p>` : ""}
+        ${groups.length <= 1 && kitchenOrderNote ? `<p class="orders-item-group-note kitchen-order-note"><b>Catatan:</b> ${escapeHtml(kitchenOrderNote)}</p>` : ""}
+      </div>` : ""}
       <div class="kitchen-order-items">
         ${groups.map(group => {
-          const groupNote = orderGroupNote(order, group);
+          const groupNote = kitchenOrderNoteDisplay({ note: orderGroupNote(order, group) });
           return `
           <div class="kitchen-item-group">
             ${groups.length > 1 ? `<small>${escapeHtml(group.label)}</small>` : ""}
-            ${groupNote ? `<p class="kitchen-item-group-note">${escapeHtml(groupNote)}</p>` : ""}
+            ${groupNote && (groups.length > 1 || groupNote !== kitchenOrderNote) ? `<p class="kitchen-item-group-note">${escapeHtml(groupNote)}</p>` : ""}
             ${group.items.map((item) => {
               const sourceIndex = (order.items || []).indexOf(item);
               const itemIndex = sourceIndex >= 0 ? sourceIndex : 0;
@@ -13428,6 +13491,7 @@ function renderOrders() {
   const filteredReportOrders = reportOnlyOrders.filter(order => orderMatchesQuickFilter(order, quickFilter));
   const ordered = [...filtered, ...filteredReportOrders].sort(ordersEntryStableSort);
   const visibleOrders = ordered.filter(order => orderMatchesSearch(order, query));
+  requestReportOrderDetails(visibleOrders);
   const visibleSequences = orderSequenceMap(visibleOrders);
   const visibleCount = visibleOrders.length;
   const doneCount = orderSummary.loaded ? orderSummary.totalDone : doneOrders.length;
@@ -13576,10 +13640,61 @@ function setSettingsTab(tab) {
   render();
 }
 
+function orderVisibleInPosOrderList(order) {
+  if (orderUsesOutletPayment(order)) {
+    const delivery = String(order.customerOrderType || order.orderMode || order.customer_order_type || "").toUpperCase() === "DELIVERY" || order.type === "Delivery";
+    return !delivery || Boolean(order.driverId || order.driver_id)
+      || !["SEARCHING_DRIVER", "NO_DRIVER_AVAILABLE", ""].includes(String(order.customerOrderStatus || order.customer_order_status || ""));
+  }
+  return !orderIsCustomerHomeOrder(order) || orderIsPaid(order);
+}
+
+
+function orderNeedsTakeawayCashier(order) {
+  const mode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || "").toUpperCase();
+  const origin = String(order?.serviceInfo ?? order?.service_info ?? "");
+  return mode === "PICKUP_PREORDER" && origin !== "Takeaway Outlet"
+    && isNewOrderStatus(order) && !orderIsCancelled(order) && !order.confirmedAt && !order.preparedAt
+    && orderVisibleInPosOrderList(order);
+}
+
+
+function orderNavigationBadgeCount(id) {
+  if (!["orders", "kitchen"].includes(id)) return 0;
+  const pending = (state.orders || []).filter(order => isNewOrderStatus(order) && !orderIsCancelled(order) && orderVisibleInPosOrderList(order));
+  if (id === "orders") return pending.length;
+  return pending.filter(order => orderNeedsTakeawayCashier(order)
+    || (typeof kitchenOrderIsVisible === "function" && kitchenOrderIsVisible(order, "Pesanan Baru", ["Pesanan Baru"]))).length;
+}
+
+
+function renderOrderNavigationBadge(id) {
+  if (!["orders", "kitchen"].includes(id)) return "";
+  const count = orderNavigationBadgeCount(id);
+  return `<span class="order-nav-count" data-order-nav-count="${id}" aria-label="${count} pesanan baru" ${count ? "" : "hidden"}>${count}</span>`;
+}
+
+
+function updateOrderNavigationBadges() {
+  if (typeof document === "undefined" || !document.querySelectorAll) return;
+  document.querySelectorAll("[data-order-nav-count]").forEach(badge => {
+    const count = orderNavigationBadgeCount(badge.dataset.orderNavCount);
+    badge.textContent = String(count);
+    badge.hidden = count === 0;
+    badge.setAttribute("aria-label", `${count} pesanan baru`);
+  });
+}
+
+
 function orderCenterCard(order, options = {}) {
   const qty = (order.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
   const expanded = sessionStorage.getItem(`orders_expanded_${order.id}`) === "1";
   const compactStatus = compactOrderStatus(order.status);
+  const type = String(order.type || "-");
+  const serviceLabel = /^dine[\s_-]*in$/i.test(type) ? orderServiceInfoDisplay(order)
+    : /^take[\s_-]*away$/i.test(type) ? (order.serviceInfo === "Takeaway-Rumah" ? "Takeaway-Rumah" : "Takeaway Outlet")
+    : type;
+  const heading = `${orderSequenceBadge(options.sequenceNumber)}<span class="orders-service-chip">${escapeHtml(serviceLabel)}</span><strong>${escapeHtml(customerDisplayName(order.customer) || "-")}</strong>`;
   const searchable = Object.prototype.hasOwnProperty.call(options, "searchQuery");
   const searchQuery = String(options.searchQuery || "");
   const searchAttributes = searchable
@@ -13589,38 +13704,46 @@ function orderCenterCard(order, options = {}) {
     return `
       <article class="orders-card unpaid-compact-card ${orderStatusClass(order.status)}" ${searchAttributes} onclick="toggleOrderItems('${order.id}', true)">
         <div class="unpaid-compact-head">
-          <strong>${escapeHtml(displayOrderNumber(order.number))}</strong>
+          <div class="order-title-row orders-customer-heading">${heading}</div>
           <b>${money(orderTotal(order))}</b>
         </div>
         <div class="unpaid-compact-meta">
-          <span>${escapeHtml(customerDisplayName(order.customer))}</span>
-          <span>${escapeHtml(order.serviceInfo || "-")}</span>
+          <span>${escapeHtml(displayOrderNumber(order.number))}</span>
           <span>${escapeHtml(order.type || "-")}</span>
         </div>
       </article>
     `;
   }
   if (order.reportOnly) {
+    const detailKey = order.reportKey || reportRecordKey(order);
+    const detailLoading = reportOrderDetailLoadingKeys.has(detailKey);
+    const customerNote = String(order.note || "").split(/\s*(?:Kurir membayar harga produk di outlet|Pin lokasi\s*:|Patokan alamat\s*:|Koordinat\s*:|Alamat (?:penerima|pengantaran)\s*:)/i)[0].trim();
+    const reportItemRows = (order.items || []).map(item => `
+      <div class="orders-item-line">
+        <span><b>${escapeHtml(orderItemInlineLabel(item))}</b>${item.variantLabel ? `<small class="orders-item-note">${escapeHtml(item.variantLabel)}</small>` : ""}${orderItemNoteHtml(item, "orders-item-note")}</span>
+        <strong>${money(cartItemTotal(item))}</strong>
+      </div>
+    `).join("");
     return `
       <article class="orders-card is-done" ${searchAttributes}>
         <div class="orders-card-head">
           <div>
-            <div class="order-title-row">
-              ${orderSequenceBadge(options.sequenceNumber)}
-              <strong>${escapeHtml(displayOrderNumber(order.number))}</strong>
-            </div>
+            <div class="order-title-row orders-customer-heading">${heading}</div>
             <span>${dateTime(order.paidAt || order.createdAt)}</span>
           </div>
           <span class="orders-status-pill done">Selesai</span>
         </div>
         <div class="orders-card-meta">
           <span>${escapeHtml(order.type || "-")}</span>
-          <span>${escapeHtml(order.serviceInfo || "-")}</span>
-          <span>${escapeHtml(customerDisplayName(order.customer))}</span>
+          <span>${escapeHtml(displayOrderNumber(order.number))}</span>
           <span>Lunas</span>
         </div>
         <div class="orders-card-items">
-          <span class="muted">Ringkasan transaksi dari laporan.</span>
+          ${customerNote ? `<p class="orders-item-group-note"><b>Catatan:</b> ${escapeHtml(customerNote)}</p>` : ""}
+          ${reportItemRows || (order.imported
+            ? '<span class="muted">Ringkasan transaksi dari laporan. Rincian item data impor belum tersedia.</span>'
+            : detailLoading ? '<span class="muted" role="status">Memuat rincian pesanan...</span>'
+            : `<button class="btn orders-report-detail-btn" type="button" onclick="openReportCardDetails(${escapeHtml(JSON.stringify(detailKey))})">Muat rincian pesanan</button>`)}
         </div>
         <div class="orders-card-total">
           <span>Transaksi selesai</span>
@@ -13665,6 +13788,7 @@ function orderCenterCard(order, options = {}) {
   }).join("");
   const actions = [
     order.paymentStatus !== "Lunas" && order.status !== "Dibatalkan" ? `<button class="btn green" type="button" onclick="event.preventDefault(); event.stopPropagation(); payUnpaidOrder('${order.id}')">Bayar</button>` : "",
+    order.paymentStatus === "Lunas" ? `<button class="btn green orders-print-receipt-btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); printOrderCardReceipt('${order.id}')">Print Struk</button>` : "",
     canCorrectOrder(order) ? `<button class="btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); openOrderCorrection('${order.id}')">Koreksi Pesanan</button>` : "",
     canMoveOrderTable(order) ? `<button class="btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); openMoveOrderTableDialog('${order.id}', ${options.returnToUnpaid ? "'unpaid'" : "'orders'"})">Pindahkan Meja</button>` : "",
     canCancelOrder(order) ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openCancelOrderDialog('${order.id}', ${options.returnToUnpaid ? "true" : "false"})">Batalkan</button>` : "",
@@ -13681,10 +13805,7 @@ function orderCenterCard(order, options = {}) {
     <article class="orders-card ${options.compactUnpaid ? "unpaid-detail-card" : ""} ${orderStatusClass(order.status)} ${expanded ? "is-expanded" : ""}" ${searchAttributes} ${options.returnToUnpaid ? `onclick="toggleOrderItems('${order.id}', true)"` : ""}>
       <div class="orders-card-head">
         <div>
-          <div class="order-title-row">
-            ${orderSequenceBadge(options.sequenceNumber)}
-            <strong>${escapeHtml(displayOrderNumber(order.number))}</strong>
-          </div>
+          <div class="order-title-row orders-customer-heading">${heading}</div>
           <span>${dateTime(order.createdAt)}</span>
         </div>
         <div class="orders-card-statuses">
@@ -13694,8 +13815,7 @@ function orderCenterCard(order, options = {}) {
       </div>
       <div class="orders-card-meta">
         <span>${escapeHtml(order.type || "-")}</span>
-        <span>${escapeHtml(order.serviceInfo || "-")}</span>
-        <span>${escapeHtml(customerDisplayName(order.customer))}</span>
+        <span>${escapeHtml(displayOrderNumber(order.number))}</span>
         <span>${escapeHtml(order.paymentStatus || "-")}</span>
       </div>
       <div class="orders-card-items">
@@ -14997,6 +15117,22 @@ function reportRecordKey(record) {
   ].join("|");
 }
 
+function reportMergeKey(record) {
+  // Amounts may differ between an old report view and the corrected local order.
+  // Keep receipt/deletion keys intact and use financial-independent identity here.
+  return [
+    record.imported ? "import" : "order",
+    record.number || record.id || "-",
+    record.createdAt ? new Date(record.createdAt).toISOString() : ""
+  ].join("|");
+}
+
+function reportRecordsCoverRange(range) {
+  return Boolean(range && supabaseReportsLoadedAt && supabaseReportCoverage
+    && Number(supabaseReportCoverage.start) <= Number(range.start)
+    && Number(supabaseReportCoverage.end) >= Number(range.end));
+}
+
 function reportRecordTime(record) {
   const source = record || {};
   const value = source.paidAt || source.paid_at || source.createdAt || source.created_at;
@@ -15017,6 +15153,32 @@ function rawRecordInRange(record, range) {
   return date >= range.start && date <= range.end;
 }
 
+function mergeReportRecordsForDisplay(existing, incoming) {
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+  const existingHasItems = Boolean((existing.items || []).length);
+  const incomingHasItems = Boolean((incoming.items || []).length);
+  const base = !existingHasItems && incomingHasItems ? incoming : existing;
+  const other = base === existing ? incoming : existing;
+  const incomingBreakdown = normalizePaymentBreakdown(incoming.paymentBreakdown || incoming.payment_breakdown || {});
+  const existingBreakdown = normalizePaymentBreakdown(existing.paymentBreakdown || existing.payment_breakdown || {});
+  const mergedFields = {
+    total: incoming.outletRevenueVerified ? incoming.total : base.total,
+    outletRevenueVerified: Boolean(existing.outletRevenueVerified || incoming.outletRevenueVerified),
+    paymentMethod: base.paymentMethod || other.paymentMethod,
+    paymentStatus: base.paymentStatus || other.paymentStatus,
+    paidAt: base.paidAt || base.paid_at || other.paidAt || other.paid_at,
+    createdAt: base.createdAt || base.created_at || other.createdAt || other.created_at
+  };
+  if (paymentBreakdownHasAmount(incomingBreakdown)) {
+    return { ...base, ...mergedFields, paymentBreakdown: incomingBreakdown };
+  }
+  if (paymentBreakdownHasAmount(existingBreakdown)) {
+    return { ...base, ...mergedFields, paymentBreakdown: existingBreakdown };
+  }
+  return { ...base, ...mergedFields, paymentBreakdown: normalizePaymentBreakdown(base.paymentBreakdown || base.payment_breakdown || {}) };
+}
+
 function reportSourceRecords(range = null) {
   const deletedKeys = new Set(state.deletedReportKeys || []);
   const localRecords = [
@@ -15027,14 +15189,15 @@ function reportSourceRecords(range = null) {
     return isReportableRecord(record) && recordInRange(record, range) && !deletedKeys.has(key);
   });
   const merged = new Map();
-  for (const record of localRecords) merged.set(reportRecordKey(record), record);
+  for (const record of localRecords) {
+    const key = reportMergeKey(record);
+    merged.set(key, mergeReportRecordsForDisplay(merged.get(key), record));
+  }
   for (const record of supabaseReportRecords.filter(record => isReportableRecord(record) && recordInRange(record, range))) {
-    const key = reportRecordKey(record);
-    if (deletedKeys.has(key)) continue;
+    const key = reportMergeKey(record);
+    if (deletedKeys.has(reportRecordKey(record))) continue;
     const existing = merged.get(key);
-    const existingHasItems = Boolean((existing?.items || []).length);
-    const incomingHasItems = Boolean((record.items || []).length);
-    if (!existing || (!existingHasItems && incomingHasItems)) merged.set(key, record);
+    merged.set(key, mergeReportRecordsForDisplay(existing, record));
   }
   return [...merged.values()].sort((a, b) => reportRecordTime(b) - reportRecordTime(a));
 }
@@ -15093,7 +15256,11 @@ function reportOnlyCompletedOrders(range, localOrders = []) {
   const localNumbers = new Set((localOrders || []).map(order => String(order?.number || "").trim()).filter(Boolean));
   return summary.rows
     .filter(record => !localKeys.has(reportRecordKey(record)) && !localNumbers.has(String(record?.number || "").trim()))
-    .map(record => ({
+    .map(record => {
+      const detailKey = reportRecordKey(record);
+      const detail = record.imported ? null : supabaseReportDetailCache.get(detailKey);
+      const liveOrder = record.imported ? null : state.orders.find(order => String(order.number || "").trim() === String(record.number || "").trim());
+      return {
       id: `report-${reportRecordKey(record)}`,
       number: record.number,
       createdAt: record.createdAt,
@@ -15102,14 +15269,51 @@ function reportOnlyCompletedOrders(range, localOrders = []) {
       type: normalizedOrderType(record.type),
       customer: record.customer,
       serviceInfo: record.serviceInfo || "-",
+      note: record.note || detail?.note || liveOrder?.note || "",
+      imported: Boolean(record.imported),
+      reportKey: detailKey,
       status: "Selesai",
       paymentStatus: "Lunas",
       subtotal: Number(record.subtotal || record.total || 0),
       discount: Number(record.discount || 0),
       total: Number(record.total || 0),
-      items: record.items || [],
+      items: record.items?.length ? record.items : detail?.items?.length ? detail.items : liveOrder?.items || [],
       reportOnly: true
-    }));
+    };
+    });
+}
+
+async function requestReportOrderDetails(orders, force = false) {
+  if (view !== "orders" || !supabaseReadable()) return;
+  const available = Math.max(0, 4 - reportOrderDetailLoadingKeys.size);
+  const candidates = (orders || []).filter(order => {
+    const key = order.reportKey || reportRecordKey(order);
+    return order.reportOnly && !order.imported && !(order.items || []).length
+      && !reportOrderDetailLoadingKeys.has(key) && (force || !supabaseReportDetailCache.has(key));
+  }).slice(0, available);
+  if (!candidates.length) return;
+  await Promise.allSettled(candidates.map(async order => {
+    const key = order.reportKey || reportRecordKey(order);
+    reportOrderDetailLoadingKeys.add(key);
+    if (force) supabaseReportDetailCache.delete(key);
+    try {
+      await loadSupabaseOrderDetailForReport(order);
+    } catch (error) {
+      console.warn("Report order detail unavailable", error);
+      supabaseReportDetailCache.set(key, order);
+    } finally {
+      reportOrderDetailLoadingKeys.delete(key);
+    }
+  }));
+  if (view === "orders") renderWhenInteractionIdle();
+}
+
+async function openReportCardDetails(recordKey) {
+  const record = reportSourceRecords().find(item => reportRecordKey(item) === recordKey);
+  if (!record || record.imported) return;
+  const pending = requestReportOrderDetails([{ ...record, reportOnly: true, reportKey: recordKey, items: [] }], true);
+  renderWhenInteractionIdle();
+  await pending;
 }
 
 async function deleteReportTransaction(recordKey) {

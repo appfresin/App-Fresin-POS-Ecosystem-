@@ -548,9 +548,13 @@
   font-weight: 700;
 }
 
-.receipt-success-btn {
+.receipt-success-btn,
+.new-sale-success-btn {
   min-width: 220px;
   border-radius: 999px;
+}
+
+.receipt-success-btn {
   background: white;
   border-color: #7ac8ab;
   color: #0f7a5c;

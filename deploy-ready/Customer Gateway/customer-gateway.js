@@ -31,6 +31,35 @@
     return tableMode() ? `table:${tableCode()}` : takeawayMode() ? "takeaway" : checkoutMethod() === "DELIVERY" ? "delivery" : "home-pickup";
   }
 
+  function isNewEntryNavigation() {
+    try {
+      return typeof performance !== "undefined"
+        && performance.getEntriesByType?.("navigation")?.[0]?.type === "navigate";
+    } catch { return false; }
+  }
+
+  function startFreshEntryCart() {
+    selfOrderCart = [];
+    try {
+      saveSelfOrderCart();
+      const rawDrafts = sessionStorage.getItem(DRAFTS_KEY);
+      if (rawDrafts) {
+        let drafts;
+        try { drafts = JSON.parse(rawDrafts); } catch { drafts = {}; }
+        if (!drafts || typeof drafts !== "object" || Array.isArray(drafts)) drafts = {};
+        for (const draft of Object.values(drafts)) {
+          if (draft && typeof draft === "object" && !Array.isArray(draft)) draft.cart = [];
+        }
+        sessionStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+      }
+      sessionStorage.removeItem(DRAFT_CONTEXT_KEY);
+      if (typeof rotateLimitedStockReservationToken === "function") rotateLimitedStockReservationToken("Self Order");
+      else sessionStorage.removeItem("self_order_limited_stock_token");
+    } catch (error) {
+      console.warn("Fresh entry cart could not be persisted", error);
+    }
+  }
+
   function switchDraftContext(next) {
     if (!validDraftContext(next)) return false;
     const storedContext = sessionStorage.getItem(DRAFT_CONTEXT_KEY);
@@ -143,8 +172,10 @@
   }
 
   function serviceStrip(service, options = {}) {
-    const label = service === "dinein" ? `Makan di sini <small>Meja ${escapeHtml(tableCode())}</small>` : service === "delivery" ? "Diantar (Delivery)" : "Ambil di toko";
-    return `<div class="fresin-service-strip is-${service}"><span><span class="fresin-service-strip-icon">${icon(service === "dinein" ? "dinein" : service === "delivery" ? "delivery" : "bag")}</span><span class="fresin-service-strip-copy">${label}</span></span>${options.change === false ? "" : `<button type="button" onclick="FresinGateway.open()">Ubah layanan ${icon("arrow")}</button>`}</div>`;
+    const checkout = options.checkout === true && service === "pickup";
+    const label = checkout ? 'Ambil di Outlet <small>mengambil sendiri pesanan di outlet Fresin</small>'
+      : service === "dinein" ? `Makan di sini <small>Meja ${escapeHtml(tableCode())}</small>` : service === "delivery" ? "Diantar (Delivery)" : "Ambil di toko";
+    return `<div class="fresin-service-strip is-${service}${checkout ? " is-checkout-header" : ""}"><span><span class="fresin-service-strip-icon">${icon(service === "dinein" ? "dinein" : service === "delivery" ? "delivery" : "bag")}</span><span class="fresin-service-strip-copy">${label}</span></span>${options.change === false ? "" : `<button type="button" onclick="FresinGateway.open()">Ubah layanan ${icon("arrow")}</button>`}</div>`;
   }
 
   function categoryVisual(category, products) {
@@ -209,14 +240,13 @@
     const atTable = tableMode();
     const support = renderSupport();
     const params = new URL(location.href).searchParams;
-    const motionPreview = params.get("motion") === "on"
-      || (params.get("motion") !== "off" && /^signature-\d+$/.test(params.get("preview") || ""));
+    const motionEnabled = params.get("motion") !== "off";
     const profileImage = String(state.settings?.selfOrderProfileImageDataUrl || state.settings?.receiptLogoDataUrl || "").trim();
     const brandMark = profileImage && typeof mediaImageTag === "function"
       ? mediaImageTag(profileImage, "Logo Fresin", "fresin-gateway-brand-image", 240)
       : '<span class="fresin-gateway-brand-fallback">F</span>';
     return `
-      <section class="self-order-app fresin-gateway${atTable ? " fresin-gateway-table" : ""}"${motionPreview ? ' data-motion="on"' : ""}>
+      <section class="self-order-app fresin-gateway${atTable ? " fresin-gateway-table" : ""}" data-motion="${motionEnabled ? "on" : "off"}">
         ${header()}
         <main class="fresin-gateway-main">
           <section class="fresin-gateway-hero" aria-labelledby="fresinGatewayTitle">
@@ -272,6 +302,7 @@
     if (target.origin !== location.origin) return toast("Tautan layanan tidak tersedia.");
     if (!switchDraftContext(service === "delivery" ? "delivery" : tableMode() ? "home-pickup" : "takeaway")) return;
     target.searchParams.set("mode", service === "delivery" ? "delivery" : tableMode() ? "pickup" : "takeaway");
+    if (tableMode() || takeawayMode()) target.searchParams.set("origin", "outlet");
     saveSelfOrderCart();
     sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({ service, path: target.pathname, at: Date.now() }));
     location.assign(target.href);
@@ -348,6 +379,15 @@
     if (window.FRESIN_GATEWAY_BOOT_PENDING === true) finishBoot();
     return;
   }
+  let handoff = null;
+  try { handoff = JSON.parse(sessionStorage.getItem(HANDOFF_KEY) || "null"); }
+  catch { /* Malformed handoffs should display the gateway. */ }
+  sessionStorage.removeItem(HANDOFF_KEY);
+  const age = Date.now() - Number(handoff?.at || 0);
+  const handoffMatchesMode = tableMode() ? handoff?.service === "dinein" : takeawayMode() ? handoff?.service === "pickup" : handoff?.service === "pickup" || handoff?.service === "delivery";
+  const validHandoff = validService(handoff?.service) && handoffMatchesMode && handoff.path === location.pathname && age >= 0 && age <= HANDOFF_MAX_AGE_MS;
+  const continuingStep = !["menu", "gateway"].includes(selfOrderStep()) && history.state?.selfOrderStep === selfOrderStep();
+  if (isNewEntryNavigation() && !validHandoff && !continuingStep && !selectedService()) startFreshEntryCart();
   if (tableMode()) sessionStorage.setItem("self_order_table", tableCode());
   switchDraftContext(routeDraftContext());
   window.addEventListener("pageshow", event => {
@@ -359,15 +399,9 @@
     switchDraftContext(routeDraftContext());
     render();
   });
-  let handoff = null;
-  try { handoff = JSON.parse(sessionStorage.getItem(HANDOFF_KEY) || "null"); }
-  catch { /* Malformed handoffs should display the gateway. */ }
-  sessionStorage.removeItem(HANDOFF_KEY);
-  const age = Date.now() - Number(handoff?.at || 0);
-  const handoffMatchesMode = tableMode() ? handoff?.service === "dinein" : takeawayMode() ? handoff?.service === "pickup" : handoff?.service === "pickup" || handoff?.service === "delivery";
-  if (validService(handoff?.service) && handoffMatchesMode && handoff.path === location.pathname && age >= 0 && age <= HANDOFF_MAX_AGE_MS) {
+  if (validHandoff) {
     markMenu(handoff.service, true);
-  } else if (!["menu", "gateway"].includes(selfOrderStep()) && history.state?.selfOrderStep === selfOrderStep()) {
+  } else if (continuingStep) {
     // Existing carts, payment screens and order results must survive this upgrade.
     if (!selectedService()) history.replaceState({ ...(history.state || {}), fresinService: tableMode() ? "dinein" : checkoutMethod() === "DELIVERY" ? "delivery" : "pickup" }, "", location.href);
   } else if (!selectedService()) {

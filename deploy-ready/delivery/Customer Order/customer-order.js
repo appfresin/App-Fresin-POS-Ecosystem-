@@ -1179,8 +1179,8 @@
     homeSetCheckout({ method });
     return `
       <main class="self-order-main cart customer-home-cart">
-        <div class="self-order-section-head">
-          <div><h3>Pesanan :</h3></div>
+        <div class="self-order-section-head self-order-cart-head">
+          <h3 class="self-order-cart-title">Pesanan <span class="self-order-cart-count">${selfOrderItemsTotal()} item</span></h3>
         </div>
         <section class="self-order-cart-list">
           ${selfOrderCart.map(item => `
@@ -1197,7 +1197,7 @@
                   <span>${Number(item.qty || 0)}</span>
                   <button type="button" onclick="selfOrderChangeQty('${item.lineId}', 1)">+</button>
                 </div>
-                <button type="button" class="danger" onclick="selfOrderRemoveItem('${item.lineId}')" aria-label="Hapus">x</button>
+                <button type="button" class="danger" onclick="selfOrderRemoveItem('${item.lineId}')" aria-label="Hapus"><svg class="self-order-remove-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
               </div>
             </article>
           `).join("") || empty("Keranjang masih kosong.")}
@@ -1256,12 +1256,14 @@
     const errors = homeCheckoutErrors || {};
     const finishLabel = selfOrderSubmitting ? "Mengirim pesanan..." : "Buat Pesanan";
     const serviceStrip = window.FresinGateway?.serviceStrip
-      ? window.FresinGateway.serviceStrip(method === "DELIVERY" ? "delivery" : "pickup", { change: false }) : "";
+      ? window.FresinGateway.serviceStrip(method === "DELIVERY" ? "delivery" : "pickup", { change: false, checkout: true }) : "";
+    const pickupHeader = serviceStrip || `<div class="fresin-service-strip is-pickup is-checkout-header"><span><span class="fresin-service-strip-icon">${homeTakeawayIconSvg()}</span><span class="fresin-service-strip-copy">Ambil di Outlet <small>mengambil sendiri pesanan di outlet Fresin</small></span></span></div>`;
     return `
       <main class="self-order-main payment customer-home-checkout">
-        <section class="self-order-payment-shell customer-home-checkout-shell">
+        <section class="self-order-payment-shell customer-home-checkout-shell ${method === "PICKUP_PREORDER" ? "has-service-header" : ""}">
+          ${method === "PICKUP_PREORDER" ? pickupHeader : ""}
           <div class="self-order-checkout">
-            ${serviceStrip || `<section class="customer-home-service-strip ${method === "DELIVERY" ? "delivery" : "pickup"}">
+            ${method === "PICKUP_PREORDER" ? "" : serviceStrip || `<section class="customer-home-service-strip ${method === "DELIVERY" ? "delivery" : "pickup"}">
               <span class="customer-home-service-icon ${method === "DELIVERY" ? "delivery" : "pickup"}">${method === "DELIVERY" ? homeDeliveryIconSvg() : homeTakeawayIconSvg()}</span>
               <div class="customer-home-service-copy">
                 <strong>${method === "DELIVERY" ? "Delivery" : "Ambil Sendiri"}</strong>
@@ -1272,13 +1274,16 @@
               <label class="self-order-customer-field ${errors.Name ? "invalid" : ""}"><span class="sr-only">Nama Penerima</span><input id="customerHomeName" autocomplete="name" value="${homeInputValue("customerHomeName", "name")}" placeholder="Nama penerima" oninput="CustomerOrder.captureCheckout('Name')" ${homeCheckoutInvalidAttrs("Name")} />${homeCheckoutFieldError("Name")}</label>
               <label class="self-order-customer-field ${errors.Phone ? "invalid" : ""}"><span class="sr-only">Nomor WhatsApp</span><input id="customerHomePhone" type="tel" autocomplete="tel" value="${homeInputValue("customerHomePhone", "phone")}" inputmode="tel" placeholder="Nomor WhatsApp (08...)" oninput="CustomerOrder.captureCheckout('Phone')" ${homeCheckoutInvalidAttrs("Phone")} />${homeCheckoutFieldError("Phone")}</label>
             </div>
-            ${method === "PICKUP_PREORDER" ? `<section class="customer-home-pickup-timing">
-              <span>Jam pengambilan</span>
+            ${method === "PICKUP_PREORDER" ? `<section class="customer-home-pickup-timing" aria-labelledby="customerHomePickupHeading">
+              <div class="customer-home-pickup-heading">
+                <span class="customer-home-pickup-clock" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="11" fill="#fff9ee" stroke="currentColor" stroke-width="1.8"/><path d="M16 9v7l4 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 4 4 7m21-3 3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+                <strong id="customerHomePickupHeading">Jam pengambilan</strong>
+              </div>
               <div class="customer-home-timing-options" role="group" aria-label="Waktu pengambilan">
-                <button type="button" aria-pressed="${pickupNow}" onclick="CustomerOrder.setPickupTiming('now')">Sekarang</button>
+                <button type="button" aria-pressed="${pickupNow}" onclick="CustomerOrder.setPickupTiming('now')">Segera</button>
                 <button type="button" aria-pressed="${!pickupNow}" onclick="CustomerOrder.setPickupTiming('scheduled')">Pilih jam</button>
               </div>
-              ${pickupNow ? '<small>Disiapkan secepatnya setelah diterima kasir.</small>' : `<label class="self-order-customer-field ${errors.PickupTime ? "invalid" : ""}"><span class="sr-only">Pilih jam pengambilan</span><input id="customerHomePickupTime" type="time" value="${/^\d{2}:\d{2}$/.test(pickupTime) ? homeEscape(pickupTime) : ""}" oninput="CustomerOrder.captureCheckout('PickupTime')" ${homeCheckoutInvalidAttrs("PickupTime")} />${homeCheckoutFieldError("PickupTime")}</label>`}
+              ${pickupNow ? '<small>Disiapkan secepatnya setelah diterima kasir.</small>' : `<label class="self-order-customer-field ${errors.PickupTime ? "invalid" : ""}"><span class="sr-only">Pilih jam pengambilan</span><input id="customerHomePickupTime" type="time" value="${/^\d{2}:\d{2}$/.test(pickupTime) ? homeEscape(pickupTime) : ""}" onclick="CustomerOrder.openPickupTimePicker()" oninput="CustomerOrder.captureCheckout('PickupTime')" ${homeCheckoutInvalidAttrs("PickupTime")} />${homeCheckoutFieldError("PickupTime")}</label>`}
             </section>` : ""}
             ${method === "PICKUP_PREORDER" ? "" : `
               ${homeRenderLocationPin(checkout)}
@@ -1312,7 +1317,7 @@
     if (checkout.method === "PICKUP_PREORDER" && checkout.pickupTime && checkout.pickupTime !== "Secepatnya"
       && !/^([01]\d|2[0-3]):[0-5]\d$/.test(checkout.pickupTime)) errors.PickupTime = "Jam pengambilan tidak valid.";
     if (checkout.method === "PICKUP_PREORDER" && checkout.pickupTiming === "scheduled" && !checkout.pickupTime)
-      errors.PickupTime = "Pilih jam pengambilan atau pilih Sekarang.";
+      errors.PickupTime = "Pilih jam pengambilan atau pilih Segera.";
     if (checkout.method === "DELIVERY" && !homeHasPinnedLocation(checkout)) errors.Location = "Pilih pin lokasi pengantaran.";
     if (checkout.method === "DELIVERY" && String(checkout.locationStatus || "") === "adjusted") errors.Location = "Tekan Tetapkan Lokasi setelah menggeser pin.";
     if (checkout.method === "DELIVERY" && !String(checkout.addressNote || "").trim()) errors.AddressNote = "Patokan alamat wajib diisi.";
@@ -1327,6 +1332,19 @@
       pickupTime: now ? "Secepatnya" : (/^\d{2}:\d{2}$/.test(checkout.pickupTime || "") ? checkout.pickupTime : "") });
     homeClearCheckoutErrors(["PickupTime"]);
     render();
+    if (!now) homeOpenPickupTimePicker();
+  }
+
+  function homeOpenPickupTimePicker() {
+    const input = document.getElementById("customerHomePickupTime");
+    if (!input) return;
+    try {
+      if (typeof input.showPicker === "function") {
+        input.showPicker();
+        return;
+      }
+    } catch { /* Embedded browsers can require focus instead of showPicker. */ }
+    input.focus();
   }
 
   async function homeCreateWaitingPayment() {
@@ -1393,7 +1411,7 @@
         deliveryLatitude: checkout.method === "DELIVERY" ? latitude : null,
         deliveryLongitude: checkout.method === "DELIVERY" ? longitude : null,
         deliveryDistanceKm: checkout.method === "DELIVERY" ? deliveryQuote.distanceKm : null,
-        serviceInfo: checkout.method === "DELIVERY" ? "Delivery" : "Pickup",
+        serviceInfo: checkout.method === "DELIVERY" ? "Delivery" : homeParams().search.get("origin") === "outlet" ? "Takeaway Outlet" : "Takeaway-Rumah",
         note: noteParts.join("\n"),
         status: "Pesanan Baru",
         paymentStatus: "Belum dibayar",
@@ -1760,7 +1778,9 @@
     const completed = status === "COMPLETED";
     if (homeOrderKind(order) !== "DELIVERY") return window.SOTakeaway.renderProgress({ paid: homeIsPaid(order), expired: false, accepted, processing, completed });
     const matched = Boolean(order.driverId || !["SEARCHING_DRIVER", "NO_DRIVER_AVAILABLE"].includes(status));
-    const steps = [["Driver", matched], ["Kasir", accepted], ["Disiapkan", processing], ["Diantar", ["DELIVERING", "COMPLETED"].includes(status)], ["Selesai", completed]];
+    const prepared = Boolean(order.readyAt || ["READY", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING", "COMPLETED"].includes(status));
+    const collected = ["PICKED_UP", "DELIVERING", "COMPLETED"].includes(status);
+    const steps = [["Driver", matched], ["Disiapkan", prepared], ["Menjemput", collected], ["Diantar", completed], ["Selesai", completed]];
     const nextStep = steps.findIndex(([, done]) => !done);
     const currentStep = nextStep < 0 ? steps.length - 1 : nextStep;
     return `<div class="customer-home-progress customer-home-statusbar is-delivery" aria-label="Status pesanan">${steps.map(([label], index) => {
@@ -1775,12 +1795,13 @@
     const delivery = homeOrderKind(order) === "DELIVERY";
     const cancelled = status === "CANCELLED";
     const note = cancelled ? (order.cancelReason || "Pesanan dibatalkan.")
-      : status === "COMPLETED" ? "Pesanan selesai. Terima kasih sudah memesan."
+      : status === "COMPLETED" ? (delivery ? "Pesanan selesai. Terima kasih sudah memesan." : "Pesanan selesai, silakan ambil ke outlet segera ya.")
       : status === "DELIVERING" ? "Kurir sedang mengantar pesananmu."
       : ["READY", "READY_FOR_PICKUP"].includes(status) ? (delivery ? "Pesanan siap diambil kurir." : "Pesanan siap diambil di outlet.")
       : status === "PREPARING" ? "Pesanan sedang disiapkan oleh dapur."
       : delivery && status === "SEARCHING_DRIVER" ? "Sedang mencari kurir untuk pesananmu."
       : status === "NO_DRIVER_AVAILABLE" ? "Belum ada kurir yang menerima pesanan."
+      : delivery ? (order.confirmedAt ? "Pesananmu sudah diteruskan ke dapur." : "Menunggu kurir memproses pesananmu.")
       : order.confirmedAt ? "Kasir sudah menerima pesananmu." : "Menunggu kasir menerima pesananmu.";
     const paymentCopy = delivery ? "Bayar ke kurir" : homeIsPaid(order) ? "Lunas" : "Bayar saat ambil di outlet";
     return `<main class="self-order-main success so-takeaway-success customer-home-cash-status">
@@ -1790,7 +1811,7 @@
         ${!cancelled && delivery && ["SEARCHING_DRIVER", "NO_DRIVER_AVAILABLE"].includes(status) ? homeRenderDriverSearchPanel(order) : ""}
         <section class="customer-home-progress-card" aria-label="Status pesanan terkini">
           ${cancelled ? "" : homeCashProgress(order)}
-          <p class="customer-home-current-status" role="status" aria-live="polite">${homeEscape(note)}</p>
+          <p class="customer-home-current-status ${cancelled ? "is-cancelled" : ""}" role="status" aria-live="polite">${cancelled ? '<strong>Keterangan pembatalan</strong>' : ""}<span>${homeEscape(note)}</span></p>
         </section>
         ${delivery ? homeDriverCard(order) : ""}
         ${window.SOTakeaway.renderSuccessActions("CustomerOrder.startNewOrder()")}
@@ -2337,6 +2358,7 @@
         render();
       },
       setPickupTiming: homeSetPickupTiming,
+      openPickupTimePicker: homeOpenPickupTimePicker,
       captureCheckout(field = "") {
         const patch = {
           name: String(document.getElementById("customerHomeName")?.value || homeCheckout().name || "").trim(),

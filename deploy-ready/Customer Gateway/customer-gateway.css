@@ -429,3 +429,17 @@ html.fresin-gateway-open .view-selforder .page { min-height: 0; }
 .fresin-service-strip button { border-color: #b8cfeb; background: #f6faff; }
 .fresin-service-strip.is-delivery button { border-color: #e7d4b9; background: #fffaf1; color: #8c602e; }
 .fresin-table-menu .self-order-topbar { grid-template-columns: auto minmax(0,1fr); }
+
+/* Explicit motion choice also works outside reduced-motion environments. */
+.fresin-gateway[data-motion="off"] .fresin-gateway-spark,
+.fresin-gateway[data-motion="off"] .fresin-gateway-hero h1,
+.fresin-gateway[data-motion="off"] .fresin-gateway-hero-tagline>span,
+.fresin-gateway[data-motion="off"] .fresin-gateway-stamp::before,
+.fresin-gateway[data-motion="off"] .fresin-gateway-dinein-action,
+.fresin-gateway[data-motion="off"] .fresin-gateway-dinein-action svg,
+.fresin-gateway[data-motion="off"] .fresin-gateway-dinein-action::after,
+.fresin-gateway[data-motion="off"] .fresin-service-art-frame,
+.fresin-gateway[data-motion="off"] .fresin-utensil-fork,
+.fresin-gateway[data-motion="off"] .fresin-utensil-knife { animation: none; transform: none; }
+.fresin-gateway[data-motion="off"] .fresin-service-art-frame.is-first { opacity: 1; }
+.fresin-gateway[data-motion="off"] .fresin-service-art-frame.is-second { opacity: 0; }

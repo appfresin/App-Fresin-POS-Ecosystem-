@@ -221,3 +221,112 @@ button { transition: background-color .16s ease, box-shadow .16s ease, transform
   button { transition: none; }
   .driver-icon-btn:active svg, .driver-icon-btn.is-refreshing svg { animation: none; }
 }
+
+.driver-process-actions { display: grid; grid-template-columns: minmax(0,1fr); gap: 9px; }
+.driver-process-actions > .driver-whatsapp-action { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; box-sizing: border-box; padding: 10px 12px; border: 1px solid #cfe1c6; border-radius: 999px; background: #f0f7e9; color: #467336; font-size: 12px; line-height: 1.4; font-weight: 600; text-align: center; text-decoration: none; }
+.driver-whatsapp-action svg { width: 18px; height: 18px; flex: 0 0 auto; }
+.driver-process-actions > .driver-whatsapp-action:hover { background: #e4f0d9; color: #345c26; }
+.driver-process-actions > .driver-card-action { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+.driver-process-actions > .driver-card-action:disabled { opacity: .65; cursor: wait; }
+.driver-process-note { padding: 8px; color: #7d8d72; font-size: 11px; line-height: 1.5; text-align: center; }
+
+.driver-map-action { display: grid; grid-template-columns: minmax(0,1fr) 52px; align-items: stretch; overflow: hidden; border: 1px solid #e4eddb; border-radius: 17px; background: #edf5e6; color: #4c7c36; }
+.driver-map-action > .driver-secondary { min-width: 0; margin: 0; border: 0; border-radius: 0; background: transparent; }
+.driver-share-location { display: grid; place-items: center; align-self: center; min-height: 44px; margin: 6px 0; padding: 8px; border: 0; border-left: 1px solid #d2e1c6; border-radius: 0; background: transparent; color: inherit; cursor: pointer; }
+.driver-share-location svg { width: 21px; height: 21px; }
+.driver-map-action button:disabled { opacity: .45; cursor: default; }
+.driver-map-action button:focus-visible { outline: 2px solid #568b3d; outline-offset: -4px; }
+.driver-map-action button:hover:not(:disabled) { background: #e1eed7; }
+.driver-items-panel .driver-item-row { display: grid; grid-template-columns: max-content minmax(0,1fr) max-content; gap: 9px; align-items: start; padding-block: 12px; }
+.driver-item-qty { color: #87947b; font-size: 12px; line-height: 1.5; white-space: nowrap; }
+.driver-item-copy { overflow-wrap: anywhere; line-height: 1.5; }
+.driver-item-price { white-space: nowrap; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.driver-address-notes strong { white-space: pre-line; }
+.driver-share-dialog { box-sizing: border-box; width: min(360px,calc(100vw - 32px)); max-height: calc(100dvh - 40px); margin: auto; padding: 22px; overflow: auto; border: 1px solid #dce8d3; border-radius: 25px; background: #fbfdf8; color: #26411d; box-shadow: 0 18px 60px #18330f33; }
+.driver-share-dialog::backdrop { background: #20361788; backdrop-filter: blur(4px); }
+.driver-share-heading { display: flex; align-items: center; gap: 10px; }
+.driver-share-heading svg { width: 23px; height: 23px; color: #568b3d; }
+.driver-share-dialog h2 { margin: 0; font-size: 19px; }
+.driver-share-dialog p { color: #7b8d6f; font-size: 12px; line-height: 1.6; }
+.driver-share-dialog input { box-sizing: border-box; width: 100%; min-width: 0; padding: 12px; margin-bottom: 12px; border: 1px solid #dce8d3; border-radius: 12px; background: white; color: #527d3e; font-size: 12px; }
+.driver-share-dialog .driver-secondary { box-sizing: border-box; width: 100%; margin-top: 8px; min-height: 44px; border-radius: 14px; }
+.driver-share-dialog p[role="status"]:empty { display: none; }
+.driver-share-close { width: 100%; min-height: 44px; margin-top: 10px; border: 0; border-radius: 14px; background: transparent; color: #718367; font-size: 13px; cursor: pointer; }
+.driver-detail-hero > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.driver-detail-tools { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: 12px; max-width: 45%; }
+.driver-detail-tools .driver-pill { text-align: center; }
+.driver-share-order { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 7px 10px; border: 1px solid #ffffff4d; border-radius: 12px; background: #ffffff1f; color: #fff; font-family: inherit; font-size: 11px; font-weight: 500; cursor: pointer; }
+.driver-share-order > svg { width: 16px; height: 16px; }
+.driver-share-order:hover:not(:disabled) { background: #ffffff38; }
+.driver-share-order:disabled { opacity: .5; cursor: wait; }
+.driver-summary-grid .driver-phone-value { display: flex; align-items: center; justify-content: flex-end; gap: 9px; }
+.driver-phone-value > em { min-width: 0; font-style: normal; overflow-wrap: anywhere; }
+.driver-share-phone { display: grid; flex: 0 0 auto; place-items: center; width: 36px; height: 36px; padding: 8px; border: 1px solid #dfebd6; border-radius: 11px; background: #edf5e6; color: #50823b; cursor: pointer; }
+.driver-share-phone svg { width: 18px; height: 18px; }
+.driver-share-phone:hover:not(:disabled) { background: #dfedd5; }
+.driver-share-phone:disabled { opacity: .4; cursor: default; }
+.driver-share-dialog textarea { box-sizing: border-box; display: block; width: 100%; max-height: 36dvh; min-height: 76px; margin-bottom: 12px; padding: 12px; resize: vertical; border: 1px solid #dce8d3; border-radius: 12px; background: #fff; color: #3d5a30; font-family: inherit; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.driver-share-dialog textarea:focus-visible { outline: 2px solid #6b9e4f; outline-offset: 2px; }
+.driver-kitchen-notice { display: flex; align-items: flex-start; gap: 8px; padding: 12px 13px; border: 1px solid #dce7d4; border-radius: 16px; background: #f3f7ee; color: #78876d; font-size: 11px; font-weight: 500; line-height: 1.6; }
+.driver-kitchen-notice svg { flex: 0 0 18px; width: 18px; height: 18px; margin-top: 1px; }
+.driver-kitchen-notice.is-ready { border-color: #c9e2ba; background: #eaf5df; color: #467533; }
+.driver-kitchen-notice.is-ready span { font-weight: 700; }
+.driver-card-actions:has(.driver-kitchen-notice) { display: grid; grid-template-columns: minmax(0,1fr); gap: 10px; }
+.driver-card-action.driver-pickup-action { background: var(--driver-green); color: #fff; }
+.driver-incoming-alert { display: flex; align-items: center; gap: 9px; margin: 12px 14px 0; padding: 12px; border: 1px solid #dfb666; border-radius: 17px; background: #fff1d6; color: #70531e; box-shadow: 0 7px 18px #6c571519; }
+.driver-incoming-alert > div { flex: 1; min-width: 0; }
+.driver-incoming-alert strong, .driver-incoming-alert small { display: block; }
+.driver-incoming-alert strong { font-size: 13px; }
+.driver-incoming-alert small { margin-top: 4px; font-size: 11px; }
+.driver-incoming-alert button { padding: 7px 9px; border: 1px solid #ddbf85; border-radius: 10px; background: #fffaf1; color: #70531e; font: inherit; font-size: 12px; cursor: pointer; }
+.driver-notification-settings { display: flex; align-items: center; gap: 10px; margin: 10px 16px 0; color: #637e55; }
+.driver-notification-settings small { flex: 1; font-size: 10px; line-height: 1.4; }
+.driver-notification-settings button { padding: 6px 10px; border: 1px solid #ccdcbf; border-radius: 999px; background: #f5f9ef; color: #45852e; font: inherit; font-size: 11px; cursor: pointer; }
+.driver-order-card.is-cancelled { border: 1px solid #e8c4b9; background: #fffaf7; }
+.driver-order-card.is-cancelled .driver-route-lines { background: #f8eee9; }
+.driver-cancelled-notice { display: grid; gap: 6px; padding: 13px; border: 1px solid #ecd2c7; border-radius: 15px; background: #fbede6; color: #905848; text-align: center; }
+.driver-cancelled-notice strong { font-size: 13px; }
+.driver-cancelled-notice span { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.driver-order-card.is-missed { border: 1px solid #e8d5ad; background: #fffdf7; }
+.driver-order-card.is-missed .driver-missed-note, .driver-content.detail .driver-missed-note { display: grid; gap: 6px; padding: 13px; border: 1px solid #eddbb7; border-radius: 15px; background: #fff3dc; color: #8a652c; text-align: center; }
+.driver-missed-note strong { font-size: 13px; }
+.driver-missed-note span { font-size: 12px; line-height: 1.5; }
+.driver-topbar { position: sticky; }
+.driver-topbar-actions { display: flex; align-items: center; gap: 6px; }
+.driver-topbar-actions .driver-icon-btn { flex: 0 0 40px; width: 40px; height: 44px; border-radius: 15px; }
+.driver-topbar-actions .driver-settings-menu { width: 32px; flex-basis: 32px; background: transparent; }
+.driver-settings-menu svg { width: 22px; height: 22px; }
+.driver-settings-popover { position: absolute; top: calc(100% - 5px); right: 14px; z-index: 40; padding: 6px; border: 1px solid #dce8d2; border-radius: 16px; background: #fff; box-shadow: 0 12px 30px #224b2226; }
+.driver-settings-popover button { display: flex; align-items: center; gap: 24px; min-height: 44px; padding: 10px 13px; border: 0; border-radius: 11px; background: #f2f7eb; color: #386b29; font: inherit; font-size: 13px; font-weight: 600; line-height: 1.4; cursor: pointer; }
+.driver-settings-page { display: grid; gap: 14px; padding-bottom: 28px; }
+.driver-settings-back { justify-self: start; padding: 4px 0; border: 0; background: transparent; color: #4b7837; font: inherit; font-size: 12px; cursor: pointer; }
+.driver-settings-hero { display: flex; align-items: center; gap: 12px; padding: 18px 16px; border: 1px solid #659e44; border-radius: 24px; background: linear-gradient(125deg,#3f8027,#68a342); color: #fff; box-shadow: 0 9px 24px #37642618; }
+.driver-settings-hero svg { width: 62px; height: 62px; flex: 0 0 62px; }
+.driver-settings-hero h1 { margin: 0 0 6px; font: 750 20px/1.25 system-ui,sans-serif; }
+.driver-settings-hero p { margin: 0; color: #edf5db; font-size: 11px; line-height: 1.5; }
+.driver-settings-card { overflow: hidden; padding: 16px; border: 1px solid #dfebd6; border-radius: 23px; background: #fff; box-shadow: 0 8px 22px #4c66220a; }
+.driver-settings-section-title { margin-bottom: 5px; color: #426e30; font-size: 13px; font-weight: 750; }
+.driver-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 68px; padding: 10px 0; border-bottom: 1px solid #edf1e7; }
+.driver-setting-row > span { flex: 1; min-width: 0; }
+.driver-setting-row strong,.driver-setting-row small { display: block; }
+.driver-setting-row strong { color: #244b26; font-size: 13px; font-weight: 650; }
+.driver-setting-row small { margin-top: 4px; color: #809176; font-size: 10px; line-height: 1.5; }
+.driver-setting-row input[type=checkbox] { appearance: none; width: 42px; min-width: 42px; height: 25px; margin: 0; border: 1px solid #d0ddc6; border-radius: 999px; background: #dce5d6; cursor: pointer; transition: background .15s; }
+.driver-setting-row input[type=checkbox]::before { content: ''; display: block; width: 19px; height: 19px; margin: 2px; border-radius: 50%; background: #fff; box-shadow: 0 2px 4px #0002; transition: transform .15s; }
+.driver-setting-row input[type=checkbox]:checked { background: #548f38; border-color: #548f38; }
+.driver-setting-row input[type=checkbox]:checked::before { transform: translateX(17px); }
+.driver-setting-row input:focus-visible,.driver-setting-row select:focus-visible { outline: 2px solid #548f38; outline-offset: 3px; }
+.driver-setting-row select { width: 100px; min-width: 88px; min-height: 39px; padding: 7px; border: 1px solid #d8e5ce; border-radius: 11px; background: #f5f9ef; color: #426e30; font: inherit; font-size: 12px; }
+.driver-setting-test { width: 100%; min-height: 44px; margin-top: 14px; font-size: 13px; }
+.driver-device-status > p { margin: 11px 0 7px; color: #3b6230; font-size: 13px; font-weight: 650; }
+.driver-device-status > small { color: #7b8c73; font-size: 11px; }
+.driver-status-dot { display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: #c7a356; }
+.driver-status-dot.is-ready { background: #4c9b3b; }
+.driver-device-status .driver-settings-help { display: block; color: #839177; font-size: 11px; font-weight: 400; line-height: 1.65; }
+.driver-setting-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.driver-setting-buttons .driver-secondary,.driver-notification-auth .driver-secondary { flex: 1; min-height: 42px; padding: 9px; border: 1px solid #d8e6ce; font-size: 11px; }
+.driver-notification-auth { display: grid; gap: 8px; margin: 14px 0; }
+.driver-notification-auth input { width: 100%; min-height: 44px; padding: 10px; border: 1px solid #d8e5ce; border-radius: 12px; font: inherit; font-size: 12px; box-sizing: border-box; }
+.driver-device-status .driver-settings-message { padding: 10px; border-radius: 12px; background: #f2f7ea; font-size: 11px; font-weight: 400; line-height: 1.6; }
+.driver-settings-logout { min-height: 44px; border: 1px solid #e9d5c9; border-radius: 14px; background: #fff8f3; color: #975843; font: inherit; font-size: 12px; cursor: pointer; }
+@media(max-width:350px) { .driver-brand-title { font-size: 20px; } .driver-settings-hero h1 { font-size: 17px; } .driver-settings-card { padding: 13px; } }

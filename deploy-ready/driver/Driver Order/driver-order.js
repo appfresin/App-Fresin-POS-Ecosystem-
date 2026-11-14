@@ -9,7 +9,7 @@
   const WALLET_MODE_KEY = "kasirin_driver_wallet_mode_v1";
   const WALLET_CLAIMS_KEY = "kasirin_driver_wallet_claims_v1";
   const PAYMENT_ACCOUNTS_KEY = "kasirin_driver_payment_accounts_v1";
-  const ACTIVE_STATUSES = ["SEARCHING_DRIVER", "DRIVER_ASSIGNED", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING"];
+  const ACTIVE_STATUSES = ["SEARCHING_DRIVER", "DRIVER_ASSIGNED", "PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING"];
   const HISTORY_STATUSES = ["COMPLETED"];
   const DRIVER_FETCH_RETRY_MS = 30000;
   const DRIVER_REALTIME_DEBOUNCE_MS = 900;
@@ -34,6 +34,9 @@
     "grand_total",
     "created_at",
     "updated_at",
+    "confirmed_at",
+    "cancelled_at",
+    "cancel_reason",
     "ready_at",
     "completed_at",
     "delivery_address",
@@ -63,7 +66,7 @@
     "created_at",
     "updated_at"
   ];
-  const ITEM_COLUMNS = "id,order_id,product_name,sku,qty,price,variant_label,variant_data,note";
+  const ITEM_COLUMNS = "id,order_id,product_name,sku,qty,price,discount,variant_label,variant_data,note";
   const ADDON_COLUMNS = "order_item_id,addon_name,qty,price";
 
   const app = document.getElementById("app");
@@ -80,6 +83,8 @@
     error: "",
     lastSyncAt: "",
     selectedId: "",
+    sharePayload: null,
+    shareMessage: "",
     menuOpen: false,
     claimLoading: false,
     claimError: "",
@@ -102,7 +107,7 @@
   let realtimeRefreshTimer = 0;
 
   function escapeHtml(value) {
-    return utils.escapeHtml ? utils.escapeHtml(value) : String(value ?? "");
+    return utils.escapeHtml ? utils.escapeHtml(value) : String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
   }
 
   function money(value) {
@@ -220,6 +225,7 @@
   }
 
   function renderCustomerWait(order) {
+    if (driverOrderCancelled(order)) return "";
     if (order.customer_order_status !== "SEARCHING_DRIVER") return "";
     const wait = driverAcceptanceTime(order);
     if (!wait) return "";
@@ -381,6 +387,26 @@
     return labels[status] || status || "-";
   }
 
+  function driverOrderCancelled(order) {
+    return Boolean(order?.cancelled_at) || order?.customer_order_status === "CANCELLED"
+      || ["dibatalkan", "batal", "cancelled", "canceled"].includes(String(order?.status || order?.order_status || "").trim().toLowerCase());
+  }
+
+  function renderCancelledNotice(order) {
+    return `<div class="driver-cancelled-notice" role="status"><strong>Pesanan dibatalkan</strong><span>${escapeHtml(order.cancel_reason || "Pesanan ini sudah dibatalkan dan tidak perlu diproses.")}</span></div>`;
+  }
+
+  function renderMissedNotice() {
+    return `<div class="driver-missed-note" role="status"><strong>Pesanan terlewat</strong><span>Batas waktu penerimaan telah berakhir. Pesanan ini tidak sempat diambil driver.</span></div>`;
+  }
+
+  function notifyNewDriverOrders(orders) {
+    const available = orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER"
+      && !driverOrderCancelled(order) && driverAcceptanceTime(order)?.seconds > 0
+      && !order.driver_id && !order.driver_name && !order.driver_phone);
+    window.DriverNotifications?.update(available, state.profile);
+  }
+
   function statusRank(status) {
     return {
       SEARCHING_DRIVER: 1,
@@ -402,13 +428,26 @@
   }
 
   function effectiveOrderStatus(order) {
+    if (driverOrderCancelled(order)) return "CANCELLED";
     const stored = String(order?.customer_order_status || "").trim();
     if (acceptanceExpired(order)) return "NO_DRIVER_AVAILABLE";
     if (["NO_DRIVER_AVAILABLE", "CANCELLED"].includes(stored)) return stored;
     const lifecycle = lifecycleStatus(order);
+    if (lifecycle === "PREPARING" && stored !== "COMPLETED" && !kitchenReady(order)) return lifecycle;
     if (!stored) return lifecycle;
     if (!lifecycle) return stored;
     return statusRank(lifecycle) > statusRank(stored) ? lifecycle : stored;
+  }
+
+  function kitchenReady(order) {
+    if (driverOrderCancelled(order)) return false;
+    const status = String(order?.status || order?.order_status || "").trim().toLowerCase();
+    if (["selesai", "siap diambil"].includes(status) || order?.ready_at) return true;
+    return false;
+  }
+
+  function renderKitchenNotice(ready = false) {
+    return `<div class="driver-kitchen-notice ${ready ? "is-ready" : "is-waiting"}" role="status">${icon(ready ? "check" : "clock")}<span>${ready ? "Pesanan Siap Dijemput" : "Menunggu dapur menyelesaikan pesanan. Kamu bisa mengambilnya setelah siap."}</span></div>`;
   }
 
   function statusClass(status) {
@@ -518,10 +557,11 @@
 
   function stripDeliveryLabels(text) {
     return String(text || "")
+      .split(/\s*Kurir membayar harga produk di outlet[\s\S]*/i)[0]
       .replace(/Pin lokasi\s*:\s*https?:\/\/\S+/ig, "")
       .replace(/Pin lokasi\s*:\s*[-0-9.,\s]+/ig, "")
       .replace(/Patokan alamat\s*:[\s\S]*$/i, "")
-      .replace(/\s{2,}/g, " ")
+      .replace(/[\t ]{2,}/g, " ")
       .trim();
   }
 
@@ -575,6 +615,132 @@
     return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
   }
 
+  function shareLocationPayload(order) {
+    if (!order) return null;
+    const meta = deliveryMeta(order);
+    const coordinates = meta.coordinates;
+    const validCoordinates = coordinates && Math.abs(coordinates.latitude) <= 90 && Math.abs(coordinates.longitude) <= 180;
+    const link = validCoordinates ? `https://www.google.com/maps?q=${coordinates.latitude},${coordinates.longitude}` : mapsUrl(order);
+    try {
+      const url = new URL(link);
+      if (url.protocol !== "https:" || !["google.com", "www.google.com", "maps.google.com", "maps.app.goo.gl", "goo.gl"].includes(url.hostname)) return null;
+      if (!meta.pin && !validCoordinates && meta.address === "Pin lokasi belum tersedia") return null;
+      return { title: "Lokasi pengantaran", text: `Lokasi pengantaran ${order.customer_name || "pelanggan"}`, url: url.href };
+    } catch (_) { return null; }
+  }
+
+  async function shareMapsLocation(orderId) {
+    const payload = shareLocationPayload(state.orders.find(order => order.id === orderId));
+    return shareContent(payload);
+  }
+
+  async function sharePhoneNumber(orderId) {
+    const order = state.orders.find(order => order.id === orderId);
+    if (!order || !cleanPhone(order.customer_phone)) return;
+    return shareContent({ title: "Nomor pelanggan", text: `Nama: ${order.customer_name || "Pelanggan"}\nWhatsApp: ${order.customer_phone}` });
+  }
+
+  function deliveryLocationLines(order) {
+    const meta = deliveryMeta(order);
+    const location = shareLocationPayload(order);
+    return [
+      ...(meta.landmark !== "-" ? ["Patokan:", meta.landmark, ""] : []),
+      ...(location ? ["Lokasi:", location.url] : [])
+    ];
+  }
+
+  function itemLineTotal(item) {
+    const qty = Math.max(0, Number(item.qty ?? 1) || 0);
+    const addonTotal = (item.addons || []).reduce((sum, addon) => sum + Number(addon.price || 0) * Number(addon.qty || 0), 0);
+    return Math.max(0, Number(item.price || 0) * qty + addonTotal - Math.max(0, Number(item.discount || 0)));
+  }
+
+  function orderShareText(order) {
+    const status = effectiveOrderStatus(order);
+    const meta = deliveryMeta(order);
+    const created = new Date(order.created_at || "");
+    const itemLines = (order.items || []).flatMap(item => [
+      `${Math.max(0, Number(item.qty ?? 1) || 0).toLocaleString("id-ID")}× ${item.product_name || "Item"} — ${money(itemLineTotal(item))}`,
+      ...(item.variant_label ? [`  Pilihan: ${item.variant_label}`] : []),
+      ...(item.note ? [`  Catatan: ${item.note}`] : []),
+      ...(item.addons?.length ? [`  Tambahan: ${item.addons.map(addon => `${addon.addon_name} ×${Number(addon.qty || 1)}`).join(", ")}`] : [])
+    ]);
+    return [
+      `PESANAN DELIVERY ${order.order_number || "-"}`,
+      `Waktu: ${Number.isNaN(created.getTime()) ? "-" : created.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}`,
+      `Status: ${order.confirmed_at && status === "DRIVER_ASSIGNED" ? "Menunggu dapur" : statusLabel(status)}`,
+      "", "PEMESAN",
+      `Pemesan: ${order.customer_name || "-"}`,
+      `WhatsApp: ${order.customer_phone || "-"}`,
+      "", "ITEM PESANAN",
+      ...(itemLines.length ? itemLines : ["Rincian item belum tersedia."]),
+      "", "RINCIAN PEMBAYARAN",
+      `Pesanan: ${money(orderSubtotal(order))}`,
+      `Ongkir: ${money(Math.max(0, Number(order.delivery_fee || 0)))}`,
+      `Total: ${money(orderSubtotal(order) + Math.max(0, Number(order.delivery_fee || 0)))}`,
+      `Status bayar: ${order.payment_status || "Belum dibayar"}`,
+      "", "PENGANTARAN", "Pickup: Outlet Fresin", "",
+      ...deliveryLocationLines(order),
+      ...(meta.note !== "-" ? ["", "Catatan pelanggan:", meta.note] : []),
+      "", `Driver: ${order.driver_name || state.profile.name || "-"}`,
+      `WhatsApp driver: ${order.driver_phone || state.profile.phone || "-"}`
+    ].join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  async function shareOrderSummary(orderId) {
+    const order = state.orders.find(order => order.id === orderId);
+    if (!order || state.itemLoadingId === order.id) return;
+    return shareContent({ title: `Pesanan ${order.order_number || "Delivery"}`, text: orderShareText(order) });
+  }
+
+  function sharedContentText(payload) {
+    return [payload.text, payload.url].filter(Boolean).join("\n");
+  }
+
+  async function shareContent(payload) {
+    if (!payload) return;
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share(payload);
+        return;
+      } catch (error) {
+        if (error.name === "AbortError") return;
+      }
+    }
+    state.sharePayload = payload;
+    state.shareMessage = "";
+    render();
+  }
+
+  async function copySharedContent() {
+    const payload = state.sharePayload;
+    if (!payload) return;
+    try {
+      await navigator.clipboard.writeText(payload.url ? payload.url : sharedContentText(payload));
+      state.shareMessage = payload.url ? "Tautan berhasil disalin." : "Teks berhasil disalin.";
+    } catch (_) {
+      state.shareMessage = "Pilih dan salin isi di atas, atau bagikan lewat WhatsApp.";
+    }
+    if (state.sharePayload === payload) render();
+  }
+
+  function renderShareDialog() {
+    const payload = state.sharePayload;
+    if (!payload) return "";
+    const whatsapp = `https://wa.me/?text=${encodeURIComponent(sharedContentText(payload))}`;
+    const location = Boolean(payload.url);
+    const title = location ? "Bagikan lokasi" : payload.title === "Nomor pelanggan" ? "Bagikan nomor" : "Bagikan pesanan";
+    return `<dialog class="driver-share-dialog" id="driverShareDialog" aria-labelledby="driverShareTitle">
+      <div class="driver-share-heading">${icon("send")}<h2 id="driverShareTitle">${escapeHtml(title)}</h2></div>
+      <p>Pilih aplikasi untuk ${location ? "mengirim titik pengantaran" : "membagikan informasi ini"}.</p>
+      ${location ? `<input aria-label="Tautan Google Maps" readonly value="${escapeHtml(payload.url)}">` : `<textarea aria-label="Isi pesan yang dibagikan" readonly rows="${payload.title === "Nomor pelanggan" ? 3 : 12}">${escapeHtml(payload.text)}</textarea>`}
+      <a class="driver-secondary" href="${escapeHtml(whatsapp)}" target="_blank" rel="noopener">${icon("chat")}<span>WhatsApp</span></a>
+      <button class="driver-secondary" type="button" data-action="copy-share">${location ? "Salin tautan" : "Salin teks"}</button>
+      <p role="status">${escapeHtml(state.shareMessage)}</p>
+      <button class="driver-share-close" type="button" data-action="close-share">Tutup</button>
+    </dialog>`;
+  }
+
   function mapsTarget(order) {
     const web = mapsUrl(order);
     const meta = deliveryMeta(order);
@@ -606,28 +772,26 @@
   function whatsappUrl(order) {
     const phone = cleanPhone(order.customer_phone);
     if (!phone) return "";
-    const meta = deliveryMeta(order);
     const account = paymentAccount();
     const fee = Math.max(0, Number(order.delivery_fee || 0));
     const productAmount = orderSubtotal(order);
     const paidOnline = !isCourierCash(order) && isPaidOrder(order);
     const lines = [
       `Halo Kak ${order.customer_name || ""}, saya ${state.profile.name || "driver"} dari Anterin Delivery.`,
+      "",
       `Konfirmasi pesanan ${order.order_number || ""}:`,
       `Pesanan: ${money(productAmount)}`,
       `Ongkir: ${money(fee)}`,
       `Total: ${money(productAmount + fee)}`,
       "",
-      `Alamat pengantaran: ${meta.address}`,
-      meta.landmark !== "-" ? `Patokan: ${meta.landmark}` : "",
-      mapsUrl(order) ? `Pin lokasi: ${mapsUrl(order)}` : "",
+      ...deliveryLocationLines(order),
       "",
       paidOnline ? "Pembayaran pesanan sudah tercatat lunas." : !isCourierCash(order)
         ? "Silakan selesaikan pembayaran melalui halaman pesanan."
         : account
         ? `Jika ingin melakukan pembayaran online, boleh transfer ke:\n${account.bank}\nNomor rekening: ${account.number}\nAtas nama: ${account.holder}\nMohon konfirmasi setelah transfer.`
-        : "Pembayaran bisa dilakukan kepada driver saat pesanan diterima.",
-      "Mohon konfirmasi alamat dan rincian pesanan di atas. Terima kasih."
+        : "",
+      "", "apakah sudah benar kak ?"
     ];
     const text = encodeURIComponent(lines.join("\n").replace(/\n{3,}/g, "\n\n"));
     return `https://wa.me/${phone}?text=${text}`;
@@ -642,8 +806,9 @@
   }
 
   function canShowActive(order) {
+    if (driverOrderCancelled(order)) return false;
     const status = order.customer_order_status;
-    if (!["DRIVER_ASSIGNED", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING"].includes(status)) return false;
+    if (!["DRIVER_ASSIGNED", "PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING"].includes(status)) return false;
     return driverMatches(order) || (!order.driver_id && !order.driver_name && !order.driver_phone);
   }
 
@@ -670,7 +835,7 @@
 
   function completedDriverOrders() {
     return state.orders.filter(order => (
-      order.customer_order_status === "COMPLETED"
+      !driverOrderCancelled(order) && order.customer_order_status === "COMPLETED"
       && (driverMatches(order) || !order.driver_id)
       && (isCourierCash(order) || !walletClaimForMonth(orderCompletedKey(order).slice(0, 7)))
     ));
@@ -742,9 +907,9 @@
 
   function filteredOrders() {
     if (state.view === "missed") return missedOrdersToday();
-    if (state.view === "active") return state.orders.filter(canShowActive);
+    if (state.view === "active") return state.orders.filter(order => canShowActive(order) || (driverOrderCancelled(order) && driverMatches(order) && isToday(order.cancelled_at || order.updated_at)));
     if (state.view === "history") return todayCompletedOrders();
-    return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER" && !acceptanceExpired(order));
+    return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER" && !driverOrderCancelled(order) && !acceptanceExpired(order));
   }
 
   function ordersCount(view) {
@@ -752,7 +917,7 @@
     if (view === "active") return state.orders.filter(canShowActive).length;
     if (view === "history") return todayCompletedOrders().length;
     if (view === "earnings") return completedDriverOrders().length;
-    return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER" && !acceptanceExpired(order)).length;
+    return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER" && !driverOrderCancelled(order) && !acceptanceExpired(order)).length;
   }
 
   function missingColumnName(error) {
@@ -792,7 +957,7 @@
 
   function missedOrdersToday() {
     return state.orders.filter(order => {
-      if (!["NO_DRIVER_AVAILABLE", "CANCELLED"].includes(order.customer_order_status) && !acceptanceExpired(order)) return false;
+      if (!["NO_DRIVER_AVAILABLE", "CANCELLED"].includes(effectiveOrderStatus(order))) return false;
       if (!isToday(order.updated_at || order.created_at)) return false;
       const unassigned = !order.driver_id && !order.driver_name && !order.driver_phone;
       return unassigned || driverMatches(order);
@@ -895,6 +1060,7 @@
       if (result.error) throw result.error;
       const orders = mergeOrderItems(result.data || []);
       state.orders = orders;
+      notifyNewDriverOrders(orders);
       state.lastSyncAt = new Date().toISOString();
       state.error = "";
       state.fetchFailCount = 0;
@@ -981,7 +1147,6 @@
   function scheduleRealtimeRefresh() {
     if (document.hidden) {
       state.pendingVisibleRefresh = true;
-      return;
     }
     window.clearTimeout(realtimeRefreshTimer);
     realtimeRefreshTimer = window.setTimeout(() => fetchOrders({ quiet: true }), DRIVER_REALTIME_DEBOUNCE_MS);
@@ -1005,7 +1170,10 @@
     let payload = { ...patch, updated_at: new Date().toISOString() };
     for (let attempt = 0; attempt < 12; attempt += 1) {
       let query = client.from("orders").update(payload).eq("id", order.id);
+      query = query.is("cancelled_at", null);
       if (options.onlyStatus) query = query.eq("customer_order_status", options.onlyStatus);
+      if (options.kitchenStatus) query = query.eq("status", options.kitchenStatus);
+      if (options.driverId) query = query.eq("driver_id", options.driverId);
       const { data, error } = await query.select("id");
       if (!error) {
         if (!Array.isArray(data) || data.length < 1) throw new Error("Order sudah berubah atau sudah diambil driver lain.");
@@ -1022,6 +1190,16 @@
   async function runAction(action, orderId) {
     const order = state.orders.find(item => item.id === orderId);
     if (!order || !hasProfile()) return;
+    if (driverOrderCancelled(order)) { state.error = "Pesanan sudah dibatalkan dan tidak dapat diproses."; render(); return; }
+    if (action === "process") return processAssignedOrder(order);
+    const kitchenAction = ["picked", "delivering", "complete"].includes(action);
+    if (kitchenAction && (!driverMatches(order) || !kitchenReady(order)
+      || ["CANCELLED", "COMPLETED"].includes(order.customer_order_status) || order.status === "Dibatalkan")) {
+      state.error = "Pesanan belum siap diambil. Tunggu dapur menyelesaikan pesanan.";
+      render();
+      return;
+    }
+    if (action === "complete" && effectiveOrderStatus(order) !== "DELIVERING") return;
     if (action === "take" && (order.customer_order_status !== "SEARCHING_DRIVER" || !driverAcceptanceTime(order)?.seconds)) {
       state.error = "Batas terima pesanan sudah habis. Tunggu sesi pencarian baru dari pelanggan.";
       render();
@@ -1068,7 +1246,11 @@
     state.error = "";
     render();
     try {
-      await updateOrder(order, next.patch, { onlyStatus: next.onlyStatus });
+      await updateOrder(order, next.patch, {
+        onlyStatus: next.onlyStatus || (kitchenAction ? order.customer_order_status : ""),
+        kitchenStatus: kitchenAction || action === "take" ? order.status : "",
+        driverId: kitchenAction ? order.driver_id : ""
+      });
       if (action === "take" || action === "picked" || action === "delivering") state.view = "active";
       if (action === "complete") state.view = "earnings";
       localStorage.setItem(VIEW_KEY, state.view);
@@ -1076,6 +1258,47 @@
     } catch (error) {
       console.warn("Driver order action failed", error);
       state.error = "Status belum tersimpan. Cek koneksi lalu coba lagi.";
+    } finally {
+      state.actionLoading = "";
+      render();
+    }
+  }
+
+  function canProcessAssignedOrder(order) {
+    return hasProfile() && isCourierCash(order)
+      && order.customer_order_type === "DELIVERY"
+      && order.driver_id === state.profile.id
+      && order.customer_order_status === "DRIVER_ASSIGNED"
+      && order.status === "Pesanan Baru"
+      && !order.confirmed_at && !order.cancelled_at;
+  }
+
+  async function processAssignedOrder(order) {
+    if (state.actionLoading || !canProcessAssignedOrder(order)) return;
+    state.actionLoading = "Mengirim pesanan ke dapur...";
+    state.error = "";
+    render();
+    try {
+      const client = await window.DriverSupabase.ready();
+      const now = new Date().toISOString();
+      const { data, error } = await client.from("orders")
+        .update({ confirmed_at: now, updated_at: now })
+        .eq("id", order.id).eq("driver_id", state.profile.id)
+        .eq("customer_order_type", "DELIVERY").eq("payment_provider", "courier_cash")
+        .eq("customer_order_status", "DRIVER_ASSIGNED").eq("status", "Pesanan Baru")
+        .is("confirmed_at", null).is("cancelled_at", null)
+        .select("id,confirmed_at").maybeSingle();
+      if (error) throw error;
+      if (!data?.confirmed_at) {
+        state.error = "Pesanan sudah berubah atau telah diproses. Muat ulang daftar tugas.";
+        return;
+      }
+      const current = state.orders.find(item => item.id === order.id);
+      if (current) Object.assign(current, { confirmed_at: data.confirmed_at, updated_at: now });
+      await fetchOrders({ force: true, quiet: true });
+    } catch (error) {
+      console.warn("Driver kitchen release failed", error);
+      state.error = "Pesanan belum terkirim ke dapur. Muat ulang dan coba lagi.";
     } finally {
       state.actionLoading = "";
       render();
@@ -1122,11 +1345,15 @@
     app.innerHTML = `
       <main class="driver-shell">
         ${renderTopbar()}
-        ${selected ? renderDetail(selected) : state.view === "earnings" ? renderEarnings() : renderList()}
-        ${selected ? "" : renderBottomNav()}
+        ${window.DriverNotifications?.render() || ""}
+        ${state.view === "settings" ? window.DriverNotifications?.renderSettings() || "" : selected ? renderDetail(selected) : state.view === "earnings" ? renderEarnings() : renderList()}
+        ${selected || state.view === "settings" ? "" : renderBottomNav()}
         ${state.actionLoading ? `<div class="driver-busy">${escapeHtml(state.actionLoading)}</div>` : ""}
+        ${renderShareDialog()}
       </main>
     `;
+    const shareDialog = document.getElementById("driverShareDialog");
+    if (shareDialog && !shareDialog.open) shareDialog.showModal();
   }
 
   function renderTopbar() {
@@ -1138,7 +1365,9 @@
             <strong class="driver-brand-title"><span class="brand-anterin">Anterin</span> <span class="brand-delivery">Delivery</span></strong>
           </div>
         </div>
-        <button class="driver-icon-btn ${state.fetching ? "is-refreshing" : ""}" type="button" data-action="refresh" aria-label="Refresh tugas" title="Refresh tugas">${icon("refresh")}</button>
+        <div class="driver-topbar-actions"><button class="driver-icon-btn ${state.fetching ? "is-refreshing" : ""}" type="button" data-action="refresh" aria-label="Refresh tugas" title="Refresh tugas">${icon("refresh")}</button>
+        <button class="driver-icon-btn driver-settings-menu" type="button" data-action="toggle-settings-menu" aria-label="Menu pengaturan" aria-expanded="${state.menuOpen}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.7" fill="currentColor"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><circle cx="12" cy="19" r="1.7" fill="currentColor"/></svg></button></div>
+        ${state.menuOpen ? '<div class="driver-settings-popover"><button type="button" data-view="settings">Dering & notifikasi <span aria-hidden="true">›</span></button></div>' : ""}
       </header>
     `;
   }
@@ -1164,7 +1393,7 @@
       tasks: ["Tugas Baru", "Order delivery lunas yang siap diambil."],
       active: ["Tugas Aktif", "Order yang sedang kamu antar."],
       history: ["Riwayat hari ini", "Order selesai hari ini."],
-      missed: ["Pesanan terlewat", "Pesanan gagal mendapat driver atau dibatalkan hari ini."],
+      missed: ["Pesanan batal dan terlewat", "Pesanan dibatalkan atau batas penerimaannya berakhir hari ini."],
       earnings: ["Pendapatan", "Total ongkir untuk diambil di toko."]
     };
     return titles[state.view] || titles.tasks;
@@ -1204,7 +1433,7 @@
           <button class="${state.view === "tasks" ? "active" : ""}" type="button" data-view="tasks"><b>${newCount}</b><small>Baru</small></button>
           <button class="${state.view === "active" ? "active" : ""}" type="button" data-view="active"><b>${activeCount}</b><small>Aktif</small></button>
           <button class="${state.view === "history" ? "active" : ""}" type="button" data-view="history"><b>${doneCount}</b><small>Selesai</small></button>
-          <button class="driver-missed-stat ${state.view === "missed" ? "active" : ""}" type="button" data-view="missed" aria-label="${ordersCount("missed")} pesanan gagal atau terlewat hari ini"><b>${ordersCount("missed")}</b><small>Terlewat</small></button>
+          <button class="driver-missed-stat ${state.view === "missed" ? "active" : ""}" type="button" data-view="missed" aria-label="${ordersCount("missed")} pesanan batal atau terlewat hari ini"><b>${ordersCount("missed")}</b><small>Batal</small></button>
         </div>
       </section>
     `;
@@ -1307,7 +1536,7 @@
     const status = effectiveOrderStatus(order);
     const orderTime = shortTime(order.created_at || order.updated_at);
     return `
-      <article class="driver-order-card" data-order-id="${escapeHtml(order.id)}">
+      <article class="driver-order-card ${status === "CANCELLED" ? "is-cancelled" : status === "NO_DRIVER_AVAILABLE" ? "is-missed" : ""}" data-order-id="${escapeHtml(order.id)}">
         <div class="driver-card-top">
           <span class="driver-card-top-right">
             <span><small>Pesanan</small><em>${money(orderSubtotal(order))}</em></span>
@@ -1331,7 +1560,7 @@
           <span class="driver-route-status">
             <i class="status-dot" aria-hidden="true"></i>
             <b>Status order</b>
-            <strong>${escapeHtml(statusLabel(status))}</strong>
+            <strong>${escapeHtml(order.confirmed_at && rawStatus === "DRIVER_ASSIGNED" && status === "DRIVER_ASSIGNED" ? "Menunggu dapur" : statusLabel(status))}</strong>
           </span>
           <span>
             <i class="pickup-dot" aria-hidden="true"></i>
@@ -1346,6 +1575,8 @@
   }
 
   function renderCardActions(order, rawStatus, status) {
+    if (status === "CANCELLED") return renderCancelledNotice(order);
+    if (status === "NO_DRIVER_AVAILABLE") return renderMissedNotice();
     if (acceptanceExpired(order)) return "";
     if (["NO_DRIVER_AVAILABLE", "CANCELLED"].includes(rawStatus)) return "";
     const orderId = escapeHtml(order.id);
@@ -1353,9 +1584,11 @@
       return `<button class="driver-primary compact-btn" type="button" data-action="take" data-order="${orderId}">${icon("plus")}<span>Ambil order</span></button>`;
     }
     if (status === "COMPLETED") return "";
+    if (isCourierCash(order) && (canProcessAssignedOrder(order) || !isPaidOrder(order))) return renderCourierProcessActions(order);
     if (status === "DRIVER_ASSIGNED" && !isPaidOrder(order)) {
-      return `<button class="driver-card-action waiting-payment" type="button" disabled>${icon("clock")}<span>${isCourierCash(order) ? "Bayar harga produk di kasir outlet" : "Menunggu pembayaran customer"}</span></button>`;
+      return `<button class="driver-card-action waiting-payment" type="button" disabled>${icon("clock")}<span>Menunggu pembayaran customer</span></button>`;
     }
+    if (!kitchenReady(order)) return renderKitchenNotice();
     if (status === "DELIVERING") {
       return `
         <div class="driver-card-actions">
@@ -1365,9 +1598,20 @@
     }
     return `
       <div class="driver-card-actions">
-        <button class="driver-card-action" type="button" data-action="delivering" data-order="${orderId}">${icon("bag")}<span>Ambil ke outlet</span></button>
+        ${renderKitchenNotice(true)}
+        <button class="driver-card-action driver-pickup-action" type="button" data-action="delivering" data-order="${orderId}">${icon("bag")}<span>Ambil ke outlet</span></button>
       </div>
     `;
+  }
+
+  function renderCourierProcessActions(order) {
+    const whatsapp = whatsappUrl(order);
+    const canProcess = canProcessAssignedOrder(order);
+    if (!canProcess) return renderKitchenNotice(kitchenReady(order));
+    return `<div class="driver-process-actions">
+      ${whatsapp ? `<a class="driver-whatsapp-action" href="${escapeHtml(whatsapp)}" target="_blank" rel="noopener">${icon("chat")}<span>Konfirmasi WhatsApp</span></a>` : '<span class="driver-process-note">Nomor WhatsApp pelanggan belum tersedia.</span>'}
+      <button class="driver-card-action done" type="button" data-action="process" data-order="${escapeHtml(order.id)}" ${state.actionLoading ? 'disabled aria-busy="true"' : ""}>${icon("bag")}<span>Proses Pesanan</span></button>
+    </div>`;
   }
 
   function renderEarningCard(order) {
@@ -1399,14 +1643,17 @@
             <h1>${escapeHtml(order.customer_name || "Customer")}</h1>
             <p>${escapeHtml(detailHeroTiming(order))}</p>
           </div>
-          <span class="driver-pill ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
+          <div class="driver-detail-tools">
+            <span class="driver-pill ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
+            <button class="driver-share-order" type="button" data-action="share-order" data-order="${escapeHtml(order.id)}" aria-label="Bagikan pesanan" ${state.itemLoadingId === order.id ? "disabled" : ""}>${icon("send")}<span>Bagikan</span></button>
+          </div>
         </article>
         ${renderCustomerWait(order)}
         <section class="driver-summary-grid">
           <span><b>Pesanan</b><strong>${money(orderSubtotal(order))}</strong></span>
           <span><b>Ongkir</b><strong>${money(order.delivery_fee || 0)}</strong></span>
           <span><b>Jarak</b><strong>${distanceLabel(order)}</strong></span>
-          <span><b>WhatsApp</b><strong>${escapeHtml(order.customer_phone || "-")}</strong></span>
+          <span><b>WhatsApp</b><strong class="driver-phone-value"><em>${escapeHtml(order.customer_phone || "-")}</em><button class="driver-share-phone" type="button" data-action="share-phone" data-order="${escapeHtml(order.id)}" aria-label="Bagikan nomor WhatsApp" ${cleanPhone(order.customer_phone) ? "" : "disabled"}>${icon("send")}</button></strong></span>
         </section>
         <section class="driver-panel">
           <h2>Alamat pengantaran</h2>
@@ -1421,7 +1668,10 @@
             </div>
           </div>
           <div class="driver-action-row">
-            <button class="driver-secondary ${map.web ? "" : "disabled"}" type="button" data-action="open-maps" data-map-web="${escapeHtml(map.web || "")}" data-map-app="${escapeHtml(map.app || "")}">${icon("map")}<span>Buka Maps</span></button>
+            <div class="driver-map-action" role="group" aria-label="Lokasi pengantaran">
+              <button class="driver-secondary" type="button" data-action="open-maps" data-map-web="${escapeHtml(map.web || "")}" data-map-app="${escapeHtml(map.app || "")}" ${map.web ? "" : "disabled"}>${icon("map")}<span>Buka Maps</span></button>
+              <button class="driver-share-location" type="button" data-action="share-maps" data-order="${escapeHtml(order.id)}" aria-label="Bagikan lokasi pengantaran" title="Bagikan lokasi" ${shareLocationPayload(order) ? "" : "disabled"}>${icon("send")}</button>
+            </div>
             <a class="driver-secondary ${wa ? "" : "disabled"}" href="${escapeHtml(wa || "#")}" target="_blank" rel="noopener">${icon("chat")}<span>Chat Customer</span></a>
           </div>
         </section>
@@ -1439,25 +1689,31 @@
   function renderItem(item) {
     const addons = (item.addons || []).map(addon => `${addon.addon_name} x${Number(addon.qty || 1)}`).join(", ");
     const description = [item.variant_label, item.note, addons].map(value => String(value || "").trim()).filter(Boolean).join(" - ");
+    const qty = Math.max(0, Number(item.qty ?? 1) || 0);
+    const total = itemLineTotal(item);
     return `
       <div class="driver-item-row">
-        <span>
+        <span class="driver-item-qty">${qty.toLocaleString("id-ID")}×</span>
+        <span class="driver-item-copy">
           <strong>${escapeHtml(item.product_name || "Item")}</strong>
           ${description ? `<small>${escapeHtml(description)}</small>` : ""}
         </span>
-        <b>${Number(item.qty || 1).toLocaleString("id-ID")}x</b>
+        <b class="driver-item-price">${money(total)}</b>
       </div>
     `;
   }
 
   function renderStatusAction(order) {
     const status = effectiveOrderStatus(order);
-    if (["NO_DRIVER_AVAILABLE", "CANCELLED"].includes(status)) return `<div class="driver-missed-note">${icon("clock")}<span>${status === "NO_DRIVER_AVAILABLE" ? "Pesanan ini belum sempat diterima driver." : "Pesanan ini sudah dibatalkan."}</span></div>`;
+    if (status === "CANCELLED") return renderCancelledNotice(order);
+    if (status === "NO_DRIVER_AVAILABLE") return renderMissedNotice();
     const rawStatus = order.customer_order_status;
     if (status === "COMPLETED") return `<div class="driver-completed">${icon("check")} Pesanan selesai diantar</div>`;
     if (rawStatus === "SEARCHING_DRIVER") return `<button class="driver-sticky-action" type="button" data-action="take" data-order="${escapeHtml(order.id)}">${icon("plus")}<span>Ambil order</span></button>`;
-    if (status === "DRIVER_ASSIGNED" && !isPaidOrder(order)) return `<button class="driver-sticky-action" type="button" disabled>${icon("clock")}<span>${isCourierCash(order) ? "Bayar harga produk di kasir outlet" : "Menunggu pembayaran customer"}</span></button>`;
-    if (status === "DRIVER_ASSIGNED" || status === "PREPARING" || status === "READY_FOR_PICKUP" || status === "PICKED_UP") return `<button class="driver-sticky-action" type="button" data-action="delivering" data-order="${escapeHtml(order.id)}">${icon("bag")}<span>Ambil ke outlet</span></button>`;
+    if (isCourierCash(order) && (canProcessAssignedOrder(order) || !isPaidOrder(order))) return renderCourierProcessActions(order);
+    if (status === "DRIVER_ASSIGNED" && !isPaidOrder(order)) return `<button class="driver-sticky-action" type="button" disabled>${icon("clock")}<span>Menunggu pembayaran customer</span></button>`;
+    if (!kitchenReady(order)) return renderKitchenNotice();
+    if (status === "DRIVER_ASSIGNED" || status === "PREPARING" || status === "READY_FOR_PICKUP" || status === "PICKED_UP") return `${renderKitchenNotice(true)}<button class="driver-sticky-action" type="button" data-action="delivering" data-order="${escapeHtml(order.id)}">${icon("bag")}<span>Ambil ke outlet</span></button>`;
     if (status === "DELIVERING") return `<button class="driver-sticky-action done" type="button" data-action="complete" data-order="${escapeHtml(order.id)}">${icon("check")}<span>Pesanan selesai diantar</span></button>`;
     return `<div class="driver-completed">${icon("check")} Pesanan selesai diantar</div>`;
   }
@@ -1467,7 +1723,7 @@
       tasks: ["Belum ada tugas tersedia", "Order delivery yang mencari driver akan muncul di sini."],
       active: ["Belum ada tugas aktif", "Order yang kamu ambil akan tampil di sini."],
       history: ["Riwayat hari ini kosong", "Order selesai hari ini akan masuk ke riwayat."],
-      missed: ["Belum ada pesanan terlewat", "Pesanan gagal mendapat driver atau dibatalkan hari ini akan tampil di sini."],
+      missed: ["Belum ada pesanan batal atau terlewat", "Pesanan dibatalkan atau batas penerimaannya berakhir hari ini akan tampil di sini."],
       earnings: ["Pendapatan kosong", "Order selesai akan dihitung sebagai riwayat pendapatan ongkir."]
     }[state.view] || [];
     return `
@@ -1494,6 +1750,7 @@
       plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
       fee: '<svg viewBox="0 0 24 24"><path d="M4 7h16v10H4V7ZM8 12h.1M16 12h.1M12 9v6"/></svg>',
       map: '<svg viewBox="0 0 24 24"><path d="m9 18-6 3V6l6-3 6 3 6-3v15l-6 3-6-3ZM9 3v15M15 6v15"/></svg>',
+      send: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-6 18-4-8-8-4L21 3ZM11 13 21 3"/></svg>',
       chat: '<svg viewBox="0 0 24 24"><path d="M5 19.5 6.2 16A7 7 0 1 1 9 18.7L5 19.5Z"/></svg>',
       back: '<svg viewBox="0 0 24 24"><path d="M15 18 9 12l6-6"/></svg>',
       start: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
@@ -1541,6 +1798,14 @@
   }
 
   app?.addEventListener("submit", async event => {
+    const notificationForm = event.target.closest("[data-driver-form='notification-auth']");
+    if (notificationForm) {
+      event.preventDefault();
+      const pin = String(new FormData(notificationForm).get("pin") || "");
+      notificationForm.reset();
+      await window.DriverNotifications?.authorize(state.profile.username, pin);
+      return;
+    }
     const bankForm = event.target.closest("[data-driver-form='bank']");
     if (bankForm) {
       event.preventDefault();
@@ -1583,6 +1848,7 @@
         return;
       }
       saveProfile(member);
+      window.DriverNotifications?.authorize(staffCode, pin);
       state.view = localStorage.getItem(VIEW_KEY) || "tasks";
       fetchOrders({ force: true });
     } catch (error) {
@@ -1595,6 +1861,15 @@
   });
 
   app?.addEventListener("change", event => {
+    const notificationSetting = event.target.closest("[data-notification-setting]");
+    if (notificationSetting) {
+      const key = notificationSetting.dataset.notificationSetting;
+      const value = notificationSetting.type === "checkbox" ? notificationSetting.checked : notificationSetting.value;
+      window.DriverNotifications?.configure({ [key]: value });
+      if (key === "enabled") window.DriverNotifications?.authorize();
+      render();
+      return;
+    }
     const walletDate = event.target.closest("[data-driver-wallet-date]");
     if (!walletDate) return;
     const value = String(walletDate.value || "").trim();
@@ -1613,6 +1888,7 @@
   });
 
   app?.addEventListener("click", event => {
+    window.DriverNotifications?.prepareAudio();
     const viewButton = event.target.closest("[data-view]");
     if (viewButton) {
       setView(viewButton.dataset.view);
@@ -1620,6 +1896,7 @@
     }
     const openButton = event.target.closest("[data-open-order]");
     if (openButton) {
+      if (state.view === "settings") state.view = "tasks";
       state.selectedId = openButton.dataset.openOrder;
       state.menuOpen = false;
       render();
@@ -1629,6 +1906,12 @@
     const actionButton = event.target.closest("[data-action]");
     if (!actionButton) return;
     const action = actionButton.dataset.action;
+    if (action === "toggle-settings-menu") { state.menuOpen = !state.menuOpen; render(); return; }
+    if (action === "close-settings") { setView("tasks"); return; }
+    if (action === "test-notification") { window.DriverNotifications?.test(); return; }
+    if (action === "device-notification-settings") { window.KasirinAndroid?.openDriverNotificationSettings?.(); return; }
+    if (action === "enable-notifications") { window.DriverNotifications?.enable(); return; }
+    if (action === "dismiss-alert") { window.DriverNotifications?.dismiss(); return; }
     if (action === "back") {
       state.selectedId = "";
       render();
@@ -1643,7 +1926,29 @@
       openMapsTarget(actionButton);
       return;
     }
+    if (action === "share-maps") {
+      shareMapsLocation(actionButton.dataset.order);
+      return;
+    }
+    if (action === "share-phone") {
+      sharePhoneNumber(actionButton.dataset.order);
+      return;
+    }
+    if (action === "share-order") {
+      shareOrderSummary(actionButton.dataset.order);
+      return;
+    }
+    if (action === "copy-share") {
+      copySharedContent();
+      return;
+    }
+    if (action === "close-share") {
+      state.sharePayload = null;
+      render();
+      return;
+    }
     if (action === "logout") {
+      window.DriverNotifications?.logout();
       clearProfile();
       render();
       return;
@@ -1651,7 +1956,12 @@
     runAction(action, actionButton.dataset.order);
   });
 
+  app.addEventListener("cancel", event => {
+    if (event.target.id === "driverShareDialog") state.sharePayload = null;
+  }, true);
+
   window.DriverOrder = {
+    renderUI: render,
     refresh: fetchOrders,
     setView,
     state,
@@ -1663,10 +1973,11 @@
   };
 
   render();
+  window.DriverNotifications?.syncNative();
   if (hasProfile()) fetchOrders({ force: true });
   window.setInterval(updateCustomerWaitTimers, 1000);
   window.setInterval(() => {
-    if (!hasProfile() || document.hidden) return;
+    if (!hasProfile()) return;
     fetchOrders({ quiet: true });
   }, Number(config.staleRefreshMs || config.refreshMs || DRIVER_STALE_POLL_MS));
   document.addEventListener("visibilitychange", () => {

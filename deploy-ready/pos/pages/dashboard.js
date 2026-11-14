@@ -346,6 +346,7 @@ function dashboardFallbackFinancialRecords(range) {
 function dashboardFinancialRecords(range) {
   const summary = dashboardFinancialSummary(range);
   const fallback = dashboardFallbackFinancialRecords(range);
+  if (reportRecordsCoverRange(range)) return fallback;
   const hasSummaryValue = summary.rows.some(row => Number(row.total || 0) || Number(row.profit || 0));
   if (summary.loaded && (hasSummaryValue || !fallback.length)) {
     return summary.rows;

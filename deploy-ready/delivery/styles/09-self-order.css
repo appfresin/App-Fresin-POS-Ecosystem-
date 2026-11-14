@@ -1177,8 +1177,9 @@
 .self-order-upsell-card {
   margin-top: 12px;
   display: grid;
-  gap: 10px;
-  padding: 14px;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
   border: 1px solid rgba(196, 198, 207, .7);
   border-radius: 16px;
   background: white;
@@ -1188,9 +1189,14 @@
 .self-order-upsell-head {
   min-width: 0;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-columns: 42px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-bottom: 1px solid #d3e3f7;
+  background: linear-gradient(125deg,#e4efff,#f1f7ff);
+  box-shadow: inset 0 1px 0 #ffffffc9;
 }
 
 .self-order-upsell-icon {
@@ -1226,26 +1232,12 @@
   line-height: 1.25;
 }
 
-.self-order-upsell-head b {
-  min-height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 11px;
-  border-radius: 999px;
-  color: #b7791f;
-  background: #fff5df;
-  font-size: 11px;
-  font-weight: 850;
-  white-space: nowrap;
-}
-
 .self-order-upsell-list {
   display: grid;
   gap: 8px;
-  padding: 8px;
-  border: 1px solid rgba(215, 220, 231, .84);
-  border-radius: 14px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 0;
   background: #fff;
 }
 
@@ -1525,13 +1517,13 @@
 
 .self-order-open-table-card {
   display: grid;
-  gap: 10px;
+  gap: 14px;
   margin-bottom: 12px;
-  padding: 14px;
-  border: 1px solid rgba(67, 94, 145, .22);
-  border-radius: 18px;
-  background: linear-gradient(135deg, #ffffff, #f4f8ff);
-  box-shadow: 0 12px 28px rgba(30, 48, 67, .08);
+  padding: 17px;
+  border: 1px solid #cbdcf2;
+  border-radius: 25px;
+  background: linear-gradient(145deg, #f7faff, #eaf2ff);
+  box-shadow: inset 0 1px 0 #fff, 0 12px 30px #214f7e0b;
 }
 
 .self-order-open-table-head {
@@ -1542,31 +1534,26 @@
 }
 
 .self-order-open-table-icon {
-  position: relative;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
+  width: 54px;
+  height: 58px;
+  flex: 0 0 54px;
   display: inline-grid;
   place-items: center;
-  border-radius: 50%;
-  background: #dc2626;
-  border: 2px solid rgba(255, 255, 255, .9);
-  box-shadow: 0 12px 24px rgba(220, 38, 38, .18);
+  border-radius: 19px;
+  background: linear-gradient(145deg, #fff8e9, #ffedc7);
+  border: 1px solid #ecd9b4;
+  box-shadow: inset 0 1px 0 #fff;
 }
 
-.self-order-open-table-icon::before {
-  content: "?";
-  color: #fff;
-  font-size: 25px;
-  font-weight: 950;
-  line-height: 1;
-}
+.self-order-open-table-icon .self-order-asik-icon { display: block; width: 49px; height: 49px; }
 
 .self-order-open-table-head strong {
-  color: #1e3043;
+  min-width: 0;
+  color: #184f82;
   font-size: 18px;
-  font-weight: 900;
-  line-height: 1.2;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .self-order-open-table-head em {
@@ -1594,7 +1581,7 @@
   gap: 8px;
 }
 
-.self-order-open-table-meta span {
+.self-order-open-table-meta > span {
   min-width: 0;
   padding: 8px 10px;
   border-radius: 12px;
@@ -1608,15 +1595,23 @@
   color: #1e3043;
 }
 
+.self-order-open-table-card .self-order-open-table-meta { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 2px 13px; border: 1px solid #d4e2f3; border-radius: 17px; background: #ffffffa6; }
+.self-order-open-table-card .self-order-open-table-meta > span { display: grid; grid-template-columns: 54px minmax(0,1fr); align-items: start; column-gap: 12px; padding: 11px 0; border: 0; border-bottom: 1px solid #e1eaf5; border-radius: 0; background: transparent; line-height: 1.5; }
+.self-order-open-table-card .self-order-open-table-meta > span:last-child { border-bottom: 0; align-items: center; }
+.self-order-open-table-label { color: #7089a5; font-size: 12px; font-weight: 500; }
+.self-order-open-table-card .self-order-open-table-meta b { min-width: 0; color: #234e76; font-size: 13px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; text-align: right; }
+.self-order-open-table-card .self-order-open-table-meta .self-order-open-table-status { justify-self: end; max-width: 100%; box-sizing: border-box; padding: 5px 10px; border: 1px solid #eddbb7; border-radius: 10px; background: #fff3dc; color: #8a662f; font-size: 11px; }
+
 .self-order-open-table-history {
   display: grid;
   gap: 8px;
   max-height: 190px;
   overflow: auto;
-  padding: 10px;
-  border: 1px solid rgba(196, 198, 207, .65);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, .78);
+  padding: 13px;
+  border: 1px solid #d7e3f2;
+  border-radius: 17px;
+  background: #fff;
+  overflow-wrap: anywhere;
 }
 
 .self-order-open-table-group {
@@ -1655,33 +1650,39 @@
 }
 
 .self-order-open-table-actions button {
-  min-height: 40px;
-  border: 1px solid #d7deeb;
-  border-radius: 12px;
-  background: #f8fafc;
-  color: #435e91;
+  min-height: 46px;
+  border: 1px solid #eccfc8;
+  border-radius: 14px;
+  background: #f9e7e2;
+  color: #9a5040;
   font-size: 13px;
   font-weight: 800;
   box-shadow: none;
 }
 
 .self-order-open-table-actions button:first-child {
-  border-color: rgba(8, 116, 85, .24);
-  color: #087455;
+  border-color: #bcded4;
+  background: #e2f1eb;
+  color: #277567;
+  box-shadow: none;
 }
 
+.self-order-open-table-actions button:hover { background: #f2d6ce; }
+.self-order-open-table-actions button:first-child:hover { background: #cfe8de; }
+.self-order-open-table-actions button:focus-visible { outline: 3px solid #6e9ac9; outline-offset: 3px; }
+
 .self-order-open-table-actions button.active {
-  border-color: #435e91;
-  background: #eef3ff;
-  color: #274779;
-  box-shadow: inset 0 0 0 1px rgba(67, 94, 145, .18);
+  border-color: #b76d5a;
+  background: #ebc9bf;
+  color: #874330;
+  box-shadow: inset 0 0 0 1px #b76d5a;
 }
 
 .self-order-open-table-actions button:first-child.active {
   border-color: #087455;
-  background: #eaf7f2;
-  color: #087455;
-  box-shadow: inset 0 0 0 1px rgba(8, 116, 85, .18);
+  background: #cfe8de;
+  color: #20695b;
+  box-shadow: inset 0 0 0 1px #84bbaa;
 }
 
 .self-order-payment-total {
@@ -2098,9 +2099,9 @@
   gap: 8px;
   width: 100%;
   padding: 10px;
-  border: 1px solid rgba(8, 116, 85, .2);
-  border-radius: 14px;
-  background: #f8fffc;
+  border: 1px solid #cadcf2;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #edf4ff, #f7faff);
   scroll-margin-top: 110px;
   scroll-margin-bottom: 180px;
 }
@@ -2108,7 +2109,7 @@
 .self-order-success-move-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 6px;
+  gap: 10px;
   text-align: left;
 }
 
@@ -2119,10 +2120,10 @@
 }
 
 .self-order-success-move-grid span {
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 900;
-  text-transform: uppercase;
+  color: #617b96;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
 }
 
 .self-order-success-move-grid .input {
@@ -2132,15 +2133,18 @@
   min-height: 40px;
   height: 40px;
   padding: 0 8px;
+  border: 1px solid #bcd1eb;
   border-radius: 12px;
+  background: #fff;
+  color: #215b91;
   font-size: 14px;
-  font-weight: 900;
+  font-weight: 500;
   text-align: center;
 }
 
 .self-order-success-move-grid input[readonly] {
-  color: #64748b;
-  background: #eef5f2;
+  color: #72859b;
+  background: #e7eff9;
 }
 
 .self-order-secondary {
@@ -2164,7 +2168,7 @@
 
 @media (max-width: 420px) {
   .self-order-success-move-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -3099,14 +3103,15 @@
   }
 
   .self-order-upsell-card {
-    gap: 8px;
-    padding: 11px;
+    gap: 0;
+    padding: 0;
     border-radius: 14px;
   }
 
   .self-order-upsell-head {
     grid-template-columns: 34px minmax(0, 1fr);
     gap: 8px;
+    padding: 10px 12px;
   }
 
   .self-order-upsell-icon {
@@ -3122,16 +3127,8 @@
     font-size: 11px;
   }
 
-  .self-order-upsell-head b {
-    grid-column: 1 / -1;
-    justify-self: start;
-    min-height: 22px;
-    padding: 0 9px;
-    font-size: 10px;
-  }
-
   .self-order-upsell-list {
-    padding: 7px;
+    padding: 10px 12px;
   }
 
   .self-order-upsell-item {
@@ -3659,3 +3656,20 @@
 .self-order-table-payment .self-order-checkout textarea:focus { outline: none; border-color: #6598ca; box-shadow: 0 0 0 3px #e2eefb; }
 
 .self-order-nav-icon svg.self-order-line-icon { display: block; width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.self-order-section-head.self-order-cart-head { align-items: center; margin-bottom: 10px; }
+.self-order-cart-head h3.self-order-cart-title { display: inline-flex; align-items: center; gap: 12px; width: fit-content; max-width: 100%; box-sizing: border-box; margin: 0; padding: 9px 11px 9px 15px; border: 1px solid #ccdef4; border-radius: 999px; background: linear-gradient(120deg, #e2eeff, #f0f6ff); color: #1e568b; font-size: 15px; font-weight: 750; line-height: 1.4; box-shadow: inset 0 1px 0 #fff; }
+.self-order-cart-title .self-order-cart-count { padding: 4px 9px; border: 1px solid #e0e8f3; border-radius: 999px; background: #ffffffb8; color: #6383a5; font-size: 11px; font-weight: 600; line-height: 1.4; text-transform: none; letter-spacing: 0; white-space: nowrap; }
+
+.self-order-payment-shell .self-order-field-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.self-order-payment-shell .self-order-checkout label { gap: 0; }
+.self-order-payment-shell #selfOrderCheckoutNote { box-sizing: border-box; width: 100%; min-width: 0; height: 56px; min-height: 56px; resize: vertical; }
+.self-order-qty button.danger { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 30px; min-width: 0; min-height: 0; padding: 0; border: 0; line-height: 1; }
+.self-order-remove-icon { display: block; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; }
+.self-order-upsell-head h4 { color: #1c5083; }
+.self-order-upsell-head p { color: #6b84a1; }
+.self-order-upsell-head > div { min-width: 0; }
+.self-order-upsell-card.payment .self-order-upsell-head { grid-template-columns: 32px minmax(0,1fr); }
+.self-order-upsell-card.payment .self-order-upsell-icon { box-sizing: border-box; width: 32px; height: 32px; }
+.self-order-upsell-card.payment .self-order-upsell-icon svg { width: 30px; height: 30px; }
+.self-order-upsell-card.payment .self-order-upsell-head h4 { font-size: clamp(14px,4.2vw,17px); line-height: 1.35; white-space: nowrap; }

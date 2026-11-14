@@ -1730,15 +1730,31 @@
 
 
 .customer-home-checkout .fresin-service-strip { margin: 0 0 13px; padding: 10px; }
+.customer-home-checkout-shell.has-service-header { overflow: hidden; padding: 0; }
+.customer-home-checkout .customer-home-checkout-shell > .is-checkout-header { margin: 0; padding: 14px 16px; border: 0; border-bottom: 1px solid #ccdef5; border-radius: 0; background: linear-gradient(110deg, #e1edff, #eef5ff); box-shadow: none; }
+.customer-home-checkout .is-checkout-header .fresin-service-strip-copy { color: #1c5083; font-size: 14px; font-weight: 600; line-height: 1.4; letter-spacing: 0; text-transform: none; }
+.customer-home-checkout .is-checkout-header .fresin-service-strip-copy small { margin-top: 3px; color: #6b84a1; font-size: 11px; font-weight: 400; line-height: 1.5; letter-spacing: 0; text-transform: none; }
+.customer-home-checkout .customer-home-checkout-shell.has-service-header > .self-order-checkout { padding: 16px; }
 .customer-home-checkout .self-order-customer-field>small { color: #6a809a; font-size: 11px; font-weight: 400; }
-.customer-home-pickup-timing { display: grid; gap: 8px; }
+.customer-home-pickup-timing {
+  display: grid; gap: 10px; min-width: 0; padding: 14px;
+  border: 1px solid #d2e1f5; border-radius: 19px;
+  background: linear-gradient(135deg, #edf4ff, #f8fbff);
+  box-shadow: inset 0 1px 0 #fff, 0 5px 14px #275b8d08;
+}
 .customer-home-pickup-timing .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.customer-home-pickup-timing > span { font-size: 13px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.customer-home-pickup-heading { display: flex; align-items: center; gap: 9px; }
+.customer-home-pickup-heading > strong { color: #215b91; font-size: 14px; font-weight: 600; line-height: 1.35; }
+.customer-home-pickup-clock { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; border: 1px solid #efdfbd; border-radius: 12px; background: #fff2d9; color: #b1803f; }
+.customer-home-pickup-clock > svg { width: 27px; height: 27px; }
+.customer-home-pickup-timing .self-order-customer-field { margin: 0; min-width: 0; }
+.customer-home-checkout .customer-home-pickup-timing input[type="time"] { width: 100%; min-width: 0; min-height: 46px; padding: 11px 13px; border: 1px solid #cbdcf1; border-radius: 12px; background: #fff; color: #215b91; font: inherit; font-size: 15px; cursor: pointer; box-sizing: border-box; color-scheme: light; }
+.customer-home-pickup-timing input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: .75; }
 .customer-home-pickup-timing > small { color: #6a809a; font-size: 11px; line-height: 1.4; }
 .customer-home-timing-options { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .customer-home-timing-options > button {
   min-height: 42px; padding: 10px 12px; border: 1px solid #d6e1f1; border-radius: 12px;
-  background: #f7f9ff; color: #58718f; font: inherit; font-size: 13px; cursor: pointer;
+  background: #ffffffb8; color: #58718f; font: inherit; font-size: 13px; cursor: pointer;
 }
 .customer-home-timing-options > button[aria-pressed="true"] { border-color: #8db7e8; background: #dfedff; color: #17568c; font-weight: 700; box-shadow: inset 0 1px 0 #fff; }
 .customer-home-timing-options > button:hover { border-color: #8db7e8; color: #17568c; }
@@ -1779,7 +1795,7 @@
 .customer-home-map-locate-control.maplibregl-ctrl button:hover,
 .customer-home-map-locate-control.maplibregl-ctrl button:focus,
 .customer-home-map-locate-control.maplibregl-ctrl button:active,
-.customer-home-map-locate-control.maplibregl-ctrl button:focus-visible { background: #ffe5b6; color: #164f81; outline: 2px solid #316d9e; outline-offset: 2px; }
+.customer-home-map-locate-control.maplibregl-ctrl button:focus-visible { background-color: #ffe5b6 !important; background-image: none; opacity: 1 !important; color: #164f81; outline: 2px solid #316d9e; outline-offset: 2px; }
 .customer-home-map-locate-control.is-used button,
 .customer-home-map-locate-control.is-used button::before { animation: none; }
 .customer-home-maplibre-map .maplibregl-ctrl-attrib.maplibregl-compact { min-height: 24px; border-radius: 12px; background-color: #ffffffeb; box-shadow: 0 2px 6px #21446d15; }
@@ -1853,9 +1869,12 @@
 .self-order-app .customer-home-progress.customer-home-statusbar > span.current::before { background: #aac9e6; }
 
 /* Status copy belongs with the progress timeline. */
-.customer-home-progress-card { width: 100%; box-sizing: border-box; padding: 13px; border: 1px solid #d2e1f3; border-radius: 21px; background: linear-gradient(145deg, #fff, #edf4ff); box-shadow: 0 6px 16px #23558a08; }
+.customer-home-progress-card { display: grid; gap: 12px; width: 100%; box-sizing: border-box; padding: 13px; border: 1px solid #d2e1f3; border-radius: 21px; background: linear-gradient(145deg, #fff, #edf4ff); box-shadow: 0 6px 16px #23558a08; }
 .self-order-app .customer-home-progress-card > .customer-home-progress.customer-home-statusbar { padding: 4px 0 6px; margin: 0; border: 0; background: transparent; box-shadow: none; }
-.customer-home-current-status { margin: 5px 0 0; padding: 10px 12px; border: 1px solid #d4e3f6; border-radius: 12px; background: #e5effc; color: #245583; text-align: center; font-size: 12px; line-height: 1.5; font-weight: 600; }
+.customer-home-progress-card > .customer-home-current-status { justify-self: stretch; width: 100%; max-width: none; margin: 0; padding: 10px 12px; border: 1px solid #d4e3f6; border-radius: 12px; background: #e5effc; color: #245583; text-align: center; font-size: 12px; line-height: 1.5; font-weight: 600; }
+.customer-home-current-status.is-cancelled { display: grid; gap: 6px; border-color: #eed3cf; background: #fff3ee; color: #8c4f45; }
+.customer-home-current-status.is-cancelled > strong { font: inherit; font-size: 11px; font-weight: 600; }
+.customer-home-current-status.is-cancelled > span { font-weight: 400; overflow-wrap: anywhere; }
 /* Driver identity with a friendly illustration and a spacious contact action. */
 .customer-home-driver-card { padding: 16px; border: 1px solid #cfdfef; border-radius: 21px; background: linear-gradient(135deg, #fff, #f0f6fd); box-shadow: 0 9px 22px #224f7b0a, inset 0 1px 0 #fff; }
 .customer-home-driver-main { display: grid; grid-template-columns: 58px minmax(0,1fr); gap: 12px; align-items: center; }

@@ -5046,6 +5046,25 @@
   min-width: 0;
 }
 
+.orders-customer-heading { flex-wrap: wrap; gap: 6px; }
+.orders-customer-heading > strong { overflow-wrap: anywhere; }
+.orders-card .orders-service-chip { display: inline-flex; align-items: center; min-height: 24px; padding: 4px 8px; border-radius: 6px; background: #e5f1ff; color: #16519b; font-size: 11px; font-weight: 750; line-height: 1.2; overflow-wrap: anywhere; }
+
+.view-kitchen .kitchen-order-titleline .order-title-row { flex-wrap: wrap; gap: 6px; }
+.view-kitchen .kitchen-order-titleline strong { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+.view-kitchen .kitchen-order-titleline .kitchen-service-chip { display: inline-flex; align-items: center; width: fit-content; min-height: 24px; margin: 0; padding: 4px 8px; border-radius: 6px; background: #e5f1ff; color: #16519b; font-size: 10.5px; font-weight: 750; line-height: 1.2; }
+.view-kitchen .kitchen-order-titleline > div > span { display: block; margin-top: 4px; font-size: 10px; line-height: 1.4; }
+.view-kitchen .kitchen-order-notes { display: grid; gap: 5px; margin-top: 7px; }
+.view-kitchen .kitchen-order-notes .orders-item-group-note { width: 100%; max-width: none; margin: 0; padding: 5px 7px; border: 1px solid #efd9a8; border-radius: 10px; background: #fff9ec; color: #8a571d; font-size: 10.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.view-kitchen .kitchen-order-meta { align-items: center; }
+.view-kitchen .kitchen-order-meta > .kitchen-order-time { color: #617890; font-size: 10px; font-weight: 700; line-height: 1.4; white-space: nowrap; }
+.view-kitchen .kitchen-order-meta .kitchen-carryover-badge { margin: 0; }
+.orders-card .orders-item-group-note.so-takeaway-pickup-note,
+.view-kitchen .kitchen-order-notes .so-takeaway-pickup-note { border-color: #c8dcf5; background: #eaf3ff; color: #245c90; }
+
+.view-kitchen .kitchen-order-card.is-cancelled { border-color: #e7c4ba; background: linear-gradient(135deg, #fffaf6, #fbece7); }
+.view-kitchen .kitchen-cancellation-note { margin: 8px 0 0; padding: 8px 10px; border: 1px solid #e8c7bd; border-radius: 11px; background: #fff5ee; color: #925e4d; font-size: 11px; line-height: 1.5; text-align: center; }
+
 .view-kitchen .kitchen-order-titleline .order-sequence-badge,
 .view-orders .orders-card-head .order-sequence-badge {
   flex: 0 0 auto;
@@ -6608,3 +6627,10 @@
   .pos-layout.display-grid .product-list,
   .pos-layout.display-compact .product-list { padding-top: 8px !important; }
 }
+
+.view-kitchen .kitchen-order-card.kitchen-takeaway-notice { border-color: #c5d8f1; background: linear-gradient(135deg, #f7faff, #eaf2ff); }
+.view-kitchen .kitchen-takeaway-notice .kitchen-notice-status { background: #fff0d5; color: #8d5b20; border: 1px solid #ebd1a5; font-size: 10px; text-align: center; }
+.view-kitchen .kitchen-takeaway-notice > .so-takeaway-pickup-note { margin: 7px 0 0; padding: 6px 8px; border: 1px solid #cadcf2; border-radius: 10px; background: #eaf3ff; color: #245c90; font-size: 11px; line-height: 1.4; }
+
+.view-kitchen .kitchen-status-tabs button:has(.kitchen-notice-count) { display: inline-flex; align-items: center; gap: 6px; }
+.view-kitchen .kitchen-notice-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px; background: #dc2626; color: #fff; font: 700 10px/1 system-ui, sans-serif; }
