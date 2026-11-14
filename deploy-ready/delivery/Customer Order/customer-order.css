@@ -1786,6 +1786,10 @@
 .customer-home-checkout .customer-home-location-btn.is-confirmed { border-color: #bed9cf; background: #e4f1e9; color: #2a6d54; box-shadow: none; }
 .customer-home-current-location-btn.self-order-secondary { width: 100%; min-height: 44px; padding: 10px 14px; border: 1px solid #b8cee9; border-radius: 14px; background: #e0edff; color: #175a94; font-size: 12px; font-weight: 650; }
 .customer-home-current-location-btn.self-order-secondary:hover { background: #d0e3ff; color: #134d80; }
+.customer-home-current-location-btn.self-order-secondary.is-confirmed { background: #e4f1e9; border-color: #bed9cf; color: #2a6d54; }
+.customer-home-location-actions button[hidden] { display: none; }
+.customer-home-maplibre-map .maplibregl-ctrl-bottom-right { display: flex; flex-direction: column; align-items: flex-end; }
+.customer-home-maplibre-map .customer-home-map-locate-control { order: -1; }
 .customer-home-checkout .customer-home-location-note { text-align: center; padding: 0 2px; border: 0; background: transparent; color: #6d8198; font-size: 11px; line-height: 1.5; }
 .customer-home-checkout .customer-home-location-note.warning { color: #8d6530; }
 .customer-home-map-locate-control.maplibregl-ctrl button {

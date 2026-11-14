@@ -533,11 +533,15 @@
     const loading = status === "loading";
     const adjusted = pinned && status === "adjusted";
     const confirmed = pinned && status === "ready";
+    const currentLocationSelected = confirmed && (checkout.locationSource === "gps"
+      || (!checkout.locationSource && Number(checkout.locationAccuracy) > 0));
     return {
       pinned,
       loading,
       adjusted,
       confirmed,
+      currentLocationSelected,
+      currentButton: loading ? "Mengambil lokasi…" : currentLocationSelected ? "Lokasi anda sudah dipilih" : "Pilih lokasi saya saat ini",
       title: !pinned
         ? "Lokasi belum dipilih"
         : adjusted
@@ -704,6 +708,7 @@
     const title = document.getElementById("customerHomeLocationTitle");
     const body = document.getElementById("customerHomeLocationBody");
     const button = document.getElementById("customerHomeLocationButton");
+    const currentButton = document.getElementById("customerHomeCurrentLocationButton");
     if (section) {
       section.classList.toggle("is-pinned", ui.pinned);
       section.classList.toggle("needs-confirmation", ui.adjusted);
@@ -714,10 +719,16 @@
       body.classList.toggle("warning", ui.adjusted);
     }
     if (button) {
+      button.hidden = ui.currentLocationSelected;
       button.textContent = ui.button;
       button.disabled = ui.buttonDisabled;
       button.classList.toggle("is-confirmed", ui.confirmed);
       button.setAttribute("onclick", ui.buttonAction);
+    }
+    if (currentButton) {
+      currentButton.textContent = ui.currentButton;
+      currentButton.disabled = ui.loading;
+      currentButton.classList.toggle("is-confirmed", ui.currentLocationSelected);
     }
   }
 
@@ -732,6 +743,7 @@
       locationAccuracy: 0,
       locationPinnedAt: new Date().toISOString(),
       locationStatus: options.status || "adjusted",
+      locationSource: "pin",
       deliveryDistanceKm: homeDeliveryQuote({ latitude, longitude }).distanceKm,
       deliveryFee: homeCalculateDeliveryFee({ latitude, longitude })
     });
@@ -758,10 +770,15 @@
         locationAccuracy: Number(position.coords.accuracy || 0),
         locationPinnedAt: new Date().toISOString(),
         locationStatus: "ready",
+        locationSource: "gps",
         deliveryDistanceKm: homeDeliveryQuote({ latitude, longitude }).distanceKm,
         deliveryFee: homeCalculateDeliveryFee({ latitude, longitude })
       });
       selfOrderSubmitError = "";
+      if (homeMapLibreMap && homeMapLibreMarker) {
+        homeMapLibreMarker.setLngLat([longitude, latitude]);
+        homeMapLibreMap.jumpTo({ center: [longitude, latitude] });
+      }
       render();
     }, error => {
       homeSetCheckout({ locationStatus: "error" });
@@ -790,7 +807,7 @@
 
   function homeInitMapLibreLocationMap() {
     const element = document.getElementById("customerHomeMapLibreMap");
-    if (!element || ["1", "loading"].includes(element.dataset.ready)) return;
+    if (!element || ["1", "loading"].includes(element.dataset.ready) || element.dataset.mapError === "1") return;
     const checkout = homeCheckout();
     const latitude = homeCoordinate(checkout.latitude);
     const longitude = homeCoordinate(checkout.longitude);
@@ -849,6 +866,7 @@
           if (interactiveMapSettled) return;
           interactiveMapSettled = true;
           window.clearTimeout(interactiveMapTimeout);
+          if (homeMapLibreMap !== map || !document.body.contains(element)) return;
           homeShowStaticLocationMapFallback(element, latitude, longitude, error);
         };
         const interactiveMapTimeout = window.setTimeout(() => {
@@ -868,8 +886,8 @@
         map.on("error", event => {
           console.warn("MapLibre runtime warning", event?.error || event);
         });
-        const markUserAdjustedMap = () => {
-          if (mapReadyForUserInput) userAdjustedMap = true;
+        const markUserAdjustedMap = event => {
+          if (mapReadyForUserInput && event?.originalEvent) userAdjustedMap = true;
         };
         const normalizeLngLat = lngLat => ({
           lng: Number(lngLat.lng ?? lngLat[0]),
@@ -882,6 +900,7 @@
           marker.setLngLat(point);
           if (options.pan !== false) map.panTo(point);
           homeUpdateLocationFromLatLng({ lat: point.lat, lng: point.lng });
+          userAdjustedMap = false;
         };
         const syncCenterMarker = () => {
           marker.setLngLat(map.getCenter());
@@ -922,7 +941,7 @@
             this._container?.remove();
           }
         };
-        map.addControl(locateControl, "top-right");
+        map.addControl(locateControl, "bottom-right");
         setTimeout(() => map.resize(), 0);
       })
       .catch(error => {
@@ -1237,8 +1256,8 @@
           </div>
         ` : ""}
         <div class="customer-home-location-actions">
-          <button id="customerHomeCurrentLocationButton" class="self-order-secondary customer-home-current-location-btn" type="button" onclick="CustomerOrder.pinCurrentLocation()" ${ui.loading ? "disabled" : ""}>${ui.loading ? "Mengambil lokasi…" : "Pilih lokasi saya saat ini"}</button>
-          <button id="customerHomeLocationButton" class="self-order-secondary customer-home-location-btn ${ui.confirmed ? "is-confirmed" : ""}" type="button" onclick="${ui.buttonAction}" ${ui.buttonDisabled ? "disabled" : ""}>${homeEscape(ui.button)}</button>
+          <button id="customerHomeCurrentLocationButton" class="self-order-secondary customer-home-current-location-btn ${ui.currentLocationSelected ? "is-confirmed" : ""}" type="button" onclick="CustomerOrder.pinCurrentLocation()" ${ui.loading ? "disabled" : ""}>${homeEscape(ui.currentButton)}</button>
+          <button id="customerHomeLocationButton" class="self-order-secondary customer-home-location-btn ${ui.confirmed ? "is-confirmed" : ""}" type="button" onclick="${ui.buttonAction}" ${ui.buttonDisabled ? "disabled" : ""} ${ui.currentLocationSelected ? "hidden" : ""}>${homeEscape(ui.button)}</button>
           <p id="customerHomeLocationBody" class="customer-home-location-note ${ui.adjusted ? "warning" : ""}">${homeEscape(ui.body)}</p>
           ${locationError}
         </div>
@@ -2205,7 +2224,17 @@
     const baseRender = render;
     render = function () {
       if (homeIsMode()) homePreventEmptyCartAccess();
+      // Live data updates replace the checkout markup; keep its WebGL canvas and camera.
+      const locationMap = homeIsMode() ? document.getElementById("customerHomeMapLibreMap") : null;
       const result = baseRender.apply(this, arguments);
+      const nextLocationMap = document.getElementById("customerHomeMapLibreMap");
+      if (locationMap && nextLocationMap && nextLocationMap !== locationMap) {
+        nextLocationMap.replaceWith(locationMap);
+      } else if (locationMap && !nextLocationMap) {
+        homeMapLibreMap?.remove();
+        homeMapLibreMap = null;
+        homeMapLibreMarker = null;
+      }
       if (homeIsMode()) {
         homeScheduleDriverSearchTick();
         window.setTimeout(() => {

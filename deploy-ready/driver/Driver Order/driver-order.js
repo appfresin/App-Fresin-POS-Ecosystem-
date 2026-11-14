@@ -87,6 +87,9 @@
     selectedId: "",
     sharePayload: null,
     shareMessage: "",
+    rejectOrderId: "",
+    rejectReason: "",
+    rejectError: "",
     menuOpen: false,
     claimLoading: false,
     claimError: "",
@@ -1215,6 +1218,14 @@
     const order = state.orders.find(item => item.id === orderId);
     if (!order || !hasProfile()) return;
     if (driverOrderCancelled(order)) { state.error = "Pesanan sudah dibatalkan dan tidak dapat diproses."; render(); return; }
+    if (action === "reject") {
+      if (!canRejectOrder(order) || state.actionLoading) return;
+      state.rejectOrderId = order.id;
+      state.rejectReason = "";
+      state.rejectError = "";
+      render();
+      return;
+    }
     if (action === "process") return processAssignedOrder(order);
     const kitchenAction = ["picked", "delivering", "complete"].includes(action);
     if (kitchenAction && (!driverMatches(order) || !kitchenReady(order)
@@ -1297,6 +1308,85 @@
       && !order.confirmed_at && !order.cancelled_at;
   }
 
+  function canRejectOrder(order) {
+    if (!hasProfile() || !isCourierCash(order) || isPaidOrder(order) || driverOrderCancelled(order)
+      || order.customer_order_type !== "DELIVERY" || order.confirmed_at || order.status !== "Pesanan Baru") return false;
+    if (order.customer_order_status === "SEARCHING_DRIVER") {
+      return !order.driver_id && !order.driver_name && !order.driver_phone && !acceptanceExpired(order);
+    }
+    return order.customer_order_status === "DRIVER_ASSIGNED" && order.driver_id === state.profile.id;
+  }
+
+  function renderRejectButton(order) {
+    return canRejectOrder(order) ? `<button class="driver-reject-action" type="button" data-action="reject" data-order="${escapeHtml(order.id)}" ${state.actionLoading ? "disabled" : ""}>Tolak pesanan</button>` : "";
+  }
+
+  function renderRejectDialog() {
+    const order = state.orders.find(item => item.id === state.rejectOrderId);
+    if (!order) return "";
+    return `<dialog class="driver-share-dialog driver-reject-dialog" id="driverRejectDialog" aria-labelledby="driverRejectTitle">
+      <form data-driver-form="reject">
+        <div class="driver-share-heading">${icon("orders")}<h2 id="driverRejectTitle">Tolak pesanan</h2></div>
+        <p>Pesanan ${escapeHtml(order.order_number || "")} · ${escapeHtml(order.customer_name || "Pelanggan")}</p>
+        <label for="driverRejectReason">Alasan penolakan</label>
+        <textarea id="driverRejectReason" name="reason" rows="3" maxlength="500" required placeholder="Tulis alasan untuk pelanggan">${escapeHtml(state.rejectReason)}</textarea>
+        <small>Pesanan akan dibatalkan. Alasan ini tampil di halaman pesanan pelanggan.</small>
+        ${state.rejectError ? `<p class="driver-alert" role="alert">${escapeHtml(state.rejectError)}</p>` : ""}
+        <button class="driver-reject-action" type="submit" ${state.actionLoading ? "disabled" : ""}>${state.actionLoading ? "Menyimpan…" : "Kirim penolakan"}</button>
+        <button class="driver-share-close" type="button" data-action="close-reject" ${state.actionLoading ? "disabled" : ""}>Kembali</button>
+      </form>
+    </dialog>`;
+  }
+
+  async function rejectOrder(reason) {
+    const order = state.orders.find(item => item.id === state.rejectOrderId);
+    if (state.actionLoading) return;
+    state.rejectReason = String(reason || "").trim();
+    if (!order || !canRejectOrder(order)) {
+      state.rejectError = "Pesanan sudah berubah dan tidak dapat ditolak. Muat ulang daftar tugas.";
+      render();
+      return;
+    }
+    if (!state.rejectReason || [...state.rejectReason].length > 500) {
+      state.rejectError = "Isi alasan penolakan, maksimal 500 karakter.";
+      render();
+      return;
+    }
+    const credentials = window.DriverNotifications?.deviceCredentials?.();
+    if (!credentials) {
+      state.rejectError = "Verifikasi PIN akun di pengaturan sebelum menolak pesanan.";
+      render();
+      return;
+    }
+    state.actionLoading = "Menyimpan penolakan...";
+    state.rejectError = "";
+    render();
+    try {
+      const client = await window.DriverSupabase.ready();
+      const { data, error } = await client.rpc("driver_reject_order", {
+        p_device_id: credentials.id, p_secret: credentials.secret,
+        p_order_id: order.id, p_reason: state.rejectReason
+      });
+      if (error) throw error;
+      if (!data?.id || data.customer_order_status !== "CANCELLED") throw Error("Invalid rejection response");
+      Object.assign(order, data);
+      state.rejectOrderId = "";
+      state.rejectReason = "";
+      state.view = "missed";
+      localStorage.setItem(VIEW_KEY, state.view);
+      notifyNewDriverOrders(state.orders);
+      await fetchOrders({ force: true, quiet: true });
+    } catch (error) {
+      if (error?.code === "28000") window.DriverNotifications?.invalidateSession?.();
+      state.rejectError = error?.code === "28000" ? "Sesi driver berakhir. Verifikasi PIN di pengaturan."
+        : error?.code === "55000" ? "Pesanan sudah diambil, diproses, atau dibayar. Muat ulang daftar tugas."
+        : "Penolakan belum tersimpan. Periksa koneksi dan coba lagi.";
+    } finally {
+      state.actionLoading = "";
+      render();
+    }
+  }
+
   async function processAssignedOrder(order) {
     if (state.actionLoading || !canProcessAssignedOrder(order)) return;
     state.actionLoading = "Mengirim pesanan ke dapur...";
@@ -1374,10 +1464,13 @@
         ${selected || state.view === "settings" ? "" : renderBottomNav()}
         ${state.actionLoading ? `<div class="driver-busy">${escapeHtml(state.actionLoading)}</div>` : ""}
         ${renderShareDialog()}
+        ${renderRejectDialog()}
       </main>
     `;
     const shareDialog = document.getElementById("driverShareDialog");
     if (shareDialog && !shareDialog.open) shareDialog.showModal();
+    const rejectDialog = document.getElementById("driverRejectDialog");
+    if (rejectDialog && !rejectDialog.open) rejectDialog.showModal();
   }
 
   function renderTopbar() {
@@ -1595,6 +1688,7 @@
         </div>
         ${renderCustomerWait(order)}
         ${renderCardActions(order, rawStatus, status)}
+        ${renderRejectButton(order)}
       </article>
     `;
   }
@@ -1707,6 +1801,7 @@
           </div>
         </section>
         ${renderStatusAction(order)}
+        ${renderRejectButton(order)}
       </section>
     `;
   }
@@ -1823,6 +1918,12 @@
   }
 
   app?.addEventListener("submit", async event => {
+    const rejectForm = event.target.closest("[data-driver-form='reject']");
+    if (rejectForm) {
+      event.preventDefault();
+      await rejectOrder(new FormData(rejectForm).get("reason"));
+      return;
+    }
     const notificationForm = event.target.closest("[data-driver-form='notification-auth']");
     if (notificationForm) {
       event.preventDefault();
@@ -1885,6 +1986,10 @@
     }
   });
 
+  app?.addEventListener("input", event => {
+    if (event.target.id === "driverRejectReason") state.rejectReason = event.target.value;
+  });
+
   app?.addEventListener("change", event => {
     const notificationSetting = event.target.closest("[data-notification-setting]");
     if (notificationSetting) {
@@ -1931,6 +2036,13 @@
     const actionButton = event.target.closest("[data-action]");
     if (!actionButton) return;
     const action = actionButton.dataset.action;
+    if (action === "close-reject") {
+      if (state.actionLoading) return;
+      state.rejectOrderId = "";
+      state.rejectReason = "";
+      render();
+      return;
+    }
     if (action === "toggle-settings-menu") { state.menuOpen = !state.menuOpen; render(); return; }
     if (action === "close-settings") { setView("tasks"); return; }
     if (action === "test-notification") { window.DriverNotifications?.test(); return; }
@@ -1984,6 +2096,10 @@
 
   app.addEventListener("cancel", event => {
     if (event.target.id === "driverShareDialog") state.sharePayload = null;
+    if (event.target.id === "driverRejectDialog") {
+      if (state.actionLoading) event.preventDefault();
+      else { state.rejectOrderId = ""; state.rejectReason = ""; }
+    }
   }, true);
 
   window.DriverOrder = {

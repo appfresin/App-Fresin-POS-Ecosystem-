@@ -331,3 +331,9 @@ button { transition: background-color .16s ease, box-shadow .16s ease, transform
 .driver-settings-logout { min-height: 44px; border: 1px solid #e9d5c9; border-radius: 14px; background: #fff8f3; color: #975843; font: inherit; font-size: 12px; cursor: pointer; }
 .driver-sync-warning { padding: 10px 12px; border: 1px solid #e5d6ae; border-radius: 13px; background: #fff8e8; color: #856530; font-size: 11px; line-height: 1.5; }
 @media(max-width:350px) { .driver-brand-title { font-size: 20px; } .driver-settings-hero h1 { font-size: 17px; } .driver-settings-card { padding: 13px; } }
+.driver-reject-action { box-sizing: border-box; display: block; width: 100%; min-height: 44px; margin-top: 10px; padding: 10px 16px; border: 1px solid #e6c5bb; border-radius: 18px; background: #fff4ef; color: #a54b36; font-family: inherit; font-weight: 700; font-size: 13px; cursor: pointer; }
+.driver-reject-action:hover { background: #ffe7dc; }
+.driver-reject-action:disabled { opacity: .6; cursor: wait; }
+.driver-reject-dialog label { display: block; margin: 14px 0 8px; font-size: 13px; font-weight: 700; }
+.driver-reject-dialog small { display: block; color: #7b8d6f; font-size: 12px; line-height: 1.5; }
+.driver-reject-dialog .driver-alert { background: #fff0eb; color: #a54b36; }
