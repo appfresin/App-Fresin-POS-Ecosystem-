@@ -297,7 +297,7 @@
     if (!enabled() || !validService(service) || selfOrderSubmitting) return;
     if (service === "dinein") return tableMode() ? markMenu(service) : undefined;
     if (homeMode() || (service === "pickup" && takeawayMode())) return markMenu(service);
-    const pickupPath = tableMode() ? "/pesan/" : (window.FRESIN_PICKUP_URL || "/self-order/");
+    const pickupPath = tableMode() ? "/pesan/" : (window.FRESIN_PICKUP_URL || "/order/");
     const target = new URL(service === "delivery" ? "/pesan/" : pickupPath, location.href);
     if (target.origin !== location.origin) return toast("Tautan layanan tidak tersedia.");
     if (!switchDraftContext(service === "delivery" ? "delivery" : tableMode() ? "home-pickup" : "takeaway")) return;

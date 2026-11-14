@@ -3,6 +3,16 @@
   "trailingSlash": true,
   "redirects": [
     {
+      "source": "/self-order",
+      "destination": "/order/",
+      "permanent": false
+    },
+    {
+      "source": "/self-order/:table([A-Za-z]?-?\\d{1,2})",
+      "destination": "/order/:table",
+      "permanent": false
+    },
+    {
       "source": "/",
       "destination": "https://www.fresin.id/pesan/",
       "permanent": false
@@ -36,6 +46,10 @@
       "destination": "https://pjkotqianxecaawqompo.supabase.co/functions/v1/duitku-payment-webhook"
     },
     {
+      "source": "/order/:path*",
+      "destination": "/order/"
+    },
+    {
       "source": "/pos",
       "destination": "/pos/"
     },
@@ -65,4 +79,3 @@
     }
   ]
 }
-

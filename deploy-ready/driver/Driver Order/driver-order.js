@@ -1934,6 +1934,7 @@
     if (action === "toggle-settings-menu") { state.menuOpen = !state.menuOpen; render(); return; }
     if (action === "close-settings") { setView("tasks"); return; }
     if (action === "test-notification") { window.DriverNotifications?.test(); return; }
+    if (action === "driver-background-settings") { window.KasirinAndroid?.openDriverBackgroundSettings?.(); return; }
     if (action === "device-notification-settings") { window.KasirinAndroid?.openDriverNotificationSettings?.(); return; }
     if (action === "enable-notifications") { window.DriverNotifications?.enable(); return; }
     if (action === "dismiss-alert") { window.DriverNotifications?.dismiss(); return; }

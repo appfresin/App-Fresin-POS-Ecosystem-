@@ -14,7 +14,7 @@ adalah `/pesan/`, dengan pilihan Ambil di toko atau Diantar sebelum membuka menu
 - `pos/`
   Aplikasi kasir, admin, dapur, pesanan, produk, laporan, dan settings.
 
-- `self-order/`
+- `order/` (alamat publik baru; aset bersama tetap berada di `self-order/`)
   Jalur self order/QR meja dan Take Away outlet. QR meja tetap memakai alur Dine In.
 
 - `delivery/`
@@ -36,25 +36,25 @@ Contoh URL:
 
 - `https://domain-kamu.com/pos/`
 - `https://domain-kamu.com/pesan/`
-- `https://domain-kamu.com/self-order/?1`
+- `https://domain-kamu.com/order/?1`
 
 ## URL QR Meja
 
 Untuk QR meja, gunakan format pendek berikut agar ganti nomor meja cukup mengganti angka:
 
 ```text
-https://domain-kamu.com/self-order/?1
-https://domain-kamu.com/self-order/?2
+https://domain-kamu.com/order/?1
+https://domain-kamu.com/order/?2
 ...
-https://domain-kamu.com/self-order/?20
+https://domain-kamu.com/order/?20
 ```
 
 Format lain yang juga didukung:
 
 ```text
-https://domain-kamu.com/self-order/?m=1
-https://domain-kamu.com/self-order/1
-https://domain-kamu.com/self-order/?table=A-1#selforder
+https://domain-kamu.com/order/?m=1
+https://domain-kamu.com/order/1
+https://domain-kamu.com/order/?table=A-1#selforder
 ```
 
 Jika self order dideploy sebagai subdomain:
@@ -128,20 +128,20 @@ Dapur menyediakan tab Batal; pesanan dibatalkan tampil dengan alasan tanpa
 tombol proses. Pelanggan melihat ikon pembatalan bergaya ilustrasi dan kolom
 keterangan terpusat; pickup selesai mengingatkan untuk mengambil ke outlet.
 Driver menyatukan status pembatalan utama/delivery, menonaktifkan aksinya, dan
-mempertahankan card batal milik driver pada tampilan aktif hari itu.
+menempatkan card batal milik driver pada filter Batal hari itu.
 
 Notifikasi driver: menu titik tiga membuka Dering & notifikasi, dengan
-bunyi, getaran, pilihan nada, tes dering, dan jeda ulang 15–120 detik. Browser
+bunyi, getaran, pilihan nada, tes dering, dan jeda ulang 15â€“120 detik. Browser
 mendukung peringatan selama halaman berjalan. Jalur push native saat APK
 tertutup disiapkan terpisah dalam kode Android, migrasi driver_push_devices,
 dan cabang driver pada notify-new-order. Web ZIP ini sendiri tidak mengaktifkan
 push: perubahan server perlu dipublikasikan dan APK driver baru dipasang.
 Lihat docs/driver-native-notifications.md di workspace untuk aktivasi dan
-batas pengujian. Semua masih lokal; layanan produksi belum diubah.
+batas pengujian. Backend driver sudah diaktifkan pada 14 November 2026; push nyata memerlukan registrasi APK di HP.
 
 Keterangan Pesanan Siap Dijemput mengikuti kesiapan dapur, termasuk sebelum
 pelunasan. Konfirmasi WhatsApp hanya tampil sebelum kurir memproses pesanan.
-Progres pelanggan: Driver → Disiapkan → Menjemput → Diantar → Selesai.
+Progres pelanggan: Driver â†’ Disiapkan â†’ Menjemput â†’ Diantar â†’ Selesai.
 
 Chip driver Batal mengelompokkan pesanan dibatalkan dan terlewat, dengan
 keterangan berbeda pada masing-masing card. Rincian delivery pelanggan
@@ -151,3 +151,12 @@ Dapur memiliki kategori Pemberitahuan Takeaway untuk pickup rumah yang belum
 diproses kasir: card ini hanya pengingat, tanpa item/checklist/tombol proses,
 dan hilang setelah pesanan diproses kasir. Angka pada kategori tetap terlihat
 ketika pengguna memilih filter dapur lain.
+
+Perbaikan driver 14 November: filter Aktif mengecualikan batal; delivery tunai
+menunggu kurir menekan Proses sebelum masuk POS; tombol GPS baru ditambahkan;
+header dipadatkan. APK driver 1.8 dan migrasi feed/registrasi disiapkan terpisah.
+Migrasi server dan Edge Function sudah diterapkan. Web sudah dipublikasikan melalui GitHub/Vercel;
+HP perlu verifikasi PIN setelah memuat ulang aplikasi. Lihat
+docs/driver-sync-fix-20261114.md pada workspace.
+
+Pembaruan 14 November: alamat self order/takeaway adalah `/order/`; tautan `/self-order/` dan QR lama tetap didukung. Foto yang sudah dimuat dipertahankan saat transisi data katalog. APK Anterin 1.9 menambah lama dering 5–15 detik (default 8), pemulihan tawaran aktif setelah proses dimatikan sistem, dan panduan baterai/latar belakang. Pengulangan tetap lokal, tanpa polling Supabase tambahan.

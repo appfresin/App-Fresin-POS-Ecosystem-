@@ -204,6 +204,7 @@ let itemDisplay = localStorage.getItem("omnipos_item_display") || "list";
 let savedPaymentAmounts = JSON.parse(localStorage.getItem("omnipos_saved_payment_amounts") || "[20000,50000,100000]");
 let posProductSnapshotCache = { signature: "", snapshot: null };
 let posProductImageSrcCache = new Map();
+let mediaImageSrcCache = new Map();
 let kitchenAvailabilityCategory = "Semua";
 let kitchenAvailabilityExpandedProductId = "";
 let settingsTab = localStorage.getItem("omnipos_settings_tab") || "data";
@@ -1194,7 +1195,7 @@ function selfOrderTableCodeFromUrl() {
     }
     const hashCompact = String(location.hash || "").replace(/^#/, "").split("?")[0] || "";
     if (hashCompact && hashCompact !== "selforder") candidates.push(hashCompact);
-    const pathMatch = String(location.pathname || "").match(/\/self-order\/(?:meja-?|m-?)?([A-Za-z]?-?\d{1,2})\/?$/i);
+    const pathMatch = String(location.pathname || "").match(/\/(?:self-order|order)\/(?:meja-?|m-?)?([A-Za-z]?-?\d{1,2})\/?$/i);
     if (pathMatch) candidates.push(pathMatch[1]);
   } catch (error) {
     console.warn("Gagal membaca kode meja dari URL", error);
@@ -1633,6 +1634,18 @@ function resolveSelfOrderPromoSlideImage(slide = null) {
   return normalizePersistedImageUrl(product?.imageName || "");
 }
 
+function mediaImageCacheKey(value, size = 160) {
+  return `${size}|${String(value || "").trim()}`;
+}
+
+function mediaImageLoaded(image, value, size = 160) {
+  const src = image?.currentSrc || image?.src || "";
+  if (!src || !image.naturalWidth) return;
+  if (image.dataset) image.dataset.loaded = "1";
+  mediaImageSrcCache.set(mediaImageCacheKey(value, size), src);
+  if (mediaImageSrcCache.size > 256) mediaImageSrcCache.delete(mediaImageSrcCache.keys().next().value);
+}
+
 function mediaImageCandidates(value, size = 160) {
   const raw = String(value || "").trim();
   if (!raw) return [];
@@ -1645,7 +1658,8 @@ function mediaImageCandidates(value, size = 160) {
     candidates.push(`https://drive.google.com/uc?export=view&id=${encodeURIComponent(driveId)}`);
     candidates.push(`https://drive.usercontent.google.com/download?id=${encodeURIComponent(driveId)}&export=view`);
   }
-  return [...new Set(candidates)];
+  const cached = mediaImageSrcCache.get(mediaImageCacheKey(raw, size));
+  return [...new Set([...(cached ? [cached] : []), ...candidates])];
 }
 
 function mediaImageSrc(value, size = 160) {
@@ -1664,7 +1678,7 @@ function mediaImageTag(value, alt, className = "", size = 160, loading = "lazy",
   const src = mediaImageSrc(value, size);
   if (!src) return "";
   const priority = loading === "eager" ? ` fetchpriority="high"` : "";
-  return `<img ${className ? `class="${escapeHtml(className)}" ` : ""}src="${escapeHtml(src)}" data-media-index="0" onerror="${mediaImageFallbackScript(value, size, fallbackValue)}" alt="${escapeHtml(alt)}" loading="${escapeHtml(loading)}" decoding="async" referrerpolicy="no-referrer"${priority} />`;
+  return `<img ${className ? `class="${escapeHtml(className)}" ` : ""}src="${escapeHtml(src)}" data-media-cache-key="${escapeHtml(mediaImageCacheKey(value, size) + "|" + fallbackValue)}" data-media-index="0" onload="mediaImageLoaded(this,${escapeHtml(JSON.stringify(String(value || "")))},${Number(size) || 160})" onerror="${mediaImageFallbackScript(value, size, fallbackValue)}" alt="${escapeHtml(alt)}" loading="${escapeHtml(loading)}" decoding="async" referrerpolicy="no-referrer"${priority} />`;
 }
 
 function posProductImageCacheKey(value, size = POS_PRODUCT_IMAGE_SIZE) {
@@ -1698,7 +1712,7 @@ function selfOrderPromoImageMarkup(image, alt, fallbackImage = "", options = nul
 
 function productImageOrToken(product, className = "", size = 360) {
   const photo = mediaImageTag(product.imageName, `Foto ${product.name}`, className, size)
-    .replace("<img ", '<img data-self-order-photo onload="this.dataset.loaded=\'1\'" ');
+    .replace("<img ", '<img data-self-order-photo ');
   const initials = String(product.name || "PR").slice(0, 2).toUpperCase();
   const token = `<span class="${escapeHtml(className)} self-order-product-token media-fallback-token" ${photo ? "hidden" : ""}>${escapeHtml(initials)}</span>`;
   if (photo) return `${photo}${token}`;
@@ -7520,6 +7534,32 @@ function refreshPosOrRender(options = {}) {
   if (!refreshPosPage(options)) render();
 }
 
+function replaceSelfOrderMarkup(target, markup) {
+  if (view !== "selforder") { target.innerHTML = markup; return; }
+  const images = new Map();
+  const identity = image => `${image.dataset.mediaCacheKey}|${image.getAttribute("alt") || ""}|${image.className}`;
+  target.querySelectorAll("img[data-media-cache-key]").forEach(image => {
+    const key = identity(image);
+    if (!images.has(key)) images.set(key, []);
+    images.get(key).push(image);
+  });
+  const template = document.createElement("template");
+  template.innerHTML = markup;
+  template.content.querySelectorAll("img[data-media-cache-key]").forEach(next => {
+    const previous = images.get(identity(next))?.shift();
+    if (!previous) return;
+    for (const attribute of Array.from(previous.attributes)) {
+      if (attribute.name === "data-loaded" && previous.complete && previous.naturalWidth > 0) continue;
+      if (!next.hasAttribute(attribute.name)) previous.removeAttribute(attribute.name);
+    }
+    for (const attribute of Array.from(next.attributes)) {
+      if (attribute.name !== "src") previous.setAttribute(attribute.name, attribute.value);
+    }
+    next.replaceWith(previous);
+  });
+  target.replaceChildren(template.content);
+}
+
 function render() {
   if (IS_SELF_ORDER_APP && window.FRESIN_GATEWAY_BOOT_PENDING === true) return;
   captureActiveModalDraft();
@@ -7545,7 +7585,7 @@ function render() {
     navOpen ? "nav-open" : "",
     navCollapsed ? "nav-collapsed" : ""
   ].filter(Boolean).join(" ");
-  app.innerHTML = `
+  replaceSelfOrderMarkup(app, `
     <div class="app-shell ${shellClasses}">
       ${navOpen ? `<button class="nav-scrim" onclick="closeNav()" aria-label="Tutup menu"></button>` : ""}
       <aside class="sidebar">
@@ -7577,7 +7617,7 @@ function render() {
     </div>
     <div class="drawer" id="drawer"></div>
     <div class="toast" id="toast"></div>
-  `;
+  `);
   restoreActiveModal();
   normalizeFormAccessibility(app);
   restoreSelfOrderCategoryScroll(false);
@@ -7590,7 +7630,7 @@ function render() {
 function renderSelfOrderStandalone() {
   view = "selforder";
   syncSelfOrderTableFromUrl();
-  app.innerHTML = `
+  replaceSelfOrderMarkup(app, `
     <div class="app-shell view-selforder self-order-standalone-shell">
       <main class="content self-order-standalone-content">
         <section class="page">${renderSelfOrder()}</section>
@@ -7598,7 +7638,7 @@ function renderSelfOrderStandalone() {
     </div>
     <div class="drawer" id="drawer"></div>
     <div class="toast" id="toast"></div>
-  `;
+  `);
   restoreActiveModal();
   normalizeFormAccessibility(app);
   restoreSelfOrderCategoryScroll(false);
@@ -9855,7 +9895,7 @@ function selfOrderSetCategory(category) {
   sessionStorage.removeItem("self_order_product_id");
   const catalog = document.querySelector("[data-self-order-catalog]");
   if (catalog) {
-    catalog.innerHTML = renderSelfOrderCatalog();
+    replaceSelfOrderMarkup(catalog, renderSelfOrderCatalog());
     restoreSelfOrderCategoryScroll(true);
     return;
   }

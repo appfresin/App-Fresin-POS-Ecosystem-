@@ -8,6 +8,7 @@
     vibration: true,
     repeat: true,
     intervalSeconds: 30,
+    durationSeconds: 8,
     tone: "bell",
   };
   let preferences = read(PREF_KEY, defaults),
@@ -69,6 +70,7 @@
         15,
         Math.min(120, Math.round(Number(next.intervalSeconds) || 30)),
       ),
+      durationSeconds: Math.max(5, Math.min(15, Math.round(Number(next.durationSeconds) || 8))),
       tone: ["bell", "chime", "soft"].includes(next.tone) ? next.tone : "bell",
     };
     write(PREF_KEY, preferences);
@@ -414,9 +416,13 @@
     const p = settings(),
       bridge = native();
     let permission = "Izin browser belum aktif";
+    let backgroundHelp = "", nativeNeedsUpdate = false;
     if (bridge) {
       try {
         const status = JSON.parse(bridge.driverNotificationStatus?.() || "{}");
+        nativeNeedsUpdate = status.durableAlerts !== true;
+        if (status.backgroundRestricted || status.backgroundStartBlocked) backgroundHelp = "Android membatasi dering latar belakang. Buka pengaturan baterai aplikasi dan pilih Tanpa batas.";
+        else if (status.batteryOptimized) backgroundHelp = "Agar pengulangan tetap berjalan saat layar mati, atur baterai Anterin ke Tanpa batas.";
         permission = status.allowed
           ? "Izin notifikasi perangkat aktif"
           : "Izin notifikasi perangkat belum aktif";
@@ -435,6 +441,7 @@
       <section class="driver-settings-card"><div class="driver-settings-section-title">Peringatan pesanan</div>
         ${toggle("enabled", "Notifikasi pesanan", "Aktifkan peringatan pesanan di perangkat ini.")}${toggle("sound", "Bunyi dering", "Gunakan volume notifikasi perangkat.")}${toggle("vibration", "Getaran", "Getarkan perangkat saat pesanan masuk.")}${toggle("repeat", "Dering berulang", "Ulangi selama pesanan belum diterima.")}
         <label class="driver-setting-row"><span><strong>Jeda pengulangan</strong><small>Berhenti otomatis saat batas terima habis.</small></span><select aria-label="Jeda pengulangan" data-notification-setting="intervalSeconds" ${!p.repeat ? "disabled" : ""}>${[15, 30, 45, 60, 90, 120].map((seconds) => `<option value="${seconds}" ${p.intervalSeconds === seconds ? "selected" : ""}>${seconds} detik</option>`).join("")}</select></label>
+        <label class="driver-setting-row"><span><strong>Lama satu dering</strong><small>Durasi bunyi native APK; dijeda sebelum pengulangan berikutnya.</small></span><select aria-label="Lama satu dering" data-notification-setting="durationSeconds" ${nativeNeedsUpdate ? "disabled" : ""}>${[5, 8, 10, 15].map(seconds => `<option value="${seconds}" ${p.durationSeconds === seconds ? "selected" : ""}>${seconds} detik</option>`).join("")}</select></label>
         <label class="driver-setting-row"><span><strong>Nada dering</strong><small>Suara diputar dari perangkat.</small></span><select aria-label="Nada dering" data-notification-setting="tone">${[
           ["bell", "Bell"],
           ["chime", "Chime"],
@@ -450,6 +457,9 @@
       <section class="driver-settings-card driver-device-status"><div class="driver-settings-section-title">Kesiapan perangkat</div><p><span class="driver-status-dot ${bridge && registered ? "is-ready" : ""}"></span>${bridge ? (registered ? "Push driver terdaftar" : "Push driver belum terdaftar") : "Mode browser"}</p><small>${escape(permission)}</small>
         <p class="driver-settings-help">${bridge ? "Notifikasi tertutup memakai layanan native APK. Pastikan izin notifikasi aktif." : "Notifikasi saat aplikasi tertutup memerlukan APK Anterin terbaru. Browser mendukung peringatan selama halaman masih berjalan."}</p>
         <div class="driver-setting-buttons"><button class="driver-secondary" type="button" data-action="enable-notifications" ${busy ? "disabled" : ""}>${busy ? "Memeriksa…" : "Aktifkan / periksa izin"}</button>${bridge ? '<button class="driver-secondary" type="button" data-action="device-notification-settings">Pengaturan Android</button>' : ""}</div>
+        ${nativeNeedsUpdate ? '<p class="driver-settings-message">Perbarui APK Anterin ke versi 1.9 agar durasi dering dan pemulihan pengulangan latar belakang tersedia.</p>' : ""}
+        ${backgroundHelp ? `<p class="driver-settings-help">${escape(backgroundHelp)}</p>` : ""}
+        ${bridge?.openDriverBackgroundSettings ? '<button class="driver-secondary" type="button" data-action="driver-background-settings">Baterai & latar belakang</button>' : ""}
         ${!deviceCredentials() || (bridge && !registered) ? '<form data-driver-form="notification-auth" class="driver-notification-auth"><input name="pin" type="password" aria-label="PIN akun driver" inputmode="numeric" autocomplete="current-password" minlength="4" required placeholder="PIN akun driver untuk verifikasi"/><button class="driver-secondary" type="submit">Verifikasi akun driver</button></form>' : ""}
         ${message ? `<p class="driver-settings-message" role="status">${escape(message)}</p>` : ""}<small class="driver-settings-help">Pengaturan tersimpan otomatis. Mode senyap, Jangan Ganggu, dan pembatasan baterai Android tetap berlaku.</small>
       </section><button class="driver-settings-logout" type="button" data-action="logout">Keluar dari akun driver</button></section>`;
