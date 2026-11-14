@@ -26,7 +26,7 @@ button, a, input { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #6b9e4f; outline-offset: 3px; }
 button { transition: background-color .16s ease, box-shadow .16s ease, transform .16s ease; }
 .driver-shell { padding: 18px 18px calc(100px + env(safe-area-inset-bottom)); }
-.driver-topbar { margin: -18px -18px 18px; padding: calc(14px + env(safe-area-inset-top)) 18px 14px; background: #458b2e; box-shadow: 0 4px 18px rgba(51,100,31,.13); backdrop-filter: none; }
+.driver-topbar { margin: -18px -18px 18px; padding: 10px 18px; height: auto; min-height: 0; flex: 0 0 auto; align-self: start; background: #458b2e; box-shadow: 0 4px 18px rgba(51,100,31,.13); backdrop-filter: none; }
 .driver-app-logo { width: 39px; height: 39px; border-radius: 14px; background: #fffdf5; box-shadow: 0 3px 8px rgba(29,65,17,.12); }
 .driver-app-logo svg { width: 37px; height: 37px; }
 .driver-app-logo .logo-box-edge { stroke-width: 1.8; }
@@ -293,7 +293,7 @@ button { transition: background-color .16s ease, box-shadow .16s ease, transform
 .driver-missed-note span { font-size: 12px; line-height: 1.5; }
 .driver-topbar { position: sticky; }
 .driver-topbar-actions { display: flex; align-items: center; gap: 6px; }
-.driver-topbar-actions .driver-icon-btn { flex: 0 0 40px; width: 40px; height: 44px; border-radius: 15px; }
+.driver-topbar-actions .driver-icon-btn { flex: 0 0 38px; width: 38px; height: 40px; border-radius: 13px; }
 .driver-topbar-actions .driver-settings-menu { width: 32px; flex-basis: 32px; background: transparent; }
 .driver-settings-menu svg { width: 22px; height: 22px; }
 .driver-settings-popover { position: absolute; top: calc(100% - 5px); right: 14px; z-index: 40; padding: 6px; border: 1px solid #dce8d2; border-radius: 16px; background: #fff; box-shadow: 0 12px 30px #224b2226; }
@@ -329,4 +329,5 @@ button { transition: background-color .16s ease, box-shadow .16s ease, transform
 .driver-notification-auth input { width: 100%; min-height: 44px; padding: 10px; border: 1px solid #d8e5ce; border-radius: 12px; font: inherit; font-size: 12px; box-sizing: border-box; }
 .driver-device-status .driver-settings-message { padding: 10px; border-radius: 12px; background: #f2f7ea; font-size: 11px; font-weight: 400; line-height: 1.6; }
 .driver-settings-logout { min-height: 44px; border: 1px solid #e9d5c9; border-radius: 14px; background: #fff8f3; color: #975843; font: inherit; font-size: 12px; cursor: pointer; }
+.driver-sync-warning { padding: 10px 12px; border: 1px solid #e5d6ae; border-radius: 13px; background: #fff8e8; color: #856530; font-size: 11px; line-height: 1.5; }
 @media(max-width:350px) { .driver-brand-title { font-size: 20px; } .driver-settings-hero h1 { font-size: 17px; } .driver-settings-card { padding: 13px; } }

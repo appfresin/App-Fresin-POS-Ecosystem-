@@ -81,6 +81,8 @@
     loginLoading: false,
     actionLoading: "",
     error: "",
+    syncWarning: "",
+    refreshQueued: false,
     lastSyncAt: "",
     selectedId: "",
     sharePayload: null,
@@ -800,7 +802,7 @@
   function driverMatches(order) {
     const phone = cleanPhone(order.driver_phone);
     const currentPhone = cleanPhone(state.profile.phone);
-    if (order.driver_id && order.driver_id === state.profile.id) return true;
+    if (order.driver_id) return order.driver_id === state.profile.id;
     if (phone && currentPhone && phone === currentPhone) return true;
     return Boolean(order.driver_name && state.profile.name && String(order.driver_name).toLowerCase() === String(state.profile.name).toLowerCase());
   }
@@ -809,7 +811,7 @@
     if (driverOrderCancelled(order)) return false;
     const status = order.customer_order_status;
     if (!["DRIVER_ASSIGNED", "PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING"].includes(status)) return false;
-    return driverMatches(order) || (!order.driver_id && !order.driver_name && !order.driver_phone);
+    return driverMatches(order);
   }
 
   function isToday(value) {
@@ -907,7 +909,7 @@
 
   function filteredOrders() {
     if (state.view === "missed") return missedOrdersToday();
-    if (state.view === "active") return state.orders.filter(order => canShowActive(order) || (driverOrderCancelled(order) && driverMatches(order) && isToday(order.cancelled_at || order.updated_at)));
+    if (state.view === "active") return state.orders.filter(canShowActive);
     if (state.view === "history") return todayCompletedOrders();
     return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER" && !driverOrderCancelled(order) && !acceptanceExpired(order));
   }
@@ -932,6 +934,7 @@
 
   function driverFetchErrorMessage(error) {
     const code = String(error?.code || "").trim();
+    if (code === "28000") return "Sesi akun driver berakhir. Buka pengaturan lalu verifikasi PIN kembali.";
     const message = String(error?.message || error?.details || "").trim();
     if (code === "42501" || /permission denied|row-level security|violates row-level security/i.test(message)) {
       return "Gagal memuat tugas. Policy/GRANT Driver di Supabase belum aktif.";
@@ -1012,17 +1015,29 @@
   }
 
   async function selectOrders(client, columns) {
+    const credentials = window.DriverNotifications?.deviceCredentials?.();
+    let feedWarning = window.DriverNotifications?.deviceCredentials ? "Verifikasi PIN di pengaturan untuk menyamakan data akun driver di semua perangkat." : "";
+    if (credentials && client.rpc) {
+      const range = completedFetchRange() || dayRange(localDateKey());
+      const result = await client.rpc("driver_order_feed", { p_device_id: credentials.id, p_secret: credentials.secret, p_from: range.start, p_to: range.end });
+      if (!result.error) return { data: result.data || [], error: null };
+      if (!["PGRST202", "42883"].includes(result.error.code)) {
+        if (result.error.code === "28000") window.DriverNotifications?.invalidateSession?.();
+        return result;
+      }
+      feedWarning = "Layanan sinkronisasi akun driver belum diaktifkan di server.";
+    }
     const activeResult = await activeOrdersQuery(client, columns);
     if (activeResult.error) return activeResult;
     const missedResult = await missedOrdersQuery(client, columns);
-    if (missedResult.error) return missedResult;
     const range = completedFetchRange();
     if (!range) return activeResult;
     const completedResult = await completedOrdersQuery(client, columns, range);
-    if (completedResult.error) return completedResult;
+    const warning = [feedWarning, missedResult.error || completedResult.error ? "Sebagian riwayat belum termuat. Pesanan aktif tetap ditampilkan." : ""].filter(Boolean).join(" ");
     return {
       data: Array.from(new Map([...(activeResult.data || []), ...(missedResult.data || []), ...(completedResult.data || [])].map(order => [order.id, order])).values()),
-      error: null
+      error: null,
+      warning
     };
   }
 
@@ -1036,7 +1051,9 @@
   }
 
   async function fetchOrders(options = {}) {
-    if (state.fetching || !hasProfile()) return;
+    if (!hasProfile()) return;
+    if (state.fetching) { if (options.force || options.realtime) state.refreshQueued = true; return; }
+    const profileId = state.profile.id;
     const nowMs = Date.now();
     if (!options.force && state.nextFetchAt && nowMs < state.nextFetchAt) return;
     const backgroundRefresh = options.quiet && state.orders.length > 0;
@@ -1058,8 +1075,10 @@
         result = await selectOrders(client, columns);
       }
       if (result.error) throw result.error;
+      if (state.profile.id !== profileId) return;
       const orders = mergeOrderItems(result.data || []);
       state.orders = orders;
+      state.syncWarning = result.warning || "";
       notifyNewDriverOrders(orders);
       state.lastSyncAt = new Date().toISOString();
       state.error = "";
@@ -1067,6 +1086,7 @@
       state.nextFetchAt = 0;
       setupRealtime(client);
     } catch (error) {
+      if (state.profile.id !== profileId) return;
       const now = Date.now();
       if (!state.lastFetchErrorAt || now - state.lastFetchErrorAt > DRIVER_FETCH_RETRY_MS) {
         console.warn("Driver orders refresh failed", error);
@@ -1079,6 +1099,10 @@
       state.fetching = false;
       state.loading = false;
       render();
+      if (state.refreshQueued && hasProfile()) {
+        state.refreshQueued = false;
+        window.setTimeout(() => fetchOrders({ force: true, quiet: true }), 0);
+      }
     }
   }
 
@@ -1149,7 +1173,7 @@
       state.pendingVisibleRefresh = true;
     }
     window.clearTimeout(realtimeRefreshTimer);
-    realtimeRefreshTimer = window.setTimeout(() => fetchOrders({ quiet: true }), DRIVER_REALTIME_DEBOUNCE_MS);
+    realtimeRefreshTimer = window.setTimeout(() => fetchOrders({ quiet: true, realtime: true }), DRIVER_REALTIME_DEBOUNCE_MS);
   }
 
   function setupRealtime(client) {
@@ -1406,6 +1430,7 @@
       <section class="driver-content">
         ${renderShiftCard()}
         ${state.error ? `<div class="driver-alert">${escapeHtml(state.error)}</div>` : ""}
+        ${state.syncWarning ? `<div class="driver-sync-warning" role="status">${escapeHtml(state.syncWarning)}</div>` : ""}
         <div class="driver-list">
           ${showSkeleton ? skeletonCards() : orders.map(renderOrderCard).join("") || emptyState()}
         </div>

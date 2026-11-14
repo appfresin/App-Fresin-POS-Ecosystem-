@@ -13643,12 +13643,18 @@ function setSettingsTab(tab) {
 function orderVisibleInPosOrderList(order) {
   if (orderUsesOutletPayment(order)) {
     const delivery = String(order.customerOrderType || order.orderMode || order.customer_order_type || "").toUpperCase() === "DELIVERY" || order.type === "Delivery";
+    if (delivery && String(order.paymentProvider || order.payment_provider || "").toLowerCase() === "courier_cash") {
+      if (order.cancelledAt || order.cancelled_at || ["Dibatalkan", "Batal"].includes(order.status)) return true;
+      if (["SEARCHING_DRIVER", "NO_DRIVER_AVAILABLE"].includes(String(order.customerOrderStatus || order.customer_order_status || ""))) return false;
+      return Boolean(order.confirmedAt || order.confirmed_at || order.preparedAt || order.prepared_at || order.readyAt || order.ready_at)
+        || ["Sedang Disiapkan", "Siap Diambil", "Siap diambil", "Selesai", "Dibatalkan", "Batal"].includes(order.status)
+        || Boolean(order.cancelledAt || order.cancelled_at);
+    }
     return !delivery || Boolean(order.driverId || order.driver_id)
       || !["SEARCHING_DRIVER", "NO_DRIVER_AVAILABLE", ""].includes(String(order.customerOrderStatus || order.customer_order_status || ""));
   }
   return !orderIsCustomerHomeOrder(order) || orderIsPaid(order);
 }
-
 
 function orderNeedsTakeawayCashier(order) {
   const mode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || "").toUpperCase();

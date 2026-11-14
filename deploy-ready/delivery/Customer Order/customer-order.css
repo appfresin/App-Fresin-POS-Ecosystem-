@@ -1784,6 +1784,8 @@
 .customer-home-checkout .customer-home-location-btn.self-order-secondary { min-height: 43px; border: 1px solid #175a94; border-radius: 13px; background: #175a94; color: #fff; font-size: 12px; box-shadow: 0 6px 12px #174f7f16; }
 .customer-home-checkout .customer-home-location-btn.self-order-secondary:hover { background: #124b7d; color: #fff; }
 .customer-home-checkout .customer-home-location-btn.is-confirmed { border-color: #bed9cf; background: #e4f1e9; color: #2a6d54; box-shadow: none; }
+.customer-home-current-location-btn.self-order-secondary { width: 100%; min-height: 44px; padding: 10px 14px; border: 1px solid #b8cee9; border-radius: 14px; background: #e0edff; color: #175a94; font-size: 12px; font-weight: 650; }
+.customer-home-current-location-btn.self-order-secondary:hover { background: #d0e3ff; color: #134d80; }
 .customer-home-checkout .customer-home-location-note { text-align: center; padding: 0 2px; border: 0; background: transparent; color: #6d8198; font-size: 11px; line-height: 1.5; }
 .customer-home-checkout .customer-home-location-note.warning { color: #8d6530; }
 .customer-home-map-locate-control.maplibregl-ctrl button {

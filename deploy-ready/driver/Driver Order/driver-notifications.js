@@ -276,14 +276,21 @@
     });
   }
   async function authorize(login = "", pin = "") {
-    if (!native()) return false;
     busy = true;
     renderUI();
     syncNative();
     try {
-      const token = await requestToken();
+      let token = "";
+      let tokenError = "";
+      if (native()) {
+        try {
+          token = await requestToken();
+        } catch (error) {
+          tokenError = error.message;
+        }
+      }
       let device = read(DEVICE_KEY, {});
-      if (!device.id || !device.secret) {
+      if ((login && pin) || !device.id || !device.secret) {
         const bytes = new Uint8Array(32);
         window.crypto.getRandomValues(bytes);
         device = {
@@ -298,24 +305,29 @@
         p_device_id: device.id,
         p_secret: device.secret,
         p_token: token,
-        p_enabled: settings().enabled,
+        p_enabled: Boolean(native()) && settings().enabled,
         p_login: login || null,
         p_pin: pin || null,
       });
       if (error || !data?.ok)
         throw Error(
           error?.code === "PGRST202"
-            ? "Layanan push driver belum diaktifkan di server."
+            ? "Layanan akun dan push driver belum diaktifkan di server."
             : login
               ? "Pendaftaran notifikasi gagal. Periksa akun, PIN, dan koneksi."
               : "Verifikasi akun untuk mengaktifkan push di perangkat ini.",
         );
       write(DEVICE_KEY, device);
-      registered = true;
-      native().setDriverPushRegistration?.(
+      registered = Boolean(native() && token);
+      native()?.setDriverPushRegistration?.(
         JSON.stringify({ ...device, enabled: settings().enabled }),
       );
-      message = "Perangkat terdaftar untuk notifikasi pesanan driver.";
+      message =
+        tokenError ||
+        (registered
+          ? "Perangkat terdaftar untuk notifikasi pesanan driver."
+          : "Akses data akun driver terverifikasi.");
+      window.DriverOrder?.refresh?.({ force: true, quiet: true });
       return true;
     } catch (error) {
       registered = false;
@@ -372,16 +384,27 @@
     renderUI();
   }
   async function logout() {
+    const device = deviceCredentials();
     configure({ enabled: false });
     currentOffers = [];
     dismiss();
+    localStorage.removeItem(DEVICE_KEY);
+    native()?.clearDriverPushRegistration?.();
+    registered = false;
+    profileId = "";
+    if (!device) return;
     try {
-      if (native() && read(DEVICE_KEY, {}).id) await authorize();
-    } finally {
-      localStorage.removeItem(DEVICE_KEY);
-      native()?.clearDriverPushRegistration?.();
-      registered = false;
-      profileId = "";
+      const client = await window.DriverSupabase.ready();
+      await client.rpc("register_driver_push_device", {
+        p_device_id: device.id,
+        p_secret: device.secret,
+        p_token: "",
+        p_enabled: false,
+        p_login: null,
+        p_pin: null,
+      });
+    } catch {
+      /* The native alert is already disabled locally, including while offline. */
     }
   }
   function bellIcon() {
@@ -427,7 +450,7 @@
       <section class="driver-settings-card driver-device-status"><div class="driver-settings-section-title">Kesiapan perangkat</div><p><span class="driver-status-dot ${bridge && registered ? "is-ready" : ""}"></span>${bridge ? (registered ? "Push driver terdaftar" : "Push driver belum terdaftar") : "Mode browser"}</p><small>${escape(permission)}</small>
         <p class="driver-settings-help">${bridge ? "Notifikasi tertutup memakai layanan native APK. Pastikan izin notifikasi aktif." : "Notifikasi saat aplikasi tertutup memerlukan APK Anterin terbaru. Browser mendukung peringatan selama halaman masih berjalan."}</p>
         <div class="driver-setting-buttons"><button class="driver-secondary" type="button" data-action="enable-notifications" ${busy ? "disabled" : ""}>${busy ? "Memeriksa…" : "Aktifkan / periksa izin"}</button>${bridge ? '<button class="driver-secondary" type="button" data-action="device-notification-settings">Pengaturan Android</button>' : ""}</div>
-        ${bridge && !registered ? '<form data-driver-form="notification-auth" class="driver-notification-auth"><input name="pin" type="password" aria-label="PIN akun driver" inputmode="numeric" autocomplete="current-password" minlength="4" required placeholder="PIN akun driver untuk verifikasi"/><button class="driver-secondary" type="submit">Daftarkan perangkat</button></form>' : ""}
+        ${!deviceCredentials() || (bridge && !registered) ? '<form data-driver-form="notification-auth" class="driver-notification-auth"><input name="pin" type="password" aria-label="PIN akun driver" inputmode="numeric" autocomplete="current-password" minlength="4" required placeholder="PIN akun driver untuk verifikasi"/><button class="driver-secondary" type="submit">Verifikasi akun driver</button></form>' : ""}
         ${message ? `<p class="driver-settings-message" role="status">${escape(message)}</p>` : ""}<small class="driver-settings-help">Pengaturan tersimpan otomatis. Mode senyap, Jangan Ganggu, dan pembatasan baterai Android tetap berlaku.</small>
       </section><button class="driver-settings-logout" type="button" data-action="logout">Keluar dari akun driver</button></section>`;
   }
@@ -437,6 +460,17 @@
       : "";
   }
   configure(preferences);
+  function deviceCredentials() {
+    const value = read(DEVICE_KEY, {});
+    return value.id && value.secret
+      ? { id: value.id, secret: value.secret }
+      : null;
+  }
+  function invalidateSession() {
+    localStorage.removeItem(DEVICE_KEY);
+    registered = false;
+    message = "Sesi driver berakhir. Verifikasi PIN kembali di pengaturan.";
+  }
   window.DriverNotifications = {
     update,
     render,
@@ -450,6 +484,8 @@
     authorize,
     logout,
     syncNative,
+    deviceCredentials,
+    invalidateSession,
   };
   navigator.serviceWorker?.addEventListener("message", (event) => {
     if (event.data?.type === "driver-open-orders") {

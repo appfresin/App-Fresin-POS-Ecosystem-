@@ -1237,6 +1237,7 @@
           </div>
         ` : ""}
         <div class="customer-home-location-actions">
+          <button id="customerHomeCurrentLocationButton" class="self-order-secondary customer-home-current-location-btn" type="button" onclick="CustomerOrder.pinCurrentLocation()" ${ui.loading ? "disabled" : ""}>${ui.loading ? "Mengambil lokasi…" : "Pilih lokasi saya saat ini"}</button>
           <button id="customerHomeLocationButton" class="self-order-secondary customer-home-location-btn ${ui.confirmed ? "is-confirmed" : ""}" type="button" onclick="${ui.buttonAction}" ${ui.buttonDisabled ? "disabled" : ""}>${homeEscape(ui.button)}</button>
           <p id="customerHomeLocationBody" class="customer-home-location-note ${ui.adjusted ? "warning" : ""}">${homeEscape(ui.body)}</p>
           ${locationError}
