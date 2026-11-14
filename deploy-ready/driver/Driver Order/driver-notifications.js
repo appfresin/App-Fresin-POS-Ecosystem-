@@ -10,6 +10,11 @@
     intervalSeconds: 30,
     durationSeconds: 8,
     tone: "bell",
+    readyEnabled: true,
+    readySound: true,
+    readyVibration: true,
+    readyTone: "chime",
+    readyDurationSeconds: 5,
   };
   let preferences = read(PREF_KEY, defaults),
     audio = null,
@@ -17,6 +22,8 @@
     message = "",
     timer = null;
   let currentOffers = [],
+    readySeen = new Set(),
+    readyNotice = null,
     muted = new Set(),
     seen = new Set(),
     profileId = "",
@@ -72,8 +79,14 @@
       ),
       durationSeconds: Math.max(5, Math.min(15, Math.round(Number(next.durationSeconds) || 8))),
       tone: ["bell", "chime", "soft"].includes(next.tone) ? next.tone : "bell",
+      readyEnabled: next.readyEnabled !== false,
+      readySound: next.readySound !== false,
+      readyVibration: next.readyVibration !== false,
+      readyTone: ["bell", "chime", "soft"].includes(next.readyTone) ? next.readyTone : "chime",
+      readyDurationSeconds: Math.max(5, Math.min(15, Math.round(Number(next.readyDurationSeconds) || 5))),
     };
     write(PREF_KEY, preferences);
+    if (!preferences.readyEnabled) readyNotice = null;
     syncNative();
     schedule();
     return settings();
@@ -86,7 +99,7 @@
     }
   }
   function prepareAudio() {
-    if (native() || !settings().sound) return;
+    if (native() || (!settings().sound && !settings().readySound)) return;
     try {
       const Audio = window.AudioContext || window.webkitAudioContext;
       if (Audio && !audio) audio = new Audio();
@@ -95,8 +108,9 @@
       /* Banner still works. */
     }
   }
-  function play() {
-    const pref = settings();
+  function play(ready = false) {
+    const base = settings();
+    const pref = ready ? {enabled:base.readyEnabled,sound:base.readySound,vibration:base.readyVibration,tone:base.readyTone} : base;
     if (!pref.enabled) return;
     try {
       if (pref.sound && audio?.state === "running") {
@@ -182,16 +196,20 @@
       /* Banner still works. */
     }
   }
-  function update(available, profile) {
+  function update(available, profile, readyOrders = []) {
     if (profileId !== profile.id) {
       profileId = profile.id;
       seen = new Set();
+      readySeen = new Set();
+      readyNotice = null;
       muted = new Set();
       try {
         const saved = JSON.parse(
           localStorage.getItem(`kasirin_driver_alerted_${profileId}`) || "[]",
         );
         seen = new Set(Array.isArray(saved) ? saved : []);
+        const readySaved = JSON.parse(localStorage.getItem(`anterin_ready_alerted_${profileId}`) || "[]");
+        readySeen = new Set(Array.isArray(readySaved) ? readySaved : []);
       } catch {
         /* No saved history. */
       }
@@ -238,6 +256,35 @@
       }
     }
     schedule();
+    updateReady(readyOrders);
+  }
+
+  function updateReady(orders) {
+    const ready = orders.map(order => ({id:order.id,number:order.order_number || "",
+      revisionAt:Date.parse(order.ready_at || order.updated_at || order.created_at)}))
+      .filter(order => order.id && Number.isFinite(order.revisionAt));
+    const fresh = ready.filter(order => !readySeen.has(order.id));
+    fresh.forEach(order => readySeen.add(order.id));
+    write(`anterin_ready_alerted_${profileId}`, [...readySeen].slice(-160));
+    try {
+      if (native()?.syncDriverReadyOrders) native().syncDriverReadyOrders(JSON.stringify(ready));
+    } catch { message = "Sinkronisasi notifikasi pesanan selesai belum berhasil. Coba buka ulang aplikasi."; }
+    if (readyNotice && !ready.some(order => order.id === readyNotice.orderId)) readyNotice = null;
+    if (fresh.length && settings().readyEnabled) {
+      readyNotice = {orderId:fresh[0].id,number:fresh[0].number,count:fresh.length};
+      if (!native()) { play(true); showReady(fresh[0]); }
+    }
+  }
+
+  async function showReady(order) {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const options = {body:`Pesanan ${order.number} selesai disiapkan dapur. Silakan jemput ke outlet.`,
+      tag:`anterin-ready-${order.id}`,data:{orderId:order.id},silent:!settings().readySound};
+    try {
+      const registration = await navigator.serviceWorker?.getRegistration();
+      if (registration) await registration.showNotification("Pesanan siap dijemput", options);
+      else new Notification("Pesanan siap dijemput", options);
+    } catch { /* In-app banner remains available. */ }
   }
   function requestToken() {
     return new Promise((resolve, reject) => {
@@ -307,7 +354,7 @@
         p_device_id: device.id,
         p_secret: device.secret,
         p_token: token,
-        p_enabled: Boolean(native()) && settings().enabled,
+        p_enabled: Boolean(native()) && (settings().enabled || settings().readyEnabled),
         p_login: login || null,
         p_pin: pin || null,
       });
@@ -322,7 +369,7 @@
       write(DEVICE_KEY, device);
       registered = Boolean(native() && token);
       native()?.setDriverPushRegistration?.(
-        JSON.stringify({ ...device, enabled: settings().enabled }),
+        JSON.stringify({ ...device, enabled: settings().enabled || settings().readyEnabled }),
       );
       message =
         tokenError ||
@@ -385,9 +432,18 @@
     schedule();
     renderUI();
   }
+  function testReady() {
+    prepareAudio(); syncNative();
+    if (native()?.testDriverReadyNotification) native().testDriverReadyNotification();
+    else if (!native()) play(true);
+    message = native() && !native().testDriverReadyNotification ? "Perbarui APK Anterin ke versi 1.11 untuk notifikasi pesanan siap dijemput."
+      : settings().readyEnabled ? "Tes suara pesanan siap dijemput dikirim." : "Aktifkan notifikasi pesanan siap dijemput terlebih dahulu.";
+    renderUI();
+  }
+  function dismissReady() { readyNotice = null; renderUI(); }
   async function logout() {
     const device = deviceCredentials();
-    configure({ enabled: false });
+    configure({ enabled: false, readyEnabled: false });
     currentOffers = [];
     dismiss();
     localStorage.removeItem(DEVICE_KEY);
@@ -438,7 +494,7 @@
       `<label class="driver-setting-row"><span><strong>${title}</strong><small>${copy}</small></span><input type="checkbox" role="switch" data-notification-setting="${key}" ${p[key] ? "checked" : ""}/></label>`;
     return `<section class="driver-content driver-settings-page"><button class="driver-settings-back" type="button" data-action="close-settings">‹ Kembali ke order</button>
       <header class="driver-settings-hero">${bellIcon()}<div><h1>Dering & notifikasi</h1><p>Selalu siap menyambut pesanan baru.</p></div></header>
-      <section class="driver-settings-card"><div class="driver-settings-section-title">Peringatan pesanan</div>
+      <section class="driver-settings-card"><div class="driver-settings-section-title">Pesanan baru masuk</div>
         ${toggle("enabled", "Notifikasi pesanan", "Aktifkan peringatan pesanan di perangkat ini.")}${toggle("sound", "Bunyi dering", "Gunakan volume notifikasi perangkat.")}${toggle("vibration", "Getaran", "Getarkan perangkat saat pesanan masuk.")}${toggle("repeat", "Dering berulang", "Ulangi selama pesanan belum diterima.")}
         <label class="driver-setting-row"><span><strong>Jeda pengulangan</strong><small>Berhenti otomatis saat batas terima habis.</small></span><select aria-label="Jeda pengulangan" data-notification-setting="intervalSeconds" ${!p.repeat ? "disabled" : ""}>${[15, 30, 45, 60, 90, 120].map((seconds) => `<option value="${seconds}" ${p.intervalSeconds === seconds ? "selected" : ""}>${seconds} detik</option>`).join("")}</select></label>
         <label class="driver-setting-row"><span><strong>Lama satu dering</strong><small>Durasi bunyi native APK; dijeda sebelum pengulangan berikutnya.</small></span><select aria-label="Lama satu dering" data-notification-setting="durationSeconds" ${nativeNeedsUpdate ? "disabled" : ""}>${[5, 8, 10, 15].map(seconds => `<option value="${seconds}" ${p.durationSeconds === seconds ? "selected" : ""}>${seconds} detik</option>`).join("")}</select></label>
@@ -454,6 +510,16 @@
           .join("")}</select></label>
         <button class="driver-primary driver-setting-test" type="button" data-action="test-notification">Tes dering & getaran</button>
       </section>
+      <section class="driver-settings-card"><div class="driver-settings-section-title">Pesanan selesai disiapkan</div>
+        <p class="driver-settings-help">Peringatan saat dapur menyelesaikan pesanan yang kamu tangani. Berbunyi sekali untuk setiap pesanan.</p>
+        ${toggle("readyEnabled", "Notifikasi siap dijemput", "Terpisah dari peringatan pesanan baru.")}
+        ${toggle("readySound", "Bunyi pesanan selesai", "Gunakan suara khusus pesanan siap dijemput.")}
+        ${toggle("readyVibration", "Getaran pesanan selesai", "Getarkan perangkat saat dapur selesai.")}
+        <label class="driver-setting-row"><span><strong>Nada pesanan selesai</strong><small>Suara berbeda dari pesanan baru.</small></span><select aria-label="Nada pesanan selesai" data-notification-setting="readyTone">${[["bell","Bell"],["chime","Chime"],["soft","Lembut"]].map(([value,label])=>`<option value="${value}" ${p.readyTone===value?"selected":""}>${label}</option>`).join("")}</select></label>
+        <label class="driver-setting-row"><span><strong>Lama dering pesanan selesai</strong><small>Durasi satu peringatan.</small></span><select aria-label="Lama dering pesanan selesai" data-notification-setting="readyDurationSeconds">${[5,8,10,15].map(value=>`<option value="${value}" ${p.readyDurationSeconds===value?"selected":""}>${value} detik</option>`).join("")}</select></label>
+        <button class="driver-primary driver-setting-test" type="button" data-action="test-ready-notification">Tes suara pesanan selesai</button>
+        ${bridge && !bridge.syncDriverReadyOrders ? '<p class="driver-settings-message">Perbarui APK Anterin ke versi 1.11 agar notifikasi pesanan selesai tetap berbunyi saat aplikasi tertutup.</p>' : ""}
+      </section>
       <section class="driver-settings-card driver-device-status"><div class="driver-settings-section-title">Kesiapan perangkat</div><p><span class="driver-status-dot ${bridge && registered ? "is-ready" : ""}"></span>${bridge ? (registered ? "Push driver terdaftar" : "Push driver belum terdaftar") : "Mode browser"}</p><small>${escape(permission)}</small>
         <p class="driver-settings-help">${bridge ? "Notifikasi tertutup memakai layanan native APK. Pastikan izin notifikasi aktif." : "Notifikasi saat aplikasi tertutup memerlukan APK Anterin terbaru. Browser mendukung peringatan selama halaman masih berjalan."}</p>
         <div class="driver-setting-buttons"><button class="driver-secondary" type="button" data-action="enable-notifications" ${busy ? "disabled" : ""}>${busy ? "Memeriksa…" : "Aktifkan / periksa izin"}</button>${bridge ? '<button class="driver-secondary" type="button" data-action="device-notification-settings">Pengaturan Android</button>' : ""}</div>
@@ -465,9 +531,10 @@
       </section><button class="driver-settings-logout" type="button" data-action="logout">Keluar dari akun driver</button></section>`;
   }
   function render() {
-    return notice
+    const incoming = notice
       ? `<aside class="driver-incoming-alert" role="alert"><div><strong>${notice.count > 1 ? `${notice.count} pesanan delivery baru` : "Pesanan delivery baru masuk"}</strong><small>Segera periksa batas terima pesanan.</small></div><button type="button" data-open-order="${escape(notice.orderId)}">Lihat</button><button type="button" data-action="dismiss-alert" aria-label="Hentikan peringatan">×</button></aside>`
       : "";
+    return incoming + (readyNotice ? `<aside class="driver-incoming-alert is-ready" role="alert"><div><strong>Pesanan ${escape(readyNotice.number)} siap dijemput</strong><small>Dapur sudah selesai menyiapkan pesananmu.</small></div><button type="button" data-open-order="${escape(readyNotice.orderId)}">Lihat</button><button type="button" data-action="dismiss-ready-alert" aria-label="Tutup pemberitahuan pesanan selesai">×</button></aside>` : "");
   }
   configure(preferences);
   function deviceCredentials() {
@@ -491,6 +558,8 @@
     prepareAudio,
     dismiss,
     test,
+    testReady,
+    dismissReady,
     authorize,
     logout,
     syncNative,

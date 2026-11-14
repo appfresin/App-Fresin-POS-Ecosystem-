@@ -737,7 +737,7 @@
 
   function soTakeawayPosDeliveryNote(note) {
     const text = String(note || "").trim();
-    return text.split(/(?:^|\r?\n)\s*(?:Kurir membayar harga produk di outlet|Pin lokasi\s*:|Patokan alamat\s*:|Jam pengambilan\s*:|Koordinat\s*:|Alamat (?:penerima|pengantaran)\s*:)/i)[0].trim();
+    return text.split(/\s*(?:Kurir membayar harga produk di outlet|Pin lokasi\s*:|Patokan alamat\s*:|Jam pengambilan\s*:|Koordinat\s*:|Alamat (?:penerima|pengantaran)\s*:)/i)[0].trim();
   }
 
   function soTakeawayOrderCard(order, options = {}) {

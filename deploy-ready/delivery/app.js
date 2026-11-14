@@ -9193,12 +9193,16 @@ function groupedOrderItems(order) {
     .map(([batch, items]) => ({ batch, label: orderBatchLabel(batch), items }));
 }
 
+function orderCustomerNoteDisplay(note) {
+  return String(note || "").split(/\s*(?:Kurir membayar harga produk di outlet|Pin lokasi\s*:|Patokan alamat\s*:|Jam pengambilan\s*:|Koordinat\s*:|Alamat (?:penerima|pengantaran)\s*:)/i)[0].trim();
+}
+
 function orderGroupNote(order, group) {
   const batchNote = (group?.items || [])
     .map(item => String(item.variantData?.orderBatchNote || "").trim())
     .find(Boolean);
-  if (batchNote) return batchNote;
-  return Number(group?.batch || 1) === 1 ? String(order?.note || "").trim() : "";
+  if (batchNote) return orderCustomerNoteDisplay(batchNote);
+  return Number(group?.batch || 1) === 1 ? orderCustomerNoteDisplay(order?.note) : "";
 }
 
 function selfOrderOpenTableOrder(table) {
@@ -12203,7 +12207,7 @@ function openOrderCorrection(id) {
   sessionStorage.setItem("pos_order_type", order.type || "");
   sessionStorage.setItem("pos_customer_name", order.customer || "");
   sessionStorage.setItem("pos_service_info", order.serviceInfo || "");
-  sessionStorage.setItem("pos_order_note", order.note || "");
+  sessionStorage.setItem("pos_order_note", orderCustomerNoteDisplay(order.note));
   if (Number(order.discount || 0) > 0) sessionStorage.setItem("pos_discount", order.discount);
   else sessionStorage.removeItem("pos_discount");
   sessionStorage.setItem("pos_discount_type", "rp");
@@ -12462,7 +12466,7 @@ function payUnpaidOrder(id) {
   sessionStorage.setItem("pos_order_type", order.type);
   sessionStorage.setItem("pos_customer_name", order.customer || "");
   sessionStorage.setItem("pos_service_info", order.serviceInfo || "");
-  sessionStorage.setItem("pos_order_note", order.note || "");
+  sessionStorage.setItem("pos_order_note", orderCustomerNoteDisplay(order.note));
   if (Number(order.discount || 0) > 0) sessionStorage.setItem("pos_discount", order.discount);
   else sessionStorage.removeItem("pos_discount");
   sessionStorage.setItem("pos_discount_type", "rp");
@@ -13872,7 +13876,7 @@ function orderCenterCard(order, options = {}) {
   if (order.reportOnly) {
     const detailKey = order.reportKey || reportRecordKey(order);
     const detailLoading = reportOrderDetailLoadingKeys.has(detailKey);
-    const customerNote = String(order.note || "").split(/\s*(?:Kurir membayar harga produk di outlet|Pin lokasi\s*:|Patokan alamat\s*:|Koordinat\s*:|Alamat (?:penerima|pengantaran)\s*:)/i)[0].trim();
+    const customerNote = orderCustomerNoteDisplay(order.note);
     const reportItemRows = (order.items || []).map(item => `
       <div class="orders-item-line">
         <span><b>${escapeHtml(orderItemInlineLabel(item))}</b>${item.variantLabel ? `<small class="orders-item-note">${escapeHtml(item.variantLabel)}</small>` : ""}${orderItemNoteHtml(item, "orders-item-note")}</span>

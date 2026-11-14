@@ -409,7 +409,9 @@
     const available = orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER"
       && !driverOrderCancelled(order) && driverAcceptanceTime(order)?.seconds > 0
       && !order.driver_id && !order.driver_name && !order.driver_phone);
-    window.DriverNotifications?.update(available, state.profile);
+    const ready = orders.filter(order => driverMatches(order) && kitchenReady(order)
+      && !["PICKED_UP", "DELIVERING", "COMPLETED"].includes(order.customer_order_status));
+    window.DriverNotifications?.update(available, state.profile, ready);
   }
 
   function statusRank(status) {
@@ -1718,7 +1720,7 @@
     return `
       <div class="driver-card-actions">
         ${renderKitchenNotice(true)}
-        <button class="driver-card-action driver-pickup-action" type="button" data-action="delivering" data-order="${orderId}">${icon("bag")}<span>Ambil ke outlet</span></button>
+        <button class="driver-card-action driver-pickup-action" type="button" data-action="delivering" data-order="${orderId}">${icon("bag")}<span>Antar pesanan</span></button>
       </div>
     `;
   }
@@ -1833,7 +1835,7 @@
     if (isCourierCash(order) && (canProcessAssignedOrder(order) || !isPaidOrder(order))) return renderCourierProcessActions(order);
     if (status === "DRIVER_ASSIGNED" && !isPaidOrder(order)) return `<button class="driver-sticky-action" type="button" disabled>${icon("clock")}<span>Menunggu pembayaran customer</span></button>`;
     if (!kitchenReady(order)) return renderKitchenNotice();
-    if (status === "DRIVER_ASSIGNED" || status === "PREPARING" || status === "READY_FOR_PICKUP" || status === "PICKED_UP") return `${renderKitchenNotice(true)}<button class="driver-sticky-action" type="button" data-action="delivering" data-order="${escapeHtml(order.id)}">${icon("bag")}<span>Ambil ke outlet</span></button>`;
+    if (status === "DRIVER_ASSIGNED" || status === "PREPARING" || status === "READY_FOR_PICKUP" || status === "PICKED_UP") return `${renderKitchenNotice(true)}<button class="driver-sticky-action" type="button" data-action="delivering" data-order="${escapeHtml(order.id)}">${icon("bag")}<span>Antar pesanan</span></button>`;
     if (status === "DELIVERING") return `<button class="driver-sticky-action done" type="button" data-action="complete" data-order="${escapeHtml(order.id)}">${icon("check")}<span>Pesanan selesai diantar</span></button>`;
     return `<div class="driver-completed">${icon("check")} Pesanan selesai diantar</div>`;
   }
@@ -1996,7 +1998,7 @@
       const key = notificationSetting.dataset.notificationSetting;
       const value = notificationSetting.type === "checkbox" ? notificationSetting.checked : notificationSetting.value;
       window.DriverNotifications?.configure({ [key]: value });
-      if (key === "enabled") window.DriverNotifications?.authorize();
+      if (key === "enabled" || key === "readyEnabled") window.DriverNotifications?.authorize();
       render();
       return;
     }
@@ -2046,10 +2048,12 @@
     if (action === "toggle-settings-menu") { state.menuOpen = !state.menuOpen; render(); return; }
     if (action === "close-settings") { setView("tasks"); return; }
     if (action === "test-notification") { window.DriverNotifications?.test(); return; }
+    if (action === "test-ready-notification") { window.DriverNotifications?.testReady(); return; }
     if (action === "driver-background-settings") { window.KasirinAndroid?.openDriverBackgroundSettings?.(); return; }
     if (action === "device-notification-settings") { window.KasirinAndroid?.openDriverNotificationSettings?.(); return; }
     if (action === "enable-notifications") { window.DriverNotifications?.enable(); return; }
     if (action === "dismiss-alert") { window.DriverNotifications?.dismiss(); return; }
+    if (action === "dismiss-ready-alert") { window.DriverNotifications?.dismissReady(); return; }
     if (action === "back") {
       state.selectedId = "";
       render();

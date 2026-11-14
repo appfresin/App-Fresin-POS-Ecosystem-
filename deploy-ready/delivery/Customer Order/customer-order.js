@@ -1406,11 +1406,7 @@
       const longitude = homeCoordinate(checkout.longitude);
       const pickupTime = checkout.method === "PICKUP_PREORDER" ? (checkout.pickupTime || "Secepatnya") : "";
       const noteParts = [
-        checkout.note,
-        checkout.method === "PICKUP_PREORDER" ? `Jam pengambilan: ${pickupTime}` : "",
-        checkout.method === "DELIVERY" ? "Kurir membayar harga produk di outlet; ongkir langsung diterima kurir dari pelanggan." : "",
-        checkout.method === "DELIVERY" ? `Pin lokasi: ${mapsUrl}` : "",
-        checkout.addressNote ? `Patokan alamat: ${checkout.addressNote}` : ""
+        String(checkout.note || "").trim()
       ].filter(Boolean);
       const orderItems = tagOrderBatchItems(selfOrderCart.map(item => ({ ...item })), 1, checkout.note || "", orderCreatedAt);
       const order = {
