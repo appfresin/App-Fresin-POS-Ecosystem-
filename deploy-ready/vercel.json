@@ -3,13 +3,38 @@
   "trailingSlash": true,
   "redirects": [
     {
-      "source": "/self-order",
+      "source": "/self-order/",
       "destination": "/order/",
       "permanent": false
     },
     {
-      "source": "/self-order/:table([A-Za-z]?-?\\d{1,2})",
-      "destination": "/order/:table",
+      "source": "/self-order/:table([A-Za-z0-9-]+)/",
+      "destination": "/order/:table/",
+      "permanent": false
+    },
+    {
+      "source": "/order/:table([A-Za-z]?-?[0-9]{1,2})/",
+      "destination": "/order/?table=:table",
+      "permanent": false
+    },
+    {
+      "source": "/order/meja-:table([A-Za-z]?-?[0-9]{1,2})/",
+      "destination": "/order/?table=:table",
+      "permanent": false
+    },
+    {
+      "source": "/order/m-:table([A-Za-z]?-?[0-9]{1,2})/",
+      "destination": "/order/?table=:table",
+      "permanent": false
+    },
+    {
+      "source": "/order/meja:table([A-Za-z]?-?[0-9]{1,2})/",
+      "destination": "/order/?table=:table",
+      "permanent": false
+    },
+    {
+      "source": "/order/m:table([A-Za-z]?-?[0-9]{1,2})/",
+      "destination": "/order/?table=:table",
       "permanent": false
     },
     {
@@ -44,10 +69,6 @@
     {
       "source": "/duitku/callback",
       "destination": "https://pjkotqianxecaawqompo.supabase.co/functions/v1/duitku-payment-webhook"
-    },
-    {
-      "source": "/order/:path*",
-      "destination": "/order/"
     },
     {
       "source": "/pos",
