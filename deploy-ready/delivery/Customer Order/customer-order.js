@@ -941,7 +941,7 @@
             this._container?.remove();
           }
         };
-        map.addControl(locateControl, "bottom-right");
+        map.addControl(locateControl, "top-left");
         setTimeout(() => map.resize(), 0);
       })
       .catch(error => {

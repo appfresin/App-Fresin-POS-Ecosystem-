@@ -1788,8 +1788,6 @@
 .customer-home-current-location-btn.self-order-secondary:hover { background: #d0e3ff; color: #134d80; }
 .customer-home-current-location-btn.self-order-secondary.is-confirmed { background: #e4f1e9; border-color: #bed9cf; color: #2a6d54; }
 .customer-home-location-actions button[hidden] { display: none; }
-.customer-home-maplibre-map .maplibregl-ctrl-bottom-right { display: flex; flex-direction: column; align-items: flex-end; }
-.customer-home-maplibre-map .customer-home-map-locate-control { order: -1; }
 .customer-home-checkout .customer-home-location-note { text-align: center; padding: 0 2px; border: 0; background: transparent; color: #6d8198; font-size: 11px; line-height: 1.5; }
 .customer-home-checkout .customer-home-location-note.warning { color: #8d6530; }
 .customer-home-map-locate-control.maplibregl-ctrl button {
@@ -1883,12 +1881,14 @@
 .customer-home-current-status.is-cancelled > span { font-weight: 400; overflow-wrap: anywhere; }
 /* Driver identity with a friendly illustration and a spacious contact action. */
 .customer-home-driver-card { padding: 16px; border: 1px solid #cfdfef; border-radius: 21px; background: linear-gradient(135deg, #fff, #f0f6fd); box-shadow: 0 9px 22px #224f7b0a, inset 0 1px 0 #fff; }
-.customer-home-driver-main { display: grid; grid-template-columns: 58px minmax(0,1fr); gap: 12px; align-items: center; }
-.customer-home-driver-main .customer-home-driver-avatar { display: grid; place-items: center; width: 58px; height: 58px; border: 1px solid #edd9b7; border-radius: 19px; background: #fff5e3; box-shadow: inset 0 1px 0 #fff; }
-.customer-home-driver-avatar svg { display: block; width: 58px; height: 58px; }
+.customer-home-driver-main { display: grid; grid-template-columns: 44px minmax(0,1fr); gap: 8px; align-items: center; }
+.customer-home-driver-main:has(> .customer-home-driver-contact) { grid-template-columns: 44px minmax(0,1fr) minmax(100px,112px); }
+.customer-home-driver-main > div { text-align: left; }
+.customer-home-driver-main .customer-home-driver-avatar { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid #edd9b7; border-radius: 15px; background: #fff5e3; box-shadow: inset 0 1px 0 #fff; }
+.customer-home-driver-avatar svg { display: block; width: 44px; height: 44px; }
 .customer-home-driver-main > div small { margin-bottom: 5px; color: #7c90a5; font-size: 11px; font-weight: 500; }
-.customer-home-driver-main > div strong { color: #214c74; font-size: 17px; line-height: 1.3; overflow-wrap: anywhere; }
-.customer-home-driver-main > .customer-home-driver-contact { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 11px 12px; border: 1px solid #d8e8dd; border-radius: 14px; background: #f0f7f2; }
-.customer-home-driver-contact small { color: #70877a; font-size: 10px; line-height: 1.45; text-align: left; }
-.customer-home-driver-card .customer-home-driver-whatsapp { min-height: 32px; padding: 4px 9px; border-radius: 10px; background: #e2efe6; color: #386c4b; font-size: 12px; font-weight: 700; }
+.customer-home-driver-main > div strong { color: #214c74; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere; }
+.customer-home-driver-main > .customer-home-driver-contact { grid-column: auto; display: grid; justify-items: center; gap: 5px; min-width: 0; padding: 8px 6px; border: 1px solid #d8e8dd; border-radius: 14px; background: #f0f7f2; }
+.customer-home-driver-contact small { color: #70877a; font-size: 9px; line-height: 1.35; text-align: center; }
+.customer-home-driver-card .customer-home-driver-whatsapp { min-height: 30px; padding: 4px 7px; border-radius: 10px; background: #e2efe6; color: #386c4b; font-size: 11px; font-weight: 700; }
 .customer-home-driver-card .customer-home-driver-whatsapp:hover { background: #d5e8dc; color: #285539; }
