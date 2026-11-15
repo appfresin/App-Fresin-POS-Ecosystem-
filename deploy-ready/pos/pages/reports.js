@@ -656,7 +656,7 @@ function reportReceiptMenu(order) {
     <div class="visitor-receipt-menu" data-report-receipt-menu>
       <button class="visitor-receipt-menu-toggle" type="button" onclick="toggleReportReceiptMenu(event)" aria-label="Menu struk" aria-expanded="false">&vellip;</button>
       <div class="visitor-receipt-menu-panel" hidden>
-        <button type="button" onclick='reportReceiptMenuAction(event, "delete", ${JSON.stringify(recordKey)})'>Hapus struk</button>
+        <button type="button" onclick='reportReceiptMenuAction(event, "delete", ${JSON.stringify(recordKey)})'>Hapus Transaksi</button>
         <button type="button" onclick='reportReceiptMenuAction(event, "print", ${JSON.stringify(recordKey)})'>Cetak struk</button>
         <button type="button" onclick='reportReceiptMenuAction(event, "download", ${JSON.stringify(recordKey)})'>Unduh gambar</button>
       </div>

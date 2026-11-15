@@ -460,12 +460,16 @@
     return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
   }
 
-  function homeGenerateNumber(prefix) {
-    const max = (state.orders || [])
-      .map(order => String(order.number || "").match(new RegExp(`^${prefix}(\\d{1,6})$`, "i")))
-      .filter(Boolean)
-      .reduce((highest, match) => Math.max(highest, Number(match[1] || 0)), 0);
-    return `${prefix}${String(max + 1).padStart(3, "0")}`;
+  async function homeGenerateNumber(prefix) {
+    if (!["D", "P"].includes(prefix)) throw new Error("Jenis nomor pesanan tidak valid.");
+    const { data, error } = await supabaseClient.rpc("allocate_customer_order_number", { p_prefix: prefix });
+    if (error || typeof data !== "string" || !new RegExp(`^${prefix}\\d{3,18}$`).test(data)) {
+      console.warn("Customer order number allocation failed", error || "Invalid number response");
+      const failure = new Error("Gagal menyiapkan nomor pesanan.");
+      failure.userMessage = "Belum bisa menyiapkan nomor pesanan. Periksa koneksi lalu coba lagi.";
+      throw failure;
+    }
+    return data;
   }
 
   function homeCoordinate(value) {
@@ -1400,7 +1404,7 @@
       const total = subtotal + deliveryFee;
       const orderCreatedAt = await getSupabaseServerTimeIso();
       const prefix = checkout.method === "DELIVERY" ? "D" : "P";
-      const number = homeGenerateNumber(prefix);
+      const number = await homeGenerateNumber(prefix);
       const mapsUrl = homeGoogleMapsUrl(checkout);
       const latitude = homeCoordinate(checkout.latitude);
       const longitude = homeCoordinate(checkout.longitude);
@@ -1476,7 +1480,8 @@
         state.orders = state.orders.filter(item => item.id !== order.id);
         state.syncQueue = (state.syncQueue || []).filter(item => item.orderId !== orderSyncQueueId(order));
         saveState();
-        selfOrderSubmitError = "Gagal membuat pesanan, cek koneksi lalu coba lagi.";
+        selfOrderSubmitError = order.syncError === "Nomor pesanan sudah digunakan. Silakan coba lagi."
+          ? order.syncError : "Gagal membuat pesanan, cek koneksi lalu coba lagi.";
         return;
       }
       if (!homeIsPayLaterOrder(order)) await homeSyncOrderExtras(order);

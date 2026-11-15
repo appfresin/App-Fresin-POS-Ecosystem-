@@ -1289,7 +1289,10 @@
         driverId: kitchenAction ? order.driver_id : ""
       });
       if (action === "take" || action === "picked" || action === "delivering") state.view = "active";
-      if (action === "complete") state.view = "earnings";
+      if (action === "complete") {
+        state.view = "active";
+        state.selectedId = "";
+      }
       localStorage.setItem(VIEW_KEY, state.view);
       await fetchOrders({ force: true });
     } catch (error) {

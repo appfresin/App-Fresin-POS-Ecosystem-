@@ -4731,7 +4731,7 @@ async function syncOrderToSupabase(order, options = {}) {
       delivery_location: order.deliveryLocation || "", delivery_latitude: order.deliveryLatitude ?? null,
       delivery_longitude: order.deliveryLongitude ?? null
     });
-    const { data: orderRows, error: orderError } = await upsertSupabaseOrderPayload(orderPayload);
+    const { data: orderRows, error: orderError } = await upsertSupabaseOrderPayload(orderPayload, order);
     if (orderError) throw orderError;
     const supabaseOrderId = orderRows.id;
     order.supabaseId = supabaseOrderId;
@@ -4896,10 +4896,15 @@ async function syncOrderToSupabase(order, options = {}) {
   }
 }
 
-async function upsertSupabaseOrderPayload(orderPayload) {
+async function upsertSupabaseOrderPayload(orderPayload, order = {}) {
   const { data: current, error: readError } = await supabaseClient.from("orders")
-    .select("id,payment_status,updated_at").eq("order_number", orderPayload.order_number).maybeSingle();
+    .select("id,payment_status,updated_at,public_order_token").eq("order_number", orderPayload.order_number).maybeSingle();
   if (readError) return { data: null, error: readError };
+  // A number alone must never identify a different customer's new order.
+  if (current && ((order.supabaseId && current.id !== order.supabaseId)
+    || (!order.supabaseId && order.publicOrderToken && current.public_order_token !== order.publicOrderToken))) {
+    return { data: null, error: { code: "ORDER_NUMBER_CONFLICT", message: "Nomor pesanan sudah digunakan. Silakan coba lagi." } };
+  }
   if (current?.payment_status === "Lunas" && orderPayload.payment_status !== "Lunas") {
     return { data: null, error: { code: "ORDER_ALREADY_PAID", orderId: current.id, message: "Pesanan sudah lunas." } };
   }

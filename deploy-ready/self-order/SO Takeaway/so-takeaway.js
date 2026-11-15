@@ -33,7 +33,10 @@
       hash.get("orderType")
     ].map(value => String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, ""));
     const path = String(location.pathname || "").toLowerCase();
-    return values.includes("takeaway") || path.includes("takeaway");
+    const defaultOrderEntry = /^\/order\/?$/.test(path)
+      && !values.some(Boolean)
+      && !selfOrderTableCodeFromUrl();
+    return values.includes("takeaway") || path.includes("takeaway") || defaultOrderEntry;
   }
 
   function soTakeawayEscape(value) {
