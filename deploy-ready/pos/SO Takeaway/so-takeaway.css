@@ -679,3 +679,11 @@
 .fresin-so-table-notice-icon svg { width: 35px; height: 35px; }
 .fresin-so-success .fresin-so-table-notice .self-order-success-warning { margin: 0; color: #1d5182; font-size: 13px; line-height: 1.4; font-weight: 750; }
 .fresin-so-success .fresin-so-table-notice .self-order-success-warning-hint { margin: 4px 0 0; color: #617b96; font-size: 11px; line-height: 1.55; }
+
+.so-takeaway-whatsapp-chat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #237449;
+}
+.so-takeaway-whatsapp-number { white-space: nowrap; }

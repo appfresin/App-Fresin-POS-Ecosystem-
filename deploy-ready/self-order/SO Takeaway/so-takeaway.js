@@ -55,6 +55,12 @@
     return typeof money === "function" ? money(value) : `Rp${Number(value || 0).toLocaleString("id-ID")}`;
   }
 
+  function soTakeawayWhatsAppNumber(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    const phone = digits.startsWith("0") ? `62${digits.slice(1)}` : digits;
+    return /^[1-9]\d{7,14}$/.test(phone) ? phone : "";
+  }
+
   function soTakeawayDateTime(value) {
     return typeof dateTime === "function" ? dateTime(value) : new Date(value || Date.now()).toLocaleString("id-ID");
   }
@@ -522,6 +528,7 @@
     sessionStorage.setItem("self_order_payment", "cash");
     const activeOrder = soTakeawayActiveOrder();
     const customer = sessionStorage.getItem("self_order_customer") || "";
+    const phone = sessionStorage.getItem("so_takeaway_customer_phone") || "";
     const note = sessionStorage.getItem("self_order_checkout_note") || "";
     const submitLabel = selfOrderSubmitting
       ? `<span class="self-order-btn-spinner" aria-hidden="true"></span><span>Mengirim pesanan</span>`
@@ -546,6 +553,10 @@
               <span class="self-order-field-label">Nama Pemesan</span>
               <input id="selfOrderCustomer" value="${soTakeawayEscape(customer)}" placeholder="Nama pemesan" required aria-required="true" aria-describedby="selfOrderCustomerError" oninput="sessionStorage.setItem('self_order_customer', this.value); selfOrderClearCustomerError(this)" />
               <small id="selfOrderCustomerError" class="self-order-customer-error" role="alert" hidden>Nama wajib diisi.</small>
+            </label>
+            <label class="wide">
+              <span class="self-order-field-label">Nomor WhatsApp</span>
+              <input id="soTakeawayCustomerPhone" type="tel" autocomplete="tel" value="${soTakeawayEscape(phone)}" placeholder="Contoh 081234567890" required oninput="sessionStorage.setItem('so_takeaway_customer_phone', this.value)" />
             </label>
             <label class="wide"><span class="self-order-field-label">Catatan</span><textarea id="selfOrderCheckoutNote" placeholder="Catatan pesanan (opsional)" rows="2" oninput="sessionStorage.setItem('self_order_checkout_note', this.value)">${soTakeawayEscape(note)}</textarea></label>
           </div>
@@ -612,6 +623,14 @@
     const customerInput = document.getElementById("selfOrderCustomer");
     const customer = String(customerInput?.value || sessionStorage.getItem("self_order_customer") || "").trim();
     if (!customer) return selfOrderShowCustomerError(customerInput);
+    const phoneInput = document.getElementById("soTakeawayCustomerPhone");
+    const customerPhone = soTakeawayWhatsAppNumber(phoneInput?.value || sessionStorage.getItem("so_takeaway_customer_phone"));
+    if (!customerPhone) {
+      selfOrderSubmitError = "Isi nomor WhatsApp yang valid.";
+      render();
+      document.getElementById("soTakeawayCustomerPhone")?.focus();
+      return;
+    }
     if (!canAttemptSupabaseSync()) {
       selfOrderSubmitError = "Self Order Takeaway membutuhkan koneksi internet. Periksa koneksi lalu coba lagi.";
       render();
@@ -641,6 +660,7 @@
         takeawayStatus: "WAITING_ACCEPTANCE",
         takeawayExpiresAt: "",
         customer,
+        customerPhone,
         serviceInfo: takeawayNumber,
         note,
         status: "Pesanan Baru",
@@ -692,6 +712,7 @@
       selfOrderCart = [];
       saveSelfOrderCart();
       sessionStorage.removeItem("self_order_customer");
+      sessionStorage.removeItem("so_takeaway_customer_phone");
       sessionStorage.removeItem("self_order_checkout_note");
       soTakeawaySetActiveOrder(order);
       soTakeawayMarkSnapshot(order, checkoutTotal);
@@ -744,12 +765,49 @@
     return text.split(/\s*(?:Kurir membayar harga produk di outlet|Pin lokasi\s*:|Patokan alamat\s*:|Jam pengambilan\s*:|Koordinat\s*:|Alamat (?:penerima|pengantaran)\s*:)/i)[0].trim();
   }
 
+  function soTakeawayWhatsAppContact(order) {
+    const service = order.serviceInfo || order.service_info || "";
+    const source = String(order.source || "").trim().toLowerCase();
+    const mode = String(order.customerOrderType || order.orderMode || order.customer_order_type || "").trim().toUpperCase();
+    const onlinePickup = mode === "PICKUP_PREORDER" || service === "Takeaway-Rumah"
+      || (source === "self order" && order.type === TAKEAWAY_TYPE);
+    const rawPhone = String(order.customerPhone || order.customer_phone || "").trim();
+    const phone = soTakeawayWhatsAppNumber(rawPhone);
+    if (!onlinePickup || soTakeawayIsDelivery(order) || !phone) return {};
+
+    const chatUrl = `https://wa.me/${phone}`;
+    const canConfirm = order.status === "Pesanan Baru" && !order.confirmedAt && !order.confirmed_at
+      && !order.cancelledAt && !order.cancelled_at && !soTakeawayIsExpired(order);
+    let confirmation = "";
+    if (canConfirm) {
+      const message = [
+        `Halo Kak ${customerDisplayName(order.customer) || ""}, saya dari Fresin.`,
+        "",
+        `Konfirmasi pesanan Take Away ${order.number || soTakeawayNumber(order)}:`,
+        ...(order.items || []).map(item => `- ${orderItemInlineLabel(item)}${item.variantLabel ? ` (${item.variantLabel})` : ""}`),
+        `Total: ${soTakeawayMoney(orderTotal(order))}`,
+        ...(order.pickupTime ? [`Jam pengambilan: ${order.pickupTime}`] : []),
+        "",
+        "Apakah rincian pesanan ini sudah benar, Kak?"
+      ].join("\n");
+      confirmation = `<a class="btn green" href="${chatUrl}?text=${encodeURIComponent(message)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Konfirmasi</a>`;
+    }
+    const chat = `<a class="btn so-takeaway-whatsapp-chat" href="${chatUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" aria-label="Chat WhatsApp pelanggan" title="Chat WhatsApp">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 11.7a8.5 8.5 0 0 1-12.6 7.5L3.5 20.5l1.3-4.3a8.5 8.5 0 1 1 15.7-4.5Z"/><path d="M9.1 8.1c-1 .1-1.4 1.1-.9 2.3 1 2.4 3 4.1 5.1 4.8 1.4.4 2.3-.1 2.4-1.2l-2.1-1.2-.8.8c-1.4-.6-2.4-1.5-3-2.8l.7-.8-1.4-1.9Z"/></svg>
+    </a>`;
+    return {
+      phoneChip: `<span class="so-takeaway-whatsapp-number" aria-label="Nomor WhatsApp ${soTakeawayEscape(rawPhone)}">${soTakeawayEscape(rawPhone)}</span>`,
+      actions: confirmation + chat
+    };
+  }
+
   function soTakeawayOrderCard(order, options = {}) {
     const qty = (order.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
     const expanded = sessionStorage.getItem(`orders_expanded_${order.id}`) === "1";
     const delivery = soTakeawayIsDelivery(order);
     const statusLabel = delivery ? soTakeawayDeliveryStatusLabel(order) : soTakeawayStatusLabel(order);
     const serviceLabel = soTakeawayServiceLabel(order);
+    const contact = soTakeawayWhatsAppContact(order);
     const header = `<span class="so-takeaway-type-chip">${serviceLabel}</span><strong class="so-takeaway-order-number">${soTakeawayEscape(customerDisplayName(order.customer) || "-")}</strong>`;
     const cardNote = soTakeawayPosDeliveryNote(order.note);
     const pickupNote = !delivery && order.pickupTime
@@ -771,10 +829,12 @@
           </div>
           <div class="unpaid-compact-meta">
             <span>${soTakeawayEscape(soTakeawayNumber(order))}</span>
+            ${contact.phoneChip || ""}
             <span class="so-takeaway-badge">${soTakeawayEscape(statusLabel)}</span>
           </div>
           ${pickupNote}
           ${cardNote ? `<p class="orders-item-group-note"><b>Catatan:</b> ${soTakeawayEscape(cardNote)}</p>` : ""}
+          ${contact.actions ? `<div class="orders-card-actions">${contact.actions}</div>` : ""}
           ${processAction}
           <button class="btn green so-takeaway-pay-btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); payUnpaidOrder('${order.id}')">Bayar</button>
           ${deleteAction}
@@ -799,6 +859,7 @@
       `;
     }).join("");
     const actions = [
+      contact.actions,
       processAction,
       order.paymentStatus !== "Lunas" && order.status !== "Dibatalkan"
         ? `<button class="btn green" type="button" onclick="event.preventDefault(); event.stopPropagation(); payUnpaidOrder('${order.id}')">Bayar</button>`
@@ -821,6 +882,7 @@
           <span class="so-takeaway-order-time">${soTakeawayDateTime(order.createdAt)}</span>
           <div class="orders-card-meta">
             <span>${soTakeawayEscape(soTakeawayNumber(order))}</span>
+            ${contact.phoneChip || ""}
             <span>${soTakeawayIsPaid(order) ? "Lunas" : "Belum dibayar"}</span>
           </div>
         </div>
@@ -901,7 +963,8 @@
     const baseOrderCenterCard = orderCenterCard;
     orderCenterCard = function (order, options = {}) {
       if (soTakeawayIsOrder(order)) return soTakeawayOrderCard(order, options);
-      return baseOrderCenterCard(order, options);
+      const contact = soTakeawayWhatsAppContact(order);
+      return baseOrderCenterCard(order, { ...options, contact });
     };
 
     const basePayUnpaidOrder = payUnpaidOrder;

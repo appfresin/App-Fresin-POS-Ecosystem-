@@ -4875,10 +4875,11 @@ async function syncOrderToSupabase(order, options = {}) {
       notification_categories: orderPushNotificationCategories(order),
       prepared_items: order.preparedItems || {}
     };
+    if (!order.supabaseId && order.customerPhone) orderPayload.customer_phone = order.customerPhone;
     if (orderUsesOutletPayment(order) && !order.supabaseId) Object.assign(orderPayload, {
       customer_order_type: order.customerOrderType || order.orderMode,
       customer_order_status: order.customerOrderStatus || "WAITING_ACCEPTANCE",
-      customer_phone: order.customerPhone || "", pickup_time: order.pickupTime || null,
+      pickup_time: order.pickupTime || null,
       payment_provider: order.paymentProvider, public_order_token: order.publicOrderToken || "",
       delivery_address: order.deliveryAddress || "", delivery_note: order.deliveryNote || "",
       delivery_location: order.deliveryLocation || "", delivery_latitude: order.deliveryLatitude ?? null,
@@ -14002,8 +14003,10 @@ function orderCenterCard(order, options = {}) {
         </div>
         <div class="unpaid-compact-meta">
           <span>${escapeHtml(displayOrderNumber(order.number))}</span>
+          ${options.contact?.phoneChip || ""}
           <span>${escapeHtml(order.type || "-")}</span>
         </div>
+        ${options.contact?.actions ? `<div class="orders-card-actions">${options.contact.actions}</div>` : ""}
       </article>
     `;
   }
@@ -14080,6 +14083,7 @@ function orderCenterCard(order, options = {}) {
     `;
   }).join("");
   const actions = [
+    options.contact?.actions,
     order.paymentStatus !== "Lunas" && order.status !== "Dibatalkan" ? `<button class="btn green" type="button" onclick="event.preventDefault(); event.stopPropagation(); payUnpaidOrder('${order.id}')">Bayar</button>` : "",
     order.paymentStatus === "Lunas" ? `<button class="btn green orders-print-receipt-btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); printOrderCardReceipt('${order.id}')">Print Struk</button>` : "",
     canCorrectOrder(order) ? `<button class="btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); openOrderCorrection('${order.id}')">Koreksi Pesanan</button>` : "",
@@ -14109,6 +14113,7 @@ function orderCenterCard(order, options = {}) {
       <div class="orders-card-meta">
         <span>${escapeHtml(order.type || "-")}</span>
         <span>${escapeHtml(displayOrderNumber(order.number))}</span>
+        ${options.contact?.phoneChip || ""}
         <span>${escapeHtml(order.paymentStatus || "-")}</span>
       </div>
       <div class="orders-card-items">

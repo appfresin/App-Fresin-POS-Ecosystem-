@@ -18,7 +18,6 @@
   };
   let preferences = read(PREF_KEY, defaults),
     audio = null,
-    notice = null,
     message = "",
     timer = null;
   let currentOffers = [],
@@ -105,7 +104,7 @@
       if (Audio && !audio) audio = new Audio();
       if (audio?.state === "suspended") audio.resume().catch(() => {});
     } catch {
-      /* Banner still works. */
+      /* The offer list remains available. */
     }
   }
   function play(ready = false) {
@@ -158,7 +157,6 @@
       () => {
         timer = null;
         if (!activeOffers().length) {
-          notice = null;
           renderUI();
           return;
         }
@@ -193,7 +191,7 @@
       if (registration) await registration.showNotification(title, options);
       else new Notification(title, options);
     } catch {
-      /* Banner still works. */
+      /* Ringing and vibration do not depend on system notifications. */
     }
   }
   function update(available, profile, readyOrders = []) {
@@ -242,18 +240,9 @@
         message = "Sinkronisasi peringatan native belum berhasil.";
       }
     }
-    if (notice && !currentOffers.some((order) => notice.ids.includes(order.id)))
-      notice = null;
-    if (fresh.length && settings().enabled) {
-      notice = {
-        ids: fresh.map((order) => order.id),
-        orderId: fresh[0].id,
-        count: fresh.length,
-      };
-      if (!native()) {
-        play();
-        show(fresh[0], fresh.length);
-      }
+    if (fresh.length && settings().enabled && !native()) {
+      play();
+      show(fresh[0], fresh.length);
     }
     schedule();
     updateReady(readyOrders);
@@ -427,7 +416,6 @@
   }
   function dismiss() {
     currentOffers.forEach((order) => muted.add(offerKey(order)));
-    notice = null;
     native()?.silenceDriverNotifications?.();
     schedule();
     renderUI();
@@ -531,10 +519,7 @@
       </section><button class="driver-settings-logout" type="button" data-action="logout">Keluar dari akun driver</button></section>`;
   }
   function render() {
-    const incoming = notice
-      ? `<aside class="driver-incoming-alert" role="alert"><div><strong>${notice.count > 1 ? `${notice.count} pesanan delivery baru` : "Pesanan delivery baru masuk"}</strong><small>Segera periksa batas terima pesanan.</small></div><button type="button" data-open-order="${escape(notice.orderId)}">Lihat</button><button type="button" data-action="dismiss-alert" aria-label="Hentikan peringatan">×</button></aside>`
-      : "";
-    return incoming + (readyNotice ? `<aside class="driver-incoming-alert is-ready" role="alert"><div><strong>Pesanan ${escape(readyNotice.number)} siap dijemput</strong><small>Dapur sudah selesai menyiapkan pesananmu.</small></div><button type="button" data-open-order="${escape(readyNotice.orderId)}">Lihat</button><button type="button" data-action="dismiss-ready-alert" aria-label="Tutup pemberitahuan pesanan selesai">×</button></aside>` : "");
+    return readyNotice ? `<aside class="driver-incoming-alert is-ready" role="alert"><div><strong>Pesanan ${escape(readyNotice.number)} siap dijemput</strong><small>Dapur sudah selesai menyiapkan pesananmu.</small></div><button type="button" data-open-order="${escape(readyNotice.orderId)}">Lihat</button><button type="button" data-action="dismiss-ready-alert" aria-label="Tutup pemberitahuan pesanan selesai">×</button></aside>` : "";
   }
   configure(preferences);
   function deviceCredentials() {
