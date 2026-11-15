@@ -1,0 +1,20 @@
+[auth]
+site_url = "http://localhost:3000"
+additional_redirect_urls = []
+enable_anonymous_sign_ins = true
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[auth.email]
+enable_confirmations = true
+max_frequency = "1m0s"
+otp_length = 8
+
+[functions.midtrans-payment-webhook]
+verify_jwt = false
+
+[functions.duitku-payment-webhook]
+verify_jwt = false
+

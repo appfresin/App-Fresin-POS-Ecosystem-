@@ -1,0 +1,1 @@
+{"tool":"execute_sql","arguments":{"query":"select count(*) as remaining_test_orders from public.orders where order_number like 'QA-CONFIRM-%';"}}

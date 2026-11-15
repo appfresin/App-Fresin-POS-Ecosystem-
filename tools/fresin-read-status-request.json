@@ -1,0 +1,1 @@
+{"tool":"execute_sql","arguments":{"query":"select pg_get_functiondef('public.kasirin_order_notification_status(uuid)'::regprocedure) as reminder_definition;"}}
