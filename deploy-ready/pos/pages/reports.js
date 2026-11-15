@@ -588,7 +588,6 @@ async function openReportVisitorReceipt(eventOrRecordKey, maybeRecordKey) {
   const nextKey = reportReceiptSiblingKey(currentKey, 1);
   const cashReceiptAmount = orderCashAmount(order);
   const qrisReceiptAmount = orderQrisAmount(order);
-  const tearPath = "M0 12" + Array.from({ length: 20 }, (_, index) => `L${index * 18 + 9} 2L${(index + 1) * 18} 12`).join("") + "Z";
   const itemRows = items.map(item => {
     const modifiers = typeof orderItemModifiers === "function" ? orderItemModifiers(item) : [];
     return `
@@ -608,7 +607,6 @@ async function openReportVisitorReceipt(eventOrRecordKey, maybeRecordKey) {
         ${reportReceiptMenu(order)}
       </div>
       <div class="visitor-receipt-paper">
-        <svg class="visitor-receipt-tear is-top" viewBox="0 0 360 12" preserveAspectRatio="none" aria-hidden="true"><path d="${tearPath}"/></svg>
         <div class="visitor-receipt-head">
           ${reportReceiptLogoMarkup()}
           <strong>${escapeHtml(state.settings.receiptStoreName || "Kasirin!")}</strong>
@@ -630,11 +628,10 @@ async function openReportVisitorReceipt(eventOrRecordKey, maybeRecordKey) {
         <div class="visitor-receipt-total">
           <span>Subtotal</span><b>${money(order.subtotal)}</b>
           <span>Diskon</span><b>${money(order.discount)}</b>
-          <span class="visitor-receipt-grand-label">Total</span><b class="visitor-receipt-grand-total">${money(order.total)}</b>
+          <span>Total</span><b>${money(order.total)}</b>
           ${cashReceiptAmount ? `<span>Cash</span><b>${money(cashReceiptAmount)}</b>` : ""}
           ${qrisReceiptAmount ? `<span>QRIS</span><b>${money(qrisReceiptAmount)}</b>` : ""}
         </div>
-        <svg class="visitor-receipt-tear is-bottom" viewBox="0 0 360 12" preserveAspectRatio="none" aria-hidden="true"><path d="${tearPath}"/></svg>
       </div>
     </div>
   `, { skipHistory: true });
@@ -656,7 +653,7 @@ function reportReceiptMenu(order) {
     <div class="visitor-receipt-menu" data-report-receipt-menu>
       <button class="visitor-receipt-menu-toggle" type="button" onclick="toggleReportReceiptMenu(event)" aria-label="Menu struk" aria-expanded="false">&vellip;</button>
       <div class="visitor-receipt-menu-panel" hidden>
-        <button type="button" onclick='reportReceiptMenuAction(event, "delete", ${JSON.stringify(recordKey)})'>Hapus Transaksi</button>
+        <button type="button" onclick='reportReceiptMenuAction(event, "delete", ${JSON.stringify(recordKey)})'>Hapus struk</button>
         <button type="button" onclick='reportReceiptMenuAction(event, "print", ${JSON.stringify(recordKey)})'>Cetak struk</button>
         <button type="button" onclick='reportReceiptMenuAction(event, "download", ${JSON.stringify(recordKey)})'>Unduh gambar</button>
       </div>
@@ -1113,7 +1110,7 @@ function mergeProfitSummaryRows(level, cachedRows = [], fallbackRows = []) {
 
 function profitRows(level, year = null, month = null, preferFallback = false) {
   const fallbackRows = fallbackProfitSummaryRows(level, year, month);
-  if (preferFallback || reportRecordsCoverRange(legacyProfitSummaryRange(level, year, month))) return fallbackRows;
+  if (preferFallback) return fallbackRows;
   let cachedRows = profitSummaryCache.years;
   if (level === "months") cachedRows = profitSummaryCache.months[year] || [];
   if (level === "days") cachedRows = profitSummaryCache.days[`${year}-${month}`] || [];

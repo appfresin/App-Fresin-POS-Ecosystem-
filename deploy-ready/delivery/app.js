@@ -1,5 +1,4 @@
 const STORAGE_KEY = "omnipos_mvp_state_v1";
-const DEVICE_PRINTER_STORAGE_KEY = "kasirin_device_printer_v1";
 const LOCAL_DB_NAME = "omnipos_local_db";
 const LOCAL_DB_VERSION = 1;
 const LOCAL_DB_STORE = "app_state";
@@ -34,7 +33,7 @@ const EGRESS_SAVER_ORDER_LIMIT = 120;
 const EGRESS_SAVER_ORDER_LOOKBACK_HOURS = 30;
 const EGRESS_SAVER_MASTER_CACHE_MS = 6 * 60000;
 const EGRESS_SAVER_DELTA_OVERLAP_MS = 2 * 60000;
-const LIVE_ORDER_COLUMNS = "id,order_number,source,type,customer_name,service_info,note,status,payment_status,subtotal,discount,tax_amount,service_fee,delivery_fee,grand_total,print_receipt,prepared_items,created_at,updated_at,confirmed_at,prepared_at,ready_at,completed_at,cancelled_at,cancel_reason,customer_order_type,customer_order_status,customer_phone,pickup_time,payment_provider,driver_id";
+const LIVE_ORDER_COLUMNS = "id,order_number,source,type,customer_name,service_info,note,status,payment_status,subtotal,discount,tax_amount,service_fee,delivery_fee,grand_total,print_receipt,prepared_items,created_at,updated_at,confirmed_at,prepared_at,ready_at,completed_at,cancelled_at,cancel_reason";
 const LIVE_ORDER_ITEM_COLUMNS = "id,order_id,product_name,sku,qty,price,cost,discount,variant_label,variant_data,note";
 const LIVE_ORDER_ADDON_COLUMNS = "order_item_id,addon_id,addon_name,qty,price,cost";
 const LIVE_ORDER_PAYMENT_COLUMNS = "order_id,method,received_amount,change_amount,payment_breakdown,paid_at";
@@ -166,7 +165,6 @@ const initialState = {
     orderNotificationVolume: 70,
     orderNotificationReminderSeconds: 180,
     printerConnection: "Bluetooth",
-    printerPrintMode: "formatted",
     printerDevice: "",
     printerDeviceId: ""
   },
@@ -189,7 +187,6 @@ let view = normalizeView(currentHashView() || defaultInitialView());
 let cart = [];
 let selfOrderCart = loadSelfOrderCart();
 let selfOrderSubmitting = false;
-let selfOrderSubmitStartedAt = 0;
 let selfOrderSubmitError = "";
 let selfOrderTableChecking = false;
 let moveOrderTableSubmitting = false;
@@ -204,7 +201,6 @@ let itemDisplay = localStorage.getItem("omnipos_item_display") || "list";
 let savedPaymentAmounts = JSON.parse(localStorage.getItem("omnipos_saved_payment_amounts") || "[20000,50000,100000]");
 let posProductSnapshotCache = { signature: "", snapshot: null };
 let posProductImageSrcCache = new Map();
-let mediaImageSrcCache = new Map();
 let kitchenAvailabilityCategory = "Semua";
 let kitchenAvailabilityExpandedProductId = "";
 let settingsTab = localStorage.getItem("omnipos_settings_tab") || "data";
@@ -212,12 +208,10 @@ let supabaseClient = null;
 let supabaseSession = null;
 let supabaseStatus = "Memuat koneksi...";
 let supabaseReportRecords = [];
-let supabaseReportCoverage = null;
 let supabaseReportsLoading = false;
 let supabaseReportsLoadedAt = 0;
 let supabaseReportLoadKey = "";
 let supabaseReportDetailCache = new Map();
-const reportOrderDetailLoadingKeys = new Set();
 let supabaseProductSalesRecords = [];
 let supabaseProductSalesLoading = false;
 let supabaseProductSalesLoadedAt = 0;
@@ -313,8 +307,6 @@ let localDbDirtyBeforeLoad = false;
 let localDbSaveQueue = Promise.resolve();
 let localDbStatus = "IndexedDB sedang disiapkan";
 let syncQueueProcessing = false;
-const orderSyncLocks = new Map();
-let orderSyncSequence = 0;
 let lastMasterSyncError = null;
 let masterSyncLoading = false;
 let masterSyncLoaded = false;
@@ -539,48 +531,6 @@ function loadState() {
   }
 }
 
-function devicePrinterSettings(settings = {}) {
-  return {
-    printerConnection: String(settings.printerConnection || "Bluetooth").trim() || "Bluetooth",
-    printerDevice: String(settings.printerDevice || "").trim(),
-    printerDeviceId: String(settings.printerDeviceId || "").trim(),
-    printerPrintMode: settings.printerPrintMode === "text" ? "text" : "formatted"
-  };
-}
-
-function readDevicePrinterSettings() {
-  try {
-    const value = JSON.parse(localStorage.getItem(DEVICE_PRINTER_STORAGE_KEY) || "null");
-    if (!value || Array.isArray(value) || typeof value !== "object") return null;
-    if (!["printerConnection", "printerDevice", "printerDeviceId"].every(key => typeof value[key] === "string")) return null;
-    return devicePrinterSettings(value);
-  } catch {
-    return null;
-  }
-}
-
-function saveDevicePrinterSettings() {
-  const printer = devicePrinterSettings(state.settings);
-  Object.assign(state.settings, printer);
-  try {
-    localStorage.setItem(DEVICE_PRINTER_STORAGE_KEY, JSON.stringify(printer));
-  } catch (error) {
-    // The regular IndexedDB state still persists this device's selection.
-    console.warn("Device printer preference save failed", error);
-  }
-}
-
-function applyDevicePrinterSettings() {
-  const printer = readDevicePrinterSettings();
-  if (printer) {
-    Object.assign(state.settings, printer);
-    return;
-  }
-  Object.assign(state.settings, devicePrinterSettings(state.settings));
-  // Do not seed empty startup defaults before IndexedDB has restored legacy settings.
-  if (state.settings.printerDevice || state.settings.printerDeviceId) saveDevicePrinterSettings();
-}
-
 function saveState() {
   const persistedState = persistedStateSnapshot(state);
   if (!localDbReady) localDbDirtyBeforeLoad = true;
@@ -778,7 +728,6 @@ function normalizeState() {
   state.categories ||= [];
   normalizeStaffState();
   state.settings = { ...initialState.settings, ...(state.settings || {}) };
-  applyDevicePrinterSettings();
   if (String(state.settings.receiptStoreName || "").trim().toUpperCase() === "OMNIPOS") {
     state.settings.receiptStoreName = "Kasirin!";
   }
@@ -1195,7 +1144,7 @@ function selfOrderTableCodeFromUrl() {
     }
     const hashCompact = String(location.hash || "").replace(/^#/, "").split("?")[0] || "";
     if (hashCompact && hashCompact !== "selforder") candidates.push(hashCompact);
-    const pathMatch = String(location.pathname || "").match(/\/(?:self-order|order)\/(?:meja-?|m-?)?([A-Za-z]?-?\d{1,2})\/?$/i);
+    const pathMatch = String(location.pathname || "").match(/\/self-order\/(?:meja-?|m-?)?([A-Za-z]?-?\d{1,2})\/?$/i);
     if (pathMatch) candidates.push(pathMatch[1]);
   } catch (error) {
     console.warn("Gagal membaca kode meja dari URL", error);
@@ -1634,18 +1583,6 @@ function resolveSelfOrderPromoSlideImage(slide = null) {
   return normalizePersistedImageUrl(product?.imageName || "");
 }
 
-function mediaImageCacheKey(value, size = 160) {
-  return `${size}|${String(value || "").trim()}`;
-}
-
-function mediaImageLoaded(image, value, size = 160) {
-  const src = image?.currentSrc || image?.src || "";
-  if (!src || !image.naturalWidth) return;
-  if (image.dataset) image.dataset.loaded = "1";
-  mediaImageSrcCache.set(mediaImageCacheKey(value, size), src);
-  if (mediaImageSrcCache.size > 256) mediaImageSrcCache.delete(mediaImageSrcCache.keys().next().value);
-}
-
 function mediaImageCandidates(value, size = 160) {
   const raw = String(value || "").trim();
   if (!raw) return [];
@@ -1658,8 +1595,7 @@ function mediaImageCandidates(value, size = 160) {
     candidates.push(`https://drive.google.com/uc?export=view&id=${encodeURIComponent(driveId)}`);
     candidates.push(`https://drive.usercontent.google.com/download?id=${encodeURIComponent(driveId)}&export=view`);
   }
-  const cached = mediaImageSrcCache.get(mediaImageCacheKey(raw, size));
-  return [...new Set([...(cached ? [cached] : []), ...candidates])];
+  return [...new Set(candidates)];
 }
 
 function mediaImageSrc(value, size = 160) {
@@ -1678,7 +1614,7 @@ function mediaImageTag(value, alt, className = "", size = 160, loading = "lazy",
   const src = mediaImageSrc(value, size);
   if (!src) return "";
   const priority = loading === "eager" ? ` fetchpriority="high"` : "";
-  return `<img ${className ? `class="${escapeHtml(className)}" ` : ""}src="${escapeHtml(src)}" data-media-cache-key="${escapeHtml(mediaImageCacheKey(value, size) + "|" + fallbackValue)}" data-media-index="0" onload="mediaImageLoaded(this,${escapeHtml(JSON.stringify(String(value || "")))},${Number(size) || 160})" onerror="${mediaImageFallbackScript(value, size, fallbackValue)}" alt="${escapeHtml(alt)}" loading="${escapeHtml(loading)}" decoding="async" referrerpolicy="no-referrer"${priority} />`;
+  return `<img ${className ? `class="${escapeHtml(className)}" ` : ""}src="${escapeHtml(src)}" data-media-index="0" onerror="${mediaImageFallbackScript(value, size, fallbackValue)}" alt="${escapeHtml(alt)}" loading="${escapeHtml(loading)}" decoding="async" referrerpolicy="no-referrer"${priority} />`;
 }
 
 function posProductImageCacheKey(value, size = POS_PRODUCT_IMAGE_SIZE) {
@@ -1711,8 +1647,7 @@ function selfOrderPromoImageMarkup(image, alt, fallbackImage = "", options = nul
 }
 
 function productImageOrToken(product, className = "", size = 360) {
-  const photo = mediaImageTag(product.imageName, `Foto ${product.name}`, className, size)
-    .replace("<img ", '<img data-self-order-photo ');
+  const photo = mediaImageTag(product.imageName, `Foto ${product.name}`, className, size);
   const initials = String(product.name || "PR").slice(0, 2).toUpperCase();
   const token = `<span class="${escapeHtml(className)} self-order-product-token media-fallback-token" ${photo ? "hidden" : ""}>${escapeHtml(initials)}</span>`;
   if (photo) return `${photo}${token}`;
@@ -1829,10 +1764,6 @@ function loadSupabaseLibraryAsync() {
   }
   return loadExternalScriptOnce("supabase-js-cdn", SUPABASE_JS_CDN, {
     onload: () => window.initSupabaseAfterLibraryLoad?.()
-  }).catch(error => {
-    supabaseStatus = "Library Supabase gagal dimuat.";
-    console.warn("Supabase library unavailable; REST reads remain available", error);
-    return null;
   });
 }
 
@@ -2093,7 +2024,7 @@ function orderNotificationKey(order) {
   if (!orderVisibleInPosOrderList(order)) return "";
   const base = String(order?.supabaseId || order?.number || order?.id || "").trim();
   if (!base) return "";
-  return [base, String(order?.status || ""), orderNotificationItemRevision(order), orderNeedsCashierConfirmation(order) ? "confirmation" : "production"].join("|");
+  return [base, String(order?.status || ""), orderNotificationItemRevision(order)].join("|");
 }
 
 function orderNotificationDeliveryKey(order) {
@@ -2101,7 +2032,7 @@ function orderNotificationDeliveryKey(order) {
   if (!base) return "";
   const items = Array.isArray(order?.items) ? order.items : [];
   const maxBatch = items.reduce((max, item) => Math.max(max, orderItemBatch(item)), 1);
-  return [base, String(order?.status || ""), `batch:${maxBatch}`, orderNeedsCashierConfirmation(order) ? "confirmation" : "production"].join("|");
+  return [base, String(order?.status || ""), `batch:${maxBatch}`].join("|");
 }
 
 function claimOrderNotificationDelivery(order, reason = "") {
@@ -2341,29 +2272,8 @@ function orderPushNotificationCategories(order = {}) {
   return newestCategories.length ? newestCategories : orderKitchenNotificationCategories(order);
 }
 
-function orderNeedsCashierConfirmation(order = {}) {
-  const status = String(order.status || "").trim().toLowerCase();
-  const mode = String(order.customerOrderType || order.orderMode || order.customer_order_type || "").toUpperCase();
-  const type = String(order.type || "").trim().toLowerCase();
-  const source = String(order.source || "").trim().toLowerCase();
-  const progress = String(order.customerOrderStatus || order.customer_order_status || "").toUpperCase();
-  if (status !== "pesanan baru" || order.confirmedAt || order.confirmed_at || order.cancelledAt || order.cancelled_at
-    || order.preparedAt || order.prepared_at || order.readyAt || order.ready_at
-    || ["SCHEDULED", "SEARCHING_DRIVER", "NO_DRIVER_AVAILABLE", "CANCELLED", "COMPLETED"].includes(progress)) return false;
-  if (mode === "DELIVERY" || type === "delivery") {
-    return Boolean(order.driverId || order.driver_id)
-      && ["WAITING_ACCEPTANCE", "WAITING_CASHIER", "WAITING_CONFIRMATION"].includes(progress);
-  }
-  const provider = String(order.paymentProvider || order.payment_provider || "");
-  const paid = String(order.paymentStatus || order.payment_status || "").toLowerCase() === "lunas";
-  if (mode === "PICKUP_PREORDER" && provider && provider !== "cash_at_outlet" && !paid) return false;
-  return ["PICKUP_PREORDER", "TAKEAWAY"].includes(mode) || (type === "take away" && source === "self order");
-}
-
-
 function orderMatchesKitchenNotificationCategories(order = {}) {
   const selected = deviceKitchenNotificationCategories();
-  if (orderNeedsCashierConfirmation(order)) return selected.some(category => category.toLowerCase() === "__confirmation__");
   if (!selected.length) return true;
   const selectedKeys = new Set(selected.map(category => category.toLowerCase()));
   return orderKitchenNotificationCategories(order).some(category => selectedKeys.has(category.toLowerCase()));
@@ -2887,7 +2797,6 @@ function shouldRenderAfterRealtimeLoad(kind) {
   if (view !== "selforder") return ["pos", "kitchen", "orders", "dashboard", "products", "stock", "stock-opname", "settings"].includes(view);
   const step = selfOrderStep();
   if (kind === "orders") return step === "success";
-  if (kind === "settings" && step === "gateway") return true;
   return step === "menu" || step === "success";
 }
 
@@ -2901,7 +2810,6 @@ function reportRenderAfterDataLoad() {
 }
 
 function renderWhenInteractionIdle() {
-  updateOrderNavigationBadges();
   if (isBlockingInteractionActive()) {
     deferredRealtimeRender = true;
     return false;
@@ -3324,24 +3232,7 @@ function orderIsCustomerHomeOrder(order) {
   return source === "self order" && ["delivery", "take away"].includes(type) && /^[DP]\d{1,6}$/i.test(number);
 }
 
-function orderUsesOutletPayment(order) {
-  return orderIsCustomerHomeOrder(order)
-    && ["cash_at_outlet", "courier_cash"].includes(String(order?.paymentProvider || order?.payment_provider || "").toLowerCase());
-}
-
 function orderVisibleInPosOrderList(order) {
-  if (orderUsesOutletPayment(order)) {
-    const delivery = String(order.customerOrderType || order.orderMode || order.customer_order_type || "").toUpperCase() === "DELIVERY" || order.type === "Delivery";
-    if (delivery && String(order.paymentProvider || order.payment_provider || "").toLowerCase() === "courier_cash") {
-      if (order.cancelledAt || order.cancelled_at || ["Dibatalkan", "Batal"].includes(order.status)) return true;
-      if (["SEARCHING_DRIVER", "NO_DRIVER_AVAILABLE"].includes(String(order.customerOrderStatus || order.customer_order_status || ""))) return false;
-      return Boolean(order.confirmedAt || order.confirmed_at || order.preparedAt || order.prepared_at || order.readyAt || order.ready_at)
-        || ["Sedang Disiapkan", "Siap Diambil", "Siap diambil", "Selesai", "Dibatalkan", "Batal"].includes(order.status)
-        || Boolean(order.cancelledAt || order.cancelled_at);
-    }
-    return !delivery || Boolean(order.driverId || order.driver_id)
-      || !["SEARCHING_DRIVER", "NO_DRIVER_AVAILABLE", ""].includes(String(order.customerOrderStatus || order.customer_order_status || ""));
-  }
   return !orderIsCustomerHomeOrder(order) || orderIsPaid(order);
 }
 
@@ -3471,37 +3362,7 @@ function orderSyncQueueId(order) {
   return order?.id || order?.number || "";
 }
 
-function orderIsRetiredTakeawayExpiryCancellation(order) {
-  return String(order?.source || "").trim().toLowerCase() === "self order"
-    && String(order?.type || "").trim().toLowerCase() === "take away"
-    && order?.status === "Dibatalkan"
-    && /^pesanan takeaway kedaluwarsa otomatis karena belum dibayar\.?$/i.test(String(order.cancelReason || order.cancel_reason || "").trim());
-}
-
-function rejectRetiredTakeawayExpiryCancellation(order, options = {}) {
-  if (!orderIsRetiredTakeawayExpiryCancellation(order)) return false;
-  const matches = item => item.orderId === orderSyncQueueId(order) || item.orderNumber === order.number;
-  state.syncQueue = (state.syncQueue || []).filter(item => !(item.type === "order" && matches(item)
-    && orderIsRetiredTakeawayExpiryCancellation(item.payload || order)));
-  const message = "Pembatalan otomatis Take Away sudah dinonaktifkan. Status pesanan dimuat ulang dari server.";
-  for (const current of new Set([order, ...(state.orders || []).filter(item => item.id === order.id || item.number === order.number)])) {
-    if (!orderIsRetiredTakeawayExpiryCancellation(current)) continue;
-    current.syncStatus = orderHasPendingLocalSync(current) ? "pending" : "blocked";
-    current.syncError = message;
-    if (current.takeawayStatus === "EXPIRED") current.takeawayStatus = "";
-    clearKitchenOptimisticOrderMutation(current);
-  }
-  saveState();
-  if (order.supabaseId) {
-    Promise.resolve(requestLiveOrderRefresh({ reason: "orders-refresh", force: true, silent: true, orderIds: [order.supabaseId] }))
-      .catch(error => console.warn("Takeaway canonical refresh failed", error));
-  }
-  if (!options.silent) toast(message, 4800);
-  return true;
-}
-
 function invalidateReportCaches() {
-  supabaseReportCoverage = null;
   supabaseReportLoadKey = "";
   supabaseReportsLoadedAt = 0;
   supabaseReportRecords = [];
@@ -3524,49 +3385,19 @@ function syncRetryDelayMs(attempts) {
   return retrySteps[Math.min(Math.max(0, attempts - 1), retrySteps.length - 1)];
 }
 
-function nextOrderSyncSequence() {
-  orderSyncSequence = Math.max(orderSyncSequence,
-    ...(state.syncQueue || []).map(item => Number(item.requestSequence || 0))) + 1;
-  return orderSyncSequence;
-}
-
-function markOrderSyncPending(order, error, options = {}) {
+function markOrderSyncPending(order, error) {
   if (!order) return;
   const queueId = orderSyncQueueId(order);
   if (!queueId) return;
   state.syncQueue ||= [];
   const existing = state.syncQueue.find(item => item.type === "order" && item.orderId === queueId);
-  const requestSequence = options.requestSequence || nextOrderSyncSequence();
-  const newerQueued = Number(existing?.requestSequence || 0) > requestSequence;
-  if (newerQueued && (options.statusOnly || existing.syncMode !== "status")) {
-    order.syncStatus = "pending";
-    return;
-  }
   const attempts = Number(existing?.attempts || 0) + 1;
   const now = Date.now();
-  const syncMode = options.statusOnly === true && (!existing || existing.syncMode === "status") ? "status" : "full";
-  let payload = JSON.parse(JSON.stringify(options.payload || order));
-  if (newerQueued && existing.payload) {
-    for (const key of ["status", "confirmedAt", "preparedAt", "readyAt", "completedAt", "cancelledAt", "cancelReason", "preparedItems"]) {
-      if (Object.prototype.hasOwnProperty.call(existing.payload, key)) payload[key] = existing.payload[key];
-    }
-  }
-  if (options.statusOnly && existing?.syncMode !== "status" && existing?.payload) {
-    payload = { ...existing.payload };
-    for (const key of ["status", "confirmedAt", "preparedAt", "readyAt", "completedAt", "cancelledAt", "cancelReason", "preparedItems"]) {
-      if (Object.prototype.hasOwnProperty.call(order, key)) payload[key] = order[key];
-    }
-    payload = JSON.parse(JSON.stringify(payload));
-  }
   const queueItem = {
     id: existing?.id || uid(),
     type: "order",
     orderId: queueId,
     orderNumber: order.number || "",
-    syncMode,
-    payload,
-    revision: Number(existing?.revision || 0) + 1,
-    requestSequence: Math.max(requestSequence, Number(existing?.requestSequence || 0)),
     attempts,
     lastError: error?.message || "Koneksi Supabase belum tersedia",
     lastAttemptAt: new Date(now).toISOString(),
@@ -3579,40 +3410,12 @@ function markOrderSyncPending(order, error, options = {}) {
   else state.syncQueue.push(queueItem);
 }
 
-function markOrderSynced(order, options = {}) {
+function markOrderSynced(order) {
   if (!order) return;
   const queueId = orderSyncQueueId(order);
-  const pending = (state.syncQueue || []).find(item => item.type === "order" && item.orderId === queueId);
-  const newerQueued = options.requestSequence !== undefined
-    ? Number(pending?.requestSequence || 0) > options.requestSequence
-    : options.queueRevision !== undefined && Number(pending?.revision || 0) !== options.queueRevision;
-  if (pending && newerQueued) {
-    order.syncStatus = "pending";
-    return;
-  }
-  if (options.statusOnly && pending && pending.syncMode !== "status") {
-    pending.requestSequence = Math.max(Number(pending.requestSequence || 0), Number(options.requestSequence || 0));
-    if (pending.payload) {
-      for (const key of ["status", "confirmedAt", "preparedAt", "readyAt", "completedAt", "cancelledAt", "cancelReason", "preparedItems"]) {
-        if (Object.prototype.hasOwnProperty.call(order, key)) pending.payload[key] = JSON.parse(JSON.stringify(order[key] ?? null));
-      }
-    }
-    order.syncStatus = "pending";
-    return;
-  }
   order.syncStatus = "synced";
   order.syncError = "";
   order.syncUpdatedAt = new Date().toISOString();
-  const localOrder = (state.orders || []).find(item => orderSyncQueueId(item) === queueId || item.number === order.number);
-  if (localOrder && localOrder !== order) {
-    if (options.statusOnly) {
-      for (const key of ["supabaseId", "status", "confirmedAt", "preparedAt", "readyAt", "completedAt", "cancelledAt", "cancelReason", "preparedItems", "syncStatus", "syncError", "syncUpdatedAt"]) {
-        if (Object.prototype.hasOwnProperty.call(order, key)) localOrder[key] = order[key];
-      }
-    } else {
-      Object.assign(localOrder, order);
-    }
-  }
   state.syncQueue = (state.syncQueue || []).filter(item => !(item.type === "order" && item.orderId === queueId));
   scheduleKitchenOptimisticOrderMutationClear(order);
 }
@@ -4538,24 +4341,14 @@ async function processSyncQueue(reason = "manual") {
       .filter(item => ["order", "master"].includes(item.type) && (isManualRetry || !item.nextAttemptAt || new Date(item.nextAttemptAt).getTime() <= now))
       .slice(0, 20);
     for (const item of pendingItems) {
-      if (!state.syncQueue.some(current => current.id === item.id)) continue;
       if (item.type === "order") {
-        const order = state.orders.find(candidate => orderSyncQueueId(candidate) === item.orderId || candidate.number === item.orderNumber)
-          || (item.payload ? JSON.parse(JSON.stringify(item.payload)) : null);
+        const order = state.orders.find(candidate => orderSyncQueueId(candidate) === item.orderId || candidate.number === item.orderNumber);
         if (!order) {
           state.syncQueue = state.syncQueue.filter(candidate => candidate.id !== item.id);
           saveState();
           continue;
         }
-        const queuedOrder = item.payload ? {
-          ...order, ...JSON.parse(JSON.stringify(item.payload)),
-          id: order.id, supabaseId: order.supabaseId || item.payload.supabaseId
-        } : order;
-        if (rejectRetiredTakeawayExpiryCancellation(queuedOrder, { silent: true })) continue;
-        if (!state.orders.includes(order)) state.orders.unshift(order);
-        await syncOrderToSupabase(queuedOrder, {
-          fromQueue: true, silent: true, statusOnly: item.syncMode === "status", requestSequence: item.requestSequence
-        });
+        await syncOrderToSupabase(order, { fromQueue: true, silent: true });
         continue;
       }
       if (item.type === "master") {
@@ -4604,7 +4397,7 @@ function toastOrderSyncOutcome(order, successMessage) {
   }
   syncPromise
     .then(synced => {
-      toast(synced ? successMessage : (order.syncConflict || offlineOrderSyncMessage()), synced ? 2400 : 4800);
+      toast(synced ? successMessage : offlineOrderSyncMessage(), synced ? 2400 : 4800);
       if (!synced && view === "pos") render();
     })
     .catch(error => {
@@ -4664,112 +4457,16 @@ async function retryMasterSyncQueue() {
   }
 }
 
-async function acquireOrderSyncLock(order) {
-  const key = order.number || order.supabaseId || order.id;
-  const previous = orderSyncLocks.get(key);
-  let release;
-  const pending = new Promise(resolve => { release = resolve; });
-  orderSyncLocks.set(key, pending);
-  if (previous) await previous;
-  return () => {
-    if (orderSyncLocks.get(key) === pending) orderSyncLocks.delete(key);
-    release();
-  };
-}
-
-async function updateSupabaseOrderStatus(order) {
-  const payload = { status: order.status, updated_at: new Date().toISOString() };
-  for (const [localKey, remoteKey] of [
-    ["confirmedAt", "confirmed_at"], ["preparedAt", "prepared_at"],
-    ["readyAt", "ready_at"], ["completedAt", "completed_at"], ["cancelledAt", "cancelled_at"]
-  ]) {
-    if (order[localKey]) payload[remoteKey] = order[localKey];
-  }
-  if (supabaseSupportsPreparedItems && order.items?.length && order.status === "Selesai") {
-    payload.prepared_items = order.preparedItems || {};
-  }
-  if (order.status === "Dibatalkan") payload.cancel_reason = order.cancelReason || "";
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    let query = supabaseClient.from("orders").update(payload);
-    query = order.supabaseId ? query.eq("id", order.supabaseId) : query.eq("order_number", order.number);
-    const result = await query.select("id").single();
-    if (!result.error) return result;
-    const message = String(result.error.message || "").toLowerCase();
-    if (Object.prototype.hasOwnProperty.call(payload, "prepared_items") && message.includes("prepared_items")) {
-      supabaseSupportsPreparedItems = false;
-      delete payload.prepared_items;
-    } else if (Object.prototype.hasOwnProperty.call(payload, "cancel_reason") && message.includes("cancel_reason")) {
-      delete payload.cancel_reason;
-    } else {
-      return result;
-    }
-  }
-  return { data: null, error: new Error("Gagal memperbarui status pesanan.") };
-}
-
-async function submitSelfOrderConfirmed(order) {
-  const startedAt = selfOrderSubmitStartedAt || Date.now();
-  const synced = await syncOrderToSupabase(order, { silent: true });
-  if (!synced) return false;
-  const remaining = Math.max(0, Math.min(400, 400 - (Date.now() - startedAt)));
-  if (remaining) await new Promise(resolve => window.setTimeout(resolve, remaining));
-  return Boolean(String(order.supabaseId || "").trim())
-    && order.syncStatus === "synced"
-    && !orderHasPendingLocalSync(order);
-}
-
 async function syncOrderToSupabase(order, options = {}) {
   if (!order) return false;
-  if (rejectRetiredTakeawayExpiryCancellation(order, options)) return false;
-  const snapshot = JSON.parse(JSON.stringify(order));
-  const localOrder = order;
-  localOrder.syncConflict = "";
-  order = snapshot;
-  options = {
-    ...options, payload: snapshot,
-    requestSequence: options.requestSequence || nextOrderSyncSequence(),
-    queueRevision: Number((state.syncQueue || []).find(item => item.type === "order" && item.orderId === orderSyncQueueId(order))?.revision || 0)
-  };
-  const orderItems = options.statusOnly ? [] : (snapshot.items || []);
-  const itemsSyncedAt = new Date().toISOString();
-  const itemSubtotal = orderItems.reduce((sum, item) => sum + cartItemTotal(item), 0);
-  const expectedSubtotal = Number(snapshot.subtotal);
-  if (!options.statusOnly && (!orderItems.length || !Number.isFinite(itemSubtotal)
-    || (Number.isFinite(expectedSubtotal) && Math.abs(expectedSubtotal - itemSubtotal) > 0.01))) {
-    const error = new Error("Rincian item pesanan belum tersedia. Muat ulang pesanan sebelum menyimpan.");
-    const existingPayload = (state.syncQueue || []).find(item => item.type === "order"
-      && item.orderId === orderSyncQueueId(order) && item.payload?.items?.length)?.payload;
-    markOrderSyncPending(localOrder, error, { ...options, payload: existingPayload || snapshot });
-    saveState();
-    if (!options.silent) toast(error.message, 4800);
-    return false;
-  }
   if (!canAttemptSupabaseSync()) {
-    markOrderSyncPending(localOrder, new Error(navigator.onLine === false ? "Browser offline" : "Supabase belum termuat"), options);
+    markOrderSyncPending(order, new Error(navigator.onLine === false ? "Browser offline" : "Supabase belum termuat"));
     saveState();
     if (!options.silent && view !== "selforder") toast(offlineOrderSyncMessage(), 4800);
     return false;
   }
-  const releaseLock = await acquireOrderSyncLock(order);
   try {
-    if (options.fromQueue) {
-      const queued = (state.syncQueue || []).find(item => item.type === "order"
-        && (item.orderId === orderSyncQueueId(order) || item.orderNumber === order.number));
-      if (!queued || (queued.requestSequence && queued.requestSequence !== options.requestSequence)) return true;
-    }
     await ensureSupabaseProfile();
-    if (options.statusOnly) {
-      const { data, error } = await updateSupabaseOrderStatus(order);
-      if (error) throw error;
-      if (!data?.id) throw new Error("Pesanan belum tersedia di server.");
-      order.supabaseId = data.id;
-      localOrder.supabaseId = data.id;
-      markOrderSynced(localOrder, options);
-      invalidateReportCaches();
-      saveState();
-      if (view === "reports") requestActiveReportData(true);
-      return true;
-    }
     const orderPayload = {
       order_number: order.number,
       source: order.source || "Kasir",
@@ -4797,21 +4494,10 @@ async function syncOrderToSupabase(order, options = {}) {
       notification_categories: orderPushNotificationCategories(order),
       prepared_items: order.preparedItems || {}
     };
-    if (!order.supabaseId && order.customerPhone) orderPayload.customer_phone = order.customerPhone;
-    if (orderUsesOutletPayment(order) && !order.supabaseId) Object.assign(orderPayload, {
-      customer_order_type: order.customerOrderType || order.orderMode,
-      customer_order_status: order.customerOrderStatus || "WAITING_ACCEPTANCE",
-      pickup_time: order.pickupTime || null,
-      payment_provider: order.paymentProvider, public_order_token: order.publicOrderToken || "",
-      delivery_address: order.deliveryAddress || "", delivery_note: order.deliveryNote || "",
-      delivery_location: order.deliveryLocation || "", delivery_latitude: order.deliveryLatitude ?? null,
-      delivery_longitude: order.deliveryLongitude ?? null
-    });
-    const { data: orderRows, error: orderError } = await upsertSupabaseOrderPayload(orderPayload, order);
+    const { data: orderRows, error: orderError } = await upsertSupabaseOrderPayload(orderPayload);
     if (orderError) throw orderError;
     const supabaseOrderId = orderRows.id;
     order.supabaseId = supabaseOrderId;
-    localOrder.supabaseId = supabaseOrderId;
     saveState();
 
     const { data: existingItems, error: existingItemsError } = await supabaseClient
@@ -4820,8 +4506,14 @@ async function syncOrderToSupabase(order, options = {}) {
       .eq("order_id", supabaseOrderId);
     if (existingItemsError) throw existingItemsError;
     const existingItemIds = (existingItems || []).map(item => item.id);
+    if (existingItemIds.length) {
+      const { error: deleteAddonsError } = await supabaseClient.from("order_item_addons").delete().in("order_item_id", existingItemIds);
+      if (deleteAddonsError) throw deleteAddonsError;
+    }
+    const { error: deleteItemsError } = await supabaseClient.from("order_items").delete().eq("order_id", supabaseOrderId);
+    if (deleteItemsError) throw deleteItemsError;
 
-    const itemRows = orderItems.map((item, index) => {
+    const itemRows = (order.items || []).map((item, index) => {
       const itemCategory = orderItemKitchenNotificationCategory(item);
       return {
         order_id: supabaseOrderId,
@@ -4839,8 +4531,6 @@ async function syncOrderToSupabase(order, options = {}) {
           stockTracked: item.stockTracked === true,
           stockVariantKey: item.stockVariantKey || cartItemVariantKey(item),
           clientLineId: item.lineId || "",
-          clientSyncCreatedAt: itemsSyncedAt,
-          clientSyncComplete: false,
           clientOrderIndex: index,
           orderBatch: orderItemBatch(item),
           orderBatchCreatedAt: orderItemBatchCreatedAt(item),
@@ -4850,72 +4540,41 @@ async function syncOrderToSupabase(order, options = {}) {
       };
     });
     let savedItems = [];
-    try {
+    if (itemRows.length) {
       const { data, error } = await supabaseClient.from("order_items").insert(itemRows).select("id");
       if (error) throw error;
       savedItems = data || [];
-      if (savedItems.length !== itemRows.length) throw new Error("Rincian pesanan belum tersimpan lengkap.");
+    }
 
-      const addonRows = [];
-      orderItems.forEach((item, index) => {
-        const orderItemId = savedItems[index]?.id;
-        if (!orderItemId) return;
-        (item.addons || []).forEach(addon => {
-          addonRows.push({
-            order_item_id: orderItemId,
-            addon_id: null,
-            addon_name: addon.name,
-            qty: Number(addon.qty || 1),
-            price: Number(addon.price || 0),
-            cost: Number(addon.cost || 0)
-          });
+    const addonRows = [];
+    (order.items || []).forEach((item, index) => {
+      const orderItemId = savedItems[index]?.id;
+      if (!orderItemId) return;
+      (item.addons || []).forEach(addon => {
+        addonRows.push({
+          order_item_id: orderItemId,
+          addon_id: null,
+          addon_name: addon.name,
+          qty: Number(addon.qty || 1),
+          price: Number(addon.price || 0),
+          cost: Number(addon.cost || 0)
         });
       });
-      if (addonRows.length) {
-        const { error } = await supabaseClient.from("order_item_addons").insert(addonRows);
-        if (error) {
-          const missingCostColumn = error.code === "42703" || String(error.message || "").toLowerCase().includes("cost");
-          if (!missingCostColumn) throw error;
-          const compatibleRows = addonRows.map(({ cost, ...row }) => row);
-          const { error: retryError } = await supabaseClient.from("order_item_addons").insert(compatibleRows);
-          if (retryError) throw retryError;
-        }
+    });
+    if (addonRows.length) {
+      const { error } = await supabaseClient.from("order_item_addons").insert(addonRows);
+      if (error) {
+        const missingCostColumn = error.code === "42703" || String(error.message || "").toLowerCase().includes("cost");
+        if (!missingCostColumn) throw error;
+        const compatibleRows = addonRows.map(({ cost, ...row }) => row);
+        const { error: retryError } = await supabaseClient.from("order_item_addons").insert(compatibleRows);
+        if (retryError) throw retryError;
       }
-      // Readers only use a replacement after its addons are complete.
-      const completedRows = itemRows.map((item, index) => ({
-        ...item, id: savedItems[index].id,
-        variant_data: { ...item.variant_data, clientSyncComplete: true }
-      }));
-      const { data: completedItems, error: completedError } = await supabaseClient.from("order_items")
-        .upsert(completedRows, { onConflict: "id" }).select("id");
-      if (completedError) throw completedError;
-      if (completedItems?.length !== itemRows.length) throw new Error("Rincian pesanan belum siap dibaca.");
-    } catch (error) {
-      // Only roll back this attempt; the previous item details remain available.
-      const insertedIds = savedItems.map(item => item.id).filter(Boolean);
-      if (insertedIds.length) {
-        try {
-          const addonsCleanup = await supabaseClient.from("order_item_addons").delete().in("order_item_id", insertedIds);
-          if (addonsCleanup.error) throw addonsCleanup.error;
-          const itemsCleanup = await supabaseClient.from("order_items").delete().eq("order_id", supabaseOrderId).in("id", insertedIds);
-          if (itemsCleanup.error) throw itemsCleanup.error;
-        } catch (cleanupError) {
-          console.warn("Incomplete order replacement cleanup failed", cleanupError);
-        }
-      }
-      throw error;
-    }
-    // Publish the replacement before removing the captured old rows.
-    if (existingItemIds.length) {
-      const { error: deleteAddonsError } = await supabaseClient.from("order_item_addons").delete().in("order_item_id", existingItemIds);
-      if (deleteAddonsError) throw deleteAddonsError;
-      const { error: deleteItemsError } = await supabaseClient.from("order_items").delete().eq("order_id", supabaseOrderId).in("id", existingItemIds);
-      if (deleteItemsError) throw deleteItemsError;
     }
 
+    const { error: paymentDeleteError } = await supabaseClient.from("payments").delete().eq("order_id", supabaseOrderId);
+    if (paymentDeleteError) throw paymentDeleteError;
     if (order.paymentStatus === "Lunas") {
-      const { error: paymentDeleteError } = await supabaseClient.from("payments").delete().eq("order_id", supabaseOrderId);
-      if (paymentDeleteError) throw paymentDeleteError;
       const paymentPayload = {
         order_id: supabaseOrderId,
         method: order.paymentMethod || "Tunai",
@@ -4933,13 +4592,10 @@ async function syncOrderToSupabase(order, options = {}) {
       }
       if (paymentError) throw paymentError;
     }
-    const { error: finalizeError } = await supabaseClient.from("orders")
-      .update({ updated_at: new Date().toISOString() }).eq("id", supabaseOrderId).select("id").single();
-    if (finalizeError) throw finalizeError;
+    markOrderSynced(order);
     if (order.pendingPushEventType && !options.fromQueueStatusOnly) {
-      delete localOrder.pendingPushEventType;
+      delete order.pendingPushEventType;
     }
-    markOrderSynced(localOrder, options);
     invalidateReportCaches();
     saveState();
     if (view === "reports") {
@@ -4948,78 +4604,62 @@ async function syncOrderToSupabase(order, options = {}) {
     return true;
   } catch (error) {
     console.error("Supabase order sync failed", error);
-    if (error.code === "ORDER_ALREADY_PAID") {
-      const message = "Pesanan sudah lunas di perangkat lain. Data pembayaran dimuat ulang.";
-      state.syncQueue = (state.syncQueue || []).filter(item => !(item.type === "order"
-        && (item.orderId === orderSyncQueueId(order) || item.orderNumber === order.number)
-        && item.payload?.paymentStatus !== "Lunas"));
-      for (const current of new Set([localOrder, ...state.orders.filter(item => item.number === order.number)])) {
-        current.paymentStatus = "Lunas";
-        current.syncStatus = orderHasPendingLocalSync(current) ? "pending" : "synced";
-        current.syncConflict = message;
-      }
-      saveState();
-      requestLiveOrderRefresh({ reason: "orders-refresh", force: true, silent: true, orderIds: [error.orderId] });
-      if (!options.silent) toast(message, 4800);
-      return false;
-    }
-    markOrderSyncPending(localOrder, error, options);
+    markOrderSyncPending(order, error);
     saveState();
     if (!options.silent && view !== "selforder") toast(offlineOrderSyncMessage(), 4800);
     return false;
-  } finally {
-    releaseLock();
   }
 }
 
-async function upsertSupabaseOrderPayload(orderPayload, order = {}) {
-  const { data: current, error: readError } = await supabaseClient.from("orders")
-    .select("id,payment_status,updated_at,public_order_token").eq("order_number", orderPayload.order_number).maybeSingle();
-  if (readError) return { data: null, error: readError };
-  // A number alone must never identify a different customer's new order.
-  if (current && ((order.supabaseId && current.id !== order.supabaseId)
-    || (!order.supabaseId && order.publicOrderToken && current.public_order_token !== order.publicOrderToken))) {
-    return { data: null, error: { code: "ORDER_NUMBER_CONFLICT", message: "Nomor pesanan sudah digunakan. Silakan coba lagi." } };
-  }
-  if (current?.payment_status === "Lunas" && orderPayload.payment_status !== "Lunas") {
-    return { data: null, error: { code: "ORDER_ALREADY_PAID", orderId: current.id, message: "Pesanan sudah lunas." } };
-  }
+async function upsertSupabaseOrderPayload(orderPayload) {
   let writePayload = { ...orderPayload };
   if (!supabaseSupportsPreparedItems) delete writePayload.prepared_items;
   if (!supabaseSupportsOrderNotificationCategories) delete writePayload.notification_categories;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    let query;
-    if (current) {
-      query = supabaseClient.from("orders").update(writePayload).eq("id", current.id);
-      if (current.updated_at) query = query.eq("updated_at", current.updated_at);
-      if (current.payment_status) query = query.eq("payment_status", current.payment_status);
-    } else {
-      query = supabaseClient.from("orders").insert(writePayload);
-    }
-    const result = await query.select("id").single();
-    if (!result.error) return result;
-    if (current && result.error.code === "PGRST116") {
-      return { data: null, error: new Error("Pesanan berubah di perangkat lain. Muat ulang pesanan sebelum menyimpan.") };
-    }
-    const message = String(result.error.message || "").toLowerCase();
-    const missingColumn = ["cancel_reason", "notification_categories", "prepared_items"].find(column =>
-      Object.prototype.hasOwnProperty.call(writePayload, column) && message.includes(column));
-    if (!missingColumn) return result;
-    delete writePayload[missingColumn];
-    if (missingColumn === "notification_categories") supabaseSupportsOrderNotificationCategories = false;
-    if (missingColumn === "prepared_items") supabaseSupportsPreparedItems = false;
+  let result = await supabaseClient
+    .from("orders")
+    .upsert(writePayload, { onConflict: "order_number" })
+    .select("id")
+    .single();
+  const missingCancelReason = result.error
+    && (result.error.code === "42703" || String(result.error.message || "").toLowerCase().includes("cancel_reason"));
+  if (missingCancelReason) {
+    const { cancel_reason, ...payloadWithoutCancelReason } = writePayload;
+    writePayload = payloadWithoutCancelReason;
+    result = await supabaseClient
+      .from("orders")
+      .upsert(writePayload, { onConflict: "order_number" })
+      .select("id")
+      .single();
   }
-  return { data: null, error: new Error("Gagal menyimpan pesanan.") };
+  const missingNotificationCategories = result.error
+    && (result.error.code === "42703" || String(result.error.message || "").toLowerCase().includes("notification_categories"));
+  if (missingNotificationCategories && supabaseSupportsOrderNotificationCategories) {
+    supabaseSupportsOrderNotificationCategories = false;
+    delete writePayload.notification_categories;
+    result = await supabaseClient
+      .from("orders")
+      .upsert(writePayload, { onConflict: "order_number" })
+      .select("id")
+      .single();
+  }
+  const missingPreparedItems = result.error
+    && (result.error.code === "42703" || String(result.error.message || "").toLowerCase().includes("prepared_items"));
+  if (!missingPreparedItems || !supabaseSupportsPreparedItems) return result;
+  supabaseSupportsPreparedItems = false;
+  const { prepared_items, cancel_reason, notification_categories, ...compatiblePayload } = orderPayload;
+  return supabaseClient
+    .from("orders")
+    .upsert(compatiblePayload, { onConflict: "order_number" })
+    .select("id")
+    .single();
 }
 
 async function syncOrderPreparedItemsToSupabase(order, options = {}) {
   if (!order || !supabaseSupportsPreparedItems || !canAttemptSupabaseSync()) return false;
-  const preparedItems = JSON.parse(JSON.stringify(order.preparedItems || {}));
-  const releaseLock = await acquireOrderSyncLock(order);
   try {
     await ensureSupabaseProfile();
     const payload = {
-      prepared_items: preparedItems,
+      prepared_items: order.preparedItems || {},
       updated_at: new Date().toISOString()
     };
     let query = supabaseClient.from("orders").update(payload);
@@ -5040,8 +4680,6 @@ async function syncOrderPreparedItemsToSupabase(order, options = {}) {
     console.error("Supabase prepared item sync failed", error);
     if (!options.silent && view !== "selforder") toast("Checklist belum terkirim, cek koneksi lalu coba lagi.", 3600);
     return false;
-  } finally {
-    releaseLock();
   }
 }
 
@@ -5434,6 +5072,9 @@ function normalizeStoreSettingsRow(row) {
     orderNotificationReminderSeconds: Number.isFinite(Number(selfOrderSettings.notifications?.reminderIntervalSeconds))
       ? Math.max(10, Math.min(3600, Number(selfOrderSettings.notifications.reminderIntervalSeconds)))
       : 180,
+    printerConnection: selfOrderSettings.printer?.connection || state.settings.printerConnection || "Bluetooth",
+    printerDevice: selfOrderSettings.printer?.device || state.settings.printerDevice || "",
+    printerDeviceId: selfOrderSettings.printer?.deviceId || state.settings.printerDeviceId || "",
     staffSync: selfOrderSettings.staff || null,
     masterDeletedProducts: normalizeDeletedProductMarkers(selfOrderSettings.masterDeletedProducts || []),
     masterDeletedCategories: normalizeDeletedNameMarkers(selfOrderSettings.masterDeletedCategories || []),
@@ -5490,6 +5131,11 @@ function storeSettingsPayload() {
         volume: Math.max(0, Math.min(100, Number(settings.orderNotificationVolume || 70))),
         reminderIntervalSeconds: Math.max(10, Math.min(3600, Number(settings.orderNotificationReminderSeconds || 180)))
       },
+      printer: {
+        connection: settings.printerConnection || "Bluetooth",
+        device: settings.printerDevice || "",
+        deviceId: settings.printerDeviceId || ""
+      },
       staff: staffSyncPayload(),
       masterDeletedProducts: normalizeDeletedProductMarkers(state.deletedProducts || []),
       masterDeletedCategories: normalizeDeletedNameMarkers(state.deletedCategories || []),
@@ -5518,34 +5164,13 @@ async function selectStoreSettingsRow() {
   return result.data || null;
 }
 
-async function selectPublicSelfOrderSettingsRow() {
-  const fields = [
-    "id", "store_name", "store_address", "store_phone", "receipt_store_name", "receipt_footer",
-    "receipt_width", "receipt_show_table", "receipt_show_qr", "updated_at",
-    "app_name:self_order_settings->>appName", "outlet_name:self_order_settings->>outletName",
-    "profile_image:self_order_settings->>profileImage", "promo_image:self_order_settings->>promoImage",
-    "promo_target:self_order_settings->>promoTargetProductId", "promo_label:self_order_settings->>promoButtonLabel",
-    "promo_slides:self_order_settings->promoSlides", "upsell_ids:self_order_settings->upsellProductIds",
-    "receipt_logo:self_order_settings->receipt->>logoDataUrl"
-  ];
-  const rows = await supabaseRestSelect("store_settings", fields.join(","), { id: `eq.${STORE_SETTINGS_ROW_ID}`, limit: "1" });
-  const row = rows?.[0];
-  if (!row) return null;
-  return { ...row, self_order_settings: {
-    appName: row.app_name, outletName: row.outlet_name, profileImage: row.profile_image,
-    promoImage: row.promo_image, promoTargetProductId: row.promo_target,
-    promoButtonLabel: row.promo_label, promoSlides: row.promo_slides,
-    upsellProductIds: row.upsell_ids, receipt: { logoDataUrl: row.receipt_logo }
-  } };
-}
-
 async function loadStoreSettingsFromSupabase(options = {}) {
-  if ((!supabaseReadable() && !(IS_SELF_ORDER_APP && supabaseRestReadable())) || storeSettingsLoading || !localDbReady) return;
+  if (!supabaseReadable() || storeSettingsLoading || !localDbReady) return;
   const freshEnough = Date.now() - storeSettingsLoadedAt < 60000;
   if (!options.force && freshEnough) return;
   storeSettingsLoading = true;
   try {
-    const row = supabaseReadable() ? await selectStoreSettingsRow() : await selectPublicSelfOrderSettingsRow();
+    const row = await selectStoreSettingsRow();
     const settings = normalizeStoreSettingsRow(row);
     if (settings) {
       const { staffSync, masterDeletedProducts, masterDeletedCategories, masterDeletedAddons, ...storeSettings } = settings;
@@ -5750,11 +5375,7 @@ function liveOrderSyncSince(options = {}) {
 }
 
 async function loadRecentOrdersFromSupabase(options = {}) {
-  if (!supabaseReadable()) return;
-  if (realtimeOrdersLoading) {
-    (options.orderIds || []).filter(Boolean).forEach(id => realtimePendingOrderIds.add(String(id)));
-    return;
-  }
+  if (!supabaseReadable() || realtimeOrdersLoading) return;
   if (!localDbReady) {
     pendingLiveOrderRefreshAfterLocalDbReady = {
       reason: options.reason || "orders-refresh",
@@ -5848,7 +5469,6 @@ async function loadRecentOrdersFromSupabase(options = {}) {
   } finally {
     realtimeOrdersLoading = false;
     flushPendingNativePushOrderRefresh();
-    if (realtimePendingOrderIds.size) scheduleRealtimeRefresh("orders");
   }
 }
 
@@ -5994,7 +5614,6 @@ function dedupeSupabaseOrderItemRows(itemRows = []) {
   const rows = [];
   const indexes = new Map();
   itemRows.forEach(item => {
-    if (item.variant_data?.clientSyncComplete === false) return;
     const key = supabaseOrderItemDedupeKey(item);
     if (!key) {
       rows.push(item);
@@ -6006,9 +5625,7 @@ function dedupeSupabaseOrderItemRows(itemRows = []) {
       rows.push(item);
       return;
     }
-    const previousTime = Date.parse(rows[existingIndex].variant_data?.clientSyncCreatedAt || "") || 0;
-    const incomingTime = Date.parse(item.variant_data?.clientSyncCreatedAt || "") || 0;
-    if (incomingTime >= previousTime) rows[existingIndex] = item;
+    rows[existingIndex] = item;
   });
   return rows;
 }
@@ -6067,12 +5684,6 @@ function normalizeSupabaseLiveOrder(orderRow, itemRows = [], addonsByItemId = ne
     receivedAmount: Number(payment?.received_amount || existing?.receivedAmount || 0),
     changeAmount: Number(payment?.change_amount || existing?.changeAmount || 0),
     paymentBreakdown: normalizePaymentBreakdown(payment?.payment_breakdown || existing?.paymentBreakdown || existing?.payment_breakdown || {}),
-    customerOrderType: orderRow.customer_order_type || existing?.customerOrderType || "",
-    orderMode: orderRow.customer_order_type || existing?.orderMode || "",
-    customerOrderStatus: orderRow.customer_order_status || existing?.customerOrderStatus || "",
-    customerPhone: orderRow.customer_phone || existing?.customerPhone || "",
-    pickupTime: orderRow.pickup_time || existing?.pickupTime || "",
-    driverId: orderRow.driver_id || existing?.driverId || "",
     paymentProvider: orderRow.payment_provider || existing?.paymentProvider || "",
     paymentReference: orderRow.payment_reference || existing?.paymentReference || "",
     paymentGatewayTransactionId: orderRow.payment_gateway_transaction_id || existing?.paymentGatewayTransactionId || "",
@@ -6102,15 +5713,6 @@ function normalizeSupabaseLiveOrder(orderRow, itemRows = [], addonsByItemId = ne
     syncStatus: "synced",
     syncError: ""
   };
-  const pending = (state.syncQueue || []).find(item => item.type === "order"
-    && item.orderNumber === orderRow.order_number && item.syncMode !== "status" && item.payload?.items?.length);
-  if (pending && orderRow.payment_status === "Lunas" && pending.payload.paymentStatus !== "Lunas") {
-    state.syncQueue = state.syncQueue.filter(item => item !== pending);
-  } else if (pending) {
-    Object.assign(normalizedOrder, JSON.parse(JSON.stringify(pending.payload)), {
-      id: normalizedOrder.id, supabaseId: orderRow.id, syncStatus: "pending", syncError: pending.lastError || ""
-    });
-  }
   return sanitizeKitchenPreparedItems(applyPendingKitchenOrderMutation(normalizedOrder, existing));
 }
 
@@ -6359,11 +5961,7 @@ async function refreshSelfOrderTableOrders(table, options = {}) {
   return loadSelfOrderTableOrdersFromSupabase(table, options);
 }
 
-function normalizeSupabaseReportRecord(row, revenueOrder = null) {
-  const courierCash = revenueOrder?.payment_provider === "courier_cash";
-  const outletTotal = courierCash
-    ? Math.max(0, Number(revenueOrder.grand_total || 0) - Number(revenueOrder.delivery_fee || 0))
-    : Number(row.total || 0);
+function normalizeSupabaseReportRecord(row) {
   return {
     id: row.id,
     number: row.number || row.importKey || "-",
@@ -6380,28 +5978,10 @@ function normalizeSupabaseReportRecord(row, revenueOrder = null) {
     status: row.order_status || row.status || "",
     subtotal: Number(row.subtotal || 0),
     discount: Number(row.discount || 0),
-    total: outletTotal,
-    outletRevenueVerified: courierCash,
+    total: Number(row.total || 0),
     profit: Number(row.profit || 0),
     items: []
   };
-}
-
-async function hydrateReportOutletRevenue(rows) {
-  const deliveryRows = rows.filter(row => !row.imported && String(row.order_type || "").trim().toLowerCase() === "delivery");
-  const ids = [...new Set(deliveryRows.map(row => row.id).filter(Boolean))];
-  const revenueById = new Map();
-  for (let from = 0; from < ids.length; from += 100) {
-    const { data, error } = await supabaseClient.from("orders")
-      .select("id,payment_provider,delivery_fee,grand_total")
-      .in("id", ids.slice(from, from + 100));
-    if (error) throw new Error(error.message || "Rincian pendapatan delivery belum dapat diverifikasi.");
-    for (const order of data || []) revenueById.set(order.id, order);
-  }
-  if (deliveryRows.some(row => !revenueById.has(row.id))) {
-    throw new Error("Rincian pendapatan delivery belum dapat diverifikasi. Muat ulang laporan.");
-  }
-  return rows.map(row => normalizeSupabaseReportRecord(row, row.imported ? null : revenueById.get(row.id)));
 }
 
 function normalizeLegacySalesRow(row) {
@@ -6503,13 +6083,11 @@ async function loadSupabaseOrderDetailForReport(record) {
       type: orderRow.type || record.type,
       customer: orderRow.customer_name || record.customer,
       serviceInfo: orderRow.service_info || record.serviceInfo,
-      note: orderRow.note || record.note || "",
       paymentMethod: payment.method || record.paymentMethod,
       paymentStatus: orderRow.payment_status || record.paymentStatus,
       subtotal: Number(orderRow.subtotal ?? record.subtotal ?? 0),
       discount: Number(orderRow.discount ?? record.discount ?? 0),
-      total: Math.max(0, Number(orderRow.grand_total ?? record.total ?? 0)
-        - (orderRow.payment_provider === "courier_cash" ? Number(orderRow.delivery_fee || 0) : 0)),
+      total: Number(orderRow.grand_total ?? record.total ?? 0),
       profit: Number(orderRow.profit_total ?? record.profit ?? 0),
       receivedAmount: Number(payment.received_amount || 0),
       changeAmount: Number(payment.change_amount || 0),
@@ -6636,9 +6214,8 @@ async function loadSupabaseReportRecords(force = false, range = reportRange()) {
       if (!data || data.length < pageSize) break;
     }
     const merged = new Map();
-    for (const row of await hydrateReportOutletRevenue(allRows)) merged.set(reportMergeKey(row), row);
+    for (const row of allRows.map(normalizeSupabaseReportRecord)) merged.set(reportRecordKey(row), row);
     supabaseReportRecords = [...merged.values()];
-    supabaseReportCoverage = { start: new Date(range.start), end: new Date(range.end) };
     supabaseReportsLoadedAt = Date.now();
     supabaseReportLoadKey = loadKey;
     reportRenderAfterDataLoad();
@@ -7583,38 +7160,10 @@ function refreshPosPage(options = {}) {
 }
 
 function refreshPosOrRender(options = {}) {
-  updateOrderNavigationBadges();
   if (!refreshPosPage(options)) render();
 }
 
-function replaceSelfOrderMarkup(target, markup) {
-  if (view !== "selforder") { target.innerHTML = markup; return; }
-  const images = new Map();
-  const identity = image => `${image.dataset.mediaCacheKey}|${image.getAttribute("alt") || ""}|${image.className}`;
-  target.querySelectorAll("img[data-media-cache-key]").forEach(image => {
-    const key = identity(image);
-    if (!images.has(key)) images.set(key, []);
-    images.get(key).push(image);
-  });
-  const template = document.createElement("template");
-  template.innerHTML = markup;
-  template.content.querySelectorAll("img[data-media-cache-key]").forEach(next => {
-    const previous = images.get(identity(next))?.shift();
-    if (!previous) return;
-    for (const attribute of Array.from(previous.attributes)) {
-      if (attribute.name === "data-loaded" && previous.complete && previous.naturalWidth > 0) continue;
-      if (!next.hasAttribute(attribute.name)) previous.removeAttribute(attribute.name);
-    }
-    for (const attribute of Array.from(next.attributes)) {
-      if (attribute.name !== "src") previous.setAttribute(attribute.name, attribute.value);
-    }
-    next.replaceWith(previous);
-  });
-  target.replaceChildren(template.content);
-}
-
 function render() {
-  if (IS_SELF_ORDER_APP && window.FRESIN_GATEWAY_BOOT_PENDING === true) return;
   captureActiveModalDraft();
   if (IS_SELF_ORDER_APP) {
     renderSelfOrderStandalone();
@@ -7638,7 +7187,7 @@ function render() {
     navOpen ? "nav-open" : "",
     navCollapsed ? "nav-collapsed" : ""
   ].filter(Boolean).join(" ");
-  replaceSelfOrderMarkup(app, `
+  app.innerHTML = `
     <div class="app-shell ${shellClasses}">
       ${navOpen ? `<button class="nav-scrim" onclick="closeNav()" aria-label="Tutup menu"></button>` : ""}
       <aside class="sidebar">
@@ -7649,7 +7198,7 @@ function render() {
           <p>Aplikasi toko, dapur, kasir</p>
         </div>
         <nav class="nav">
-          ${nav.map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" onclick="go('${id}')"><span class="nav-icon">${navIcon(id)}</span><span class="nav-label">${label}</span>${renderOrderNavigationBadge(id)}</button>`).join("")}
+          ${nav.map(([id, icon, label]) => `<button class="${view === id ? "active" : ""}" onclick="go('${id}')"><span class="nav-icon">${navIcon(id)}</span><span class="nav-label">${label}</span></button>`).join("")}
         </nav>
         <div class="sync-card">
           <strong>Mode lokal aktif</strong><br />
@@ -7670,7 +7219,7 @@ function render() {
     </div>
     <div class="drawer" id="drawer"></div>
     <div class="toast" id="toast"></div>
-  `);
+  `;
   restoreActiveModal();
   normalizeFormAccessibility(app);
   restoreSelfOrderCategoryScroll(false);
@@ -7683,7 +7232,7 @@ function render() {
 function renderSelfOrderStandalone() {
   view = "selforder";
   syncSelfOrderTableFromUrl();
-  replaceSelfOrderMarkup(app, `
+  app.innerHTML = `
     <div class="app-shell view-selforder self-order-standalone-shell">
       <main class="content self-order-standalone-content">
         <section class="page">${renderSelfOrder()}</section>
@@ -7691,7 +7240,7 @@ function renderSelfOrderStandalone() {
     </div>
     <div class="drawer" id="drawer"></div>
     <div class="toast" id="toast"></div>
-  `);
+  `;
   restoreActiveModal();
   normalizeFormAccessibility(app);
   restoreSelfOrderCategoryScroll(false);
@@ -8520,7 +8069,6 @@ function printReceiptWithNativeBridge(order) {
   const nativeBridge = window.KasirinNative;
   const printReceipt = androidBridge?.printReceipt || nativeBridge?.printReceipt;
   if (typeof printReceipt !== "function") return false;
-  const printerDeviceId = String(state.settings?.printerDeviceId || "").trim();
   const payload = {
     orderNumber: displayOrderNumber(order?.number || order?.id || "struk"),
     html: printableReceiptHtml(order),
@@ -8528,9 +8076,8 @@ function printReceiptWithNativeBridge(order) {
     receipt: receiptPrintModel(order),
     width: state.settings?.receiptWidth || "58mm",
     printerConnection: state.settings?.printerConnection || "Bluetooth",
-    printerPrintMode: state.settings?.printerPrintMode === "text" ? "text" : "formatted",
     printerDevice: state.settings?.printerDevice || "",
-    ...(printerDeviceId ? { printerDeviceId } : {})
+    printerDeviceId: state.settings?.printerDeviceId || ""
   };
   try {
     if (androidBridge?.printReceipt) androidBridge.printReceipt(JSON.stringify(payload));
@@ -8965,14 +8512,10 @@ async function commitLimitedStockReservations(items, orderNumber, source = limit
   }
 }
 
-async function restoreLimitedStockCommit(orderNumber, intent = "") {
+async function restoreLimitedStockCommit(orderNumber) {
   if (!orderNumber || !canAttemptSupabaseSync()) return false;
   try {
-    const explicitTakeawayRestore = /^T\d+$/i.test(orderNumber) && ["manual_delete", "submit_failed"].includes(intent);
-    const rpcName = explicitTakeawayRestore ? "restore_takeaway_stock_with_intent" : "restore_limited_stock_commit";
-    const payload = { p_order_number: orderNumber };
-    if (explicitTakeawayRestore) payload.p_intent = intent;
-    const { data, error } = await supabaseClient.rpc(rpcName, payload);
+    const { data, error } = await supabaseClient.rpc("restore_limited_stock_commit", { p_order_number: orderNumber });
     if (error) throw error;
     const result = Array.isArray(data) ? data[0] : data;
     return result?.restored === true;
@@ -9246,16 +8789,12 @@ function groupedOrderItems(order) {
     .map(([batch, items]) => ({ batch, label: orderBatchLabel(batch), items }));
 }
 
-function orderCustomerNoteDisplay(note) {
-  return String(note || "").split(/\s*(?:Kurir membayar harga produk di outlet|Pin lokasi\s*:|Patokan alamat\s*:|Jam pengambilan\s*:|Koordinat\s*:|Alamat (?:penerima|pengantaran)\s*:)/i)[0].trim();
-}
-
 function orderGroupNote(order, group) {
   const batchNote = (group?.items || [])
     .map(item => String(item.variantData?.orderBatchNote || "").trim())
     .find(Boolean);
-  if (batchNote) return orderCustomerNoteDisplay(batchNote);
-  return Number(group?.batch || 1) === 1 ? orderCustomerNoteDisplay(order?.note) : "";
+  if (batchNote) return batchNote;
+  return Number(group?.batch || 1) === 1 ? String(order?.note || "").trim() : "";
 }
 
 function selfOrderOpenTableOrder(table) {
@@ -9336,13 +8875,13 @@ function renderSelfOrderOpenTableDecision(order, table, choice) {
   return `
     <section class="self-order-open-table-card" aria-live="polite">
       <div class="self-order-open-table-head">
-        <span class="self-order-open-table-icon" aria-hidden="true">${selfOrderAsikIcon("history")}</span>
+        <span class="self-order-open-table-icon" aria-hidden="true"><i></i></span>
         <strong>Apakah ini pesanan anda sebelumnya ?</strong>
       </div>
       <div class="self-order-open-table-meta">
-        <span><span class="self-order-open-table-label">Meja</span><b>${escapeHtml(table || "A-1")}</b></span>
-        <span><span class="self-order-open-table-label">Nama</span><b>${customer ? escapeHtml(customer) : "-"}</b></span>
-        <span><span class="self-order-open-table-label">Status</span><b class="self-order-open-table-status">${escapeHtml(order?.paymentStatus || "Belum dibayar")}</b></span>
+        <span>Meja: <b>${escapeHtml(table || "A-1")}</b></span>
+        <span>Nama: <b>${customer ? escapeHtml(customer) : "-"}</b></span>
+        <span>Status: <b>${escapeHtml(order?.paymentStatus || "Belum dibayar")}</b></span>
       </div>
       <div class="self-order-open-table-history">
         ${renderSelfOrderOpenTableHistory(order)}
@@ -9427,20 +8966,18 @@ function renderCartSuccess() {
   if (!result) {
     return `<div class="success-card"><strong>Belum ada hasil</strong><p>Proses atau simpan pesanan terlebih dahulu.</p><button class="btn green" onclick="setCartStep('items')">Kembali</button></div>`;
   }
-  const message = result.paid && result.message === "Pesanan belum bayar sudah dilunasi. Struk kasir siap dicetak."
-    ? "pesanan sudah lunas, struk kasir siap dicetak" : result.message;
   return `
     <div class="success-card">
-      <div class="success-icon pos-success-asik" aria-hidden="true">${selfOrderAsikIcon("success")}</div>
+      <div class="success-icon">&#10003;</div>
       <strong>${escapeHtml(result.title)}</strong>
-      <p>${escapeHtml(message)}</p>
+      <p>${escapeHtml(result.message)}</p>
       <div class="success-meta">
         <span>No. Pesanan</span><b>${escapeHtml(displayOrderNumber(result.number))}</b>
         <span>Total</span><b>${money(result.total)}</b>
         ${result.paid ? `<span>Uang diterima</span><b>${money(result.receivedAmount || 0)}</b><span>Kembalian</span><b>${money(result.changeAmount || 0)}</b>` : `<span>Status bayar</span><b>Bayar nanti</b>`}
       </div>
       ${result.paid ? `<button class="btn receipt-success-btn" onclick="printLastReceipt()">Print struk</button>` : ""}
-      <button class="btn green new-sale-success-btn" onclick="startNewSale()">Transaksi Baru</button>
+      <button class="btn green" onclick="startNewSale()">Transaksi Baru</button>
     </div>
   `;
 }
@@ -9867,16 +9404,18 @@ function renderSelfOrderUpsellCard(context = "cart") {
   const products = selfOrderUpsellProducts(context, 2);
   if (!products.length) return "";
   const isPayment = context === "payment";
-  const title = isPayment ? "Rekomendasi Best Seller" : "Lengkapi pesananmu";
+  const title = isPayment ? "Rekomendasi sebelum checkout" : "Lengkapi pesananmu";
   const subtitle = isPayment ? "Tambahkan favorit lain sebelum pesanan dikirim" : "Pilihan favorit untuk tambah ke pesanan";
+  const badge = isPayment ? "Paling sering dipilih" : "Rekomendasi";
   return `
     <section class="self-order-upsell-card ${isPayment ? "payment" : "cart"}">
       <div class="self-order-upsell-head">
-        <span class="self-order-upsell-icon" aria-hidden="true">${selfOrderAsikIcon("recommend")}</span>
+        <span class="self-order-upsell-icon" aria-hidden="true">${navIcon("sparkles")}</span>
         <div>
           <h4>${escapeHtml(title)}</h4>
-          ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
+          <p>${escapeHtml(subtitle)}</p>
         </div>
+        <b>${escapeHtml(badge)}</b>
       </div>
       <div class="self-order-upsell-list">
         ${products.map(entry => `
@@ -9884,7 +9423,7 @@ function renderSelfOrderUpsellCard(context = "cart") {
             <span class="self-order-upsell-media">${productImageOrToken(entry.product, "self-order-upsell-img", 240)}</span>
             <strong>${escapeHtml(entry.name)}</strong>
             <span class="self-order-upsell-price">+ ${entry.priceLabel}</span>
-            <button type="button" onclick="selfOrderAddUpsellProduct('${escapeHtml(entry.key)}', '${escapeHtml(context)}')" aria-label="Tambah ${escapeHtml(entry.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button type="button" onclick="selfOrderAddUpsellProduct('${escapeHtml(entry.key)}', '${escapeHtml(context)}')" aria-label="Tambah ${escapeHtml(entry.name)}">+</button>
           </article>
         `).join("")}
       </div>
@@ -9952,7 +9491,7 @@ function selfOrderSetCategory(category) {
   sessionStorage.removeItem("self_order_product_id");
   const catalog = document.querySelector("[data-self-order-catalog]");
   if (catalog) {
-    replaceSelfOrderMarkup(catalog, renderSelfOrderCatalog());
+    catalog.innerHTML = renderSelfOrderCatalog();
     restoreSelfOrderCategoryScroll(true);
     return;
   }
@@ -10460,7 +9999,6 @@ async function selfOrderCreateOrder() {
   }
   let renderedCompletion = false;
   selfOrderSubmitting = true;
-  selfOrderSubmitStartedAt = Date.now();
   try {
   sessionStorage.setItem("self_order_payment", "cash");
   syncSelfOrderTableFromUrl();
@@ -10537,7 +10075,7 @@ async function selfOrderCreateOrder() {
     state.orders.unshift(order);
   }
   saveState();
-  const synced = await submitSelfOrderConfirmed(order);
+  const synced = await syncOrderToSupabase(order, { silent: true });
   if (!synced) {
     if (stockCommit.token) await restoreLimitedStockCommit(order.number);
     if (openOrder && previousOpenOrder) Object.assign(openOrder, previousOpenOrder);
@@ -10573,7 +10111,6 @@ async function selfOrderCreateOrder() {
     selfOrderSubmitError = error?.userMessage || "Gagal mengirim pesanan, cek koneksi anda lalu coba lagi";
   } finally {
     selfOrderSubmitting = false;
-    selfOrderSubmitStartedAt = 0;
     if (!renderedCompletion) render();
   }
 }
@@ -10586,7 +10123,6 @@ function renderSelfOrder() {
     : step === "table-check" ? renderSelfOrderTableCheck()
     : step === "table-decision" ? renderSelfOrderTableDecision()
     : step === "payment" ? renderSelfOrderPayment()
-    : step === "receipt" ? window.SOTakeaway.renderReceiptPage()
     : step === "success" ? renderSelfOrderSuccess()
     : renderSelfOrderMenu();
   const navStep = selfOrderNavStep(step);
@@ -10600,32 +10136,16 @@ function renderSelfOrder() {
   `;
 }
 
-function selfOrderBranding() {
-  const settings = state.settings || {};
-  const configuredName = String(settings.selfOrderAppName || settings.receiptStoreName || "").trim();
-  const fallbackImage = "/Customer%20Gateway/assets/fresin-logo.png";
-  const configuredImage = String(settings.selfOrderProfileImageDataUrl || settings.receiptLogoDataUrl || "").trim();
-  // Serve the current Fresin mark locally instead of depending on Google Drive.
-  const bundledImage = !configuredImage || mediaDriveId(configuredImage) === "1HrP-iW9Gc_N3FAjAKNxlpcwm34a6f2AB";
-  return {
-    name: configuredName && !/^kasirin(?:!| cafe)?$/i.test(configuredName) ? configuredName : "Fresin Indonesia",
-    outlet: String(settings.selfOrderOutletName || state.outlet || "Outlet Utama").trim(),
-    image: bundledImage ? fallbackImage : configuredImage,
-    fallbackImage
-  };
-}
-
 function renderSelfOrderTopbar() {
   syncSelfOrderTableFromUrl();
   const table = sessionStorage.getItem("self_order_table") || "A-1";
-  const branding = selfOrderBranding();
-  const appName = branding.name;
-  const outletName = branding.outlet;
-  const profileImage = branding.image;
+  const appName = state.settings.selfOrderAppName || state.settings.receiptStoreName || "Kasirin Cafe";
+  const outletName = state.settings.selfOrderOutletName || state.outlet || "Outlet Utama";
+  const profileImage = String(state.settings.selfOrderProfileImageDataUrl || state.settings.receiptLogoDataUrl || "").trim();
   return `
     <header class="self-order-topbar">
       <button type="button" class="self-order-icon-btn ${profileImage ? "has-photo" : ""}" onclick="selfOrderShowMenu()" aria-label="Menu">
-        ${profileImage ? mediaImageTag(profileImage, "Foto profil self order", "", 240, "eager", branding.fallbackImage) : navIcon("selforder")}
+        ${profileImage ? mediaImageTag(profileImage, "Foto profil self order", "", 240) : navIcon("selforder")}
       </button>
       <div>
         <strong>${escapeHtml(appName)}</strong>
@@ -10702,8 +10222,8 @@ function renderSelfOrderCatalog() {
   return `
     <section class="self-order-categories" aria-label="Kategori produk" onscroll="rememberSelfOrderCategoryScroll(this)">
       ${categories.map(item => `
-        <button class="${IS_SELF_ORDER_APP && window.FresinGateway?.menuVisualsEnabled() ? "fresin-category-chip " : ""}${item === safeCategory ? "active" : ""}" type="button" onclick='selfOrderSetCategory(${JSON.stringify(item)})'>
-          ${IS_SELF_ORDER_APP && window.FresinGateway?.categoryVisual ? window.FresinGateway.categoryVisual(item, activeProducts) : ""}${escapeHtml(item)}
+        <button class="${item === safeCategory ? "active" : ""}" type="button" onclick='selfOrderSetCategory(${JSON.stringify(item)})'>
+          ${escapeHtml(item)}
         </button>
       `).join("")}
     </section>
@@ -11044,8 +10564,8 @@ function renderSelfOrderCart() {
   const subtotal = selfOrderSubtotal();
   return `
     <main class="self-order-main cart">
-      <div class="self-order-section-head self-order-cart-head">
-        <h3 class="self-order-cart-title">Pesanan <span class="self-order-cart-count">${selfOrderItemsTotal()} item</span></h3>
+      <div class="self-order-section-head">
+        <div><span>Keranjang</span><h3>${selfOrderItemsTotal()} item</h3></div>
       </div>
       <section class="self-order-cart-list">
         ${selfOrderCart.map(item => `
@@ -11062,7 +10582,7 @@ function renderSelfOrderCart() {
                 <span>${Number(item.qty || 0)}</span>
                 <button type="button" onclick="selfOrderChangeQty('${item.lineId}', 1)">+</button>
               </div>
-              <button type="button" class="danger" onclick="selfOrderRemoveItem('${item.lineId}')" aria-label="Hapus"><svg class="self-order-remove-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+              <button type="button" class="danger" onclick="selfOrderRemoveItem('${item.lineId}')" aria-label="Hapus">x</button>
             </div>
           </article>
         `).join("") || empty("Keranjang masih kosong.")}
@@ -11118,14 +10638,14 @@ function renderSelfOrderPayment() {
     ? `<span class="self-order-btn-spinner" aria-hidden="true"></span><span>Mengirim pesanan</span>`
     : "Selesaikan Pesanan";
   return `
-    <main class="self-order-main payment self-order-table-payment">
-      <div class="self-order-section-head self-order-payment-head">
-        <span>Pembayaran</span><h3>${money(selfOrderSubtotal())}</h3>
+    <main class="self-order-main payment">
+      <div class="self-order-section-head">
+        <div><span>Pembayaran</span><h3>Total ${money(selfOrderSubtotal())}</h3></div>
       </div>
       <section class="self-order-payment-shell">
         <div class="self-order-checkout">
-          <label class="self-order-customer-field ${isCustomerLocked ? "self-order-customer-lock-field" : ""}"><span class="self-order-field-label">Nama</span><input id="selfOrderCustomer" value="${escapeHtml(customer)}" placeholder="Nama pemesan" required aria-required="true" aria-describedby="selfOrderCustomerError" ${customerInputAttrs} /><small id="selfOrderCustomerError" class="self-order-customer-error" role="alert" hidden>Nama wajib diisi.</small></label>
-          <label class="wide"><span class="self-order-field-label">Catatan</span><textarea id="selfOrderCheckoutNote" placeholder="Catatan pesanan (opsional)" rows="2" oninput="sessionStorage.setItem('self_order_checkout_note', this.value)">${escapeHtml(note)}</textarea></label>
+          <label class="self-order-customer-field ${isCustomerLocked ? "self-order-customer-lock-field" : ""}"><span>Nama</span><input id="selfOrderCustomer" value="${escapeHtml(customer)}" placeholder="Wajib" required aria-required="true" aria-describedby="selfOrderCustomerError" ${customerInputAttrs} /><small id="selfOrderCustomerError" class="self-order-customer-error" role="alert" hidden>Nama wajib diisi.</small></label>
+          <label class="wide"><span>Catatan</span><textarea id="selfOrderCheckoutNote" placeholder="Opsional" oninput="sessionStorage.setItem('self_order_checkout_note', this.value)">${escapeHtml(note)}</textarea></label>
         </div>
       </section>
       ${renderSelfOrderUpsellCard("payment")}
@@ -11144,31 +10664,24 @@ function renderSelfOrderSuccess() {
   const moveInline = selfOrderMoveTableInlineVisible() && canMove;
   const currentTable = liveOrder?.serviceInfo || order?.table || "A-1";
   const orderCreatedAt = liveOrder?.createdAt || order?.createdAt || "";
-  const successHero = window.SOTakeaway?.renderHero?.({
-    title: "Pesanan diterima",
-    note: `Pesananmu akan diantar ke meja ${currentTable}.`,
-    tone: "accepted"
-  }) || `<div class="self-order-success-mark" aria-hidden="true">✓</div><h2>Pesanan diterima</h2>`;
   return `
-    <main class="self-order-main success so-takeaway-success fresin-so-success">
-      <section class="self-order-success-card so-takeaway-status-card">
-        ${successHero}
-        <div class="fresin-so-table-notice">
-          <span class="fresin-so-table-notice-icon" aria-hidden="true">${selfOrderAsikIcon("table")}</span>
-          <div><p class="self-order-success-warning">Mohon Tidak Pindah Meja</p>
-          <p class="self-order-success-warning-hint">(klik tombol dibawah jika pindah meja)</p></div>
+    <main class="self-order-main success">
+      <section class="self-order-success-card">
+        <div class="self-order-success-mark" aria-hidden="true">✓</div>
+        <h2>Pesanan diterima</h2>
+        <p class="self-order-success-warning">Mohon Tidak Pindah Meja</p>
+        <p class="self-order-success-warning-hint">(klik tombol dibawah jika pindah meja)</p>
+        <div class="self-order-success-detail">
+          <span><b>Nomor meja</b><strong>${escapeHtml(order?.table || "A-1")}</strong></span>
+          <span><b>Nomor order</b><strong>${escapeHtml(displayOrderNumber(order?.number || "-"))}</strong></span>
+          <span><b>Waktu order</b><strong>${escapeHtml(orderCreatedAt ? timeOnly(orderCreatedAt) : "-")}</strong></span>
+          <span><b>Nominal</b><strong>${money(order?.checkoutTotal ?? order?.total ?? 0)}</strong></span>
+          <span><b>Status bayar</b><strong>Bayar di Kasir saat pulang</strong></span>
+          <span><b>Nama pelanggan</b><strong>${customer ? escapeHtml(customer) : "-"}</strong></span>
         </div>
-        <div class="self-order-success-detail so-takeaway-detail-card">
-          <span><b>Nomor meja</b><strong class="so-takeaway-number-inline">${escapeHtml(currentTable)}</strong></span>
-          <span><b>Nomor order</b><strong class="so-takeaway-detail-copy">${escapeHtml(displayOrderNumber(order?.number || "-"))}</strong></span>
-          <span><b>Waktu order</b><strong class="so-takeaway-detail-copy">${escapeHtml(orderCreatedAt ? timeOnly(orderCreatedAt) : "-")}</strong></span>
-          <span class="so-takeaway-total-row"><b>Nominal</b><strong>${money(order?.checkoutTotal ?? order?.total ?? 0)}</strong></span>
-          <span><b>Status bayar</b><strong class="so-takeaway-payment-copy">Bayar di Kasir saat pulang</strong></span>
-          <span><b>Nama pelanggan</b><strong class="so-takeaway-detail-copy">${customer ? escapeHtml(customer) : "-"}</strong></span>
-        </div>
-        <p class="fresin-so-order-hint">Pesanan akan diproses ±20 menit. Untuk tambah pesanan, scan ulang QR Code atau klik tombol di bawah. Terima kasih!</p>
+        <p>Pesanan akan diproses ±20 menit. Untuk tambah pesanan, scan ulang QR Code atau klik tombol di bawah. Terima kasih!</p>
         <div class="self-order-success-actions">
-          ${window.SOTakeaway.renderSuccessActions("selfOrderShowMenu()")}
+          <button class="self-order-primary" type="button" onclick="selfOrderShowMenu()">Pesan Lagi</button>
           ${moveInline ? renderSelfOrderSuccessMoveInline(currentTable) : ""}
           <button class="self-order-secondary" type="button" ${moveInline ? "data-move-table-submit" : ""} onclick="${moveInline && liveOrder ? `confirmMoveOrderTable('${liveOrder.id}', 'selforder')` : "openSelfOrderMoveTableDialog()"}" ${hasOrderReference ? "" : "disabled"}>${moveInline ? "Konfirmasi Pindah Meja" : "Pindah Meja"}</button>
         </div>
@@ -11271,31 +10784,29 @@ function renderSelfOrderBottomNav(step) {
   `;
 }
 
-function selfOrderAsikIcon(kind) {
-  const art = {
-    history: `<path d="M16 12h24l8 8v31l-5-3-5 3-5-3-5 3-5-3-7 3V12Z" fill="#fffaf0"/><path d="M40 12v9h8M23 25h15M23 32h10M23 39h8"/><circle cx="46" cy="43" r="12" fill="#e9f0df" stroke="#789555"/><path d="M46 36v8l5 3" stroke="#789555"/><path d="m10 17 2 3 4 1-4 1-2 4-1-4-4-1 4-1 1-3Z" fill="#e9bc64" stroke="none"/>`,
-    menu: `<path d="M13 12h16c5 0 7 2 7 5v36H16a5 5 0 0 1-5-5V17a5 5 0 0 1 2-5Z" fill="#fff8e9"/><path d="M36 17c0-3 3-5 7-5h10v36H42c-4 0-6 2-6 5V17Z" fill="#efd5a5"/><path d="M20 22h9M20 29h9M20 36h7M43 23h5M43 30h5M36 19v33"/><path d="M19 12v8l4-3 4 3v-8" fill="#e6b76b"/>`,
-    cart: `<path d="M11 16h7l6 29h26l6-22H20" fill="#fff8e9"/><path d="M24 30h28l-4 13H27Z" fill="#efd5a5"/><path d="M31 29v10M41 29v10"/><circle cx="29" cy="52" r="4" fill="#e5b96e"/><circle cx="47" cy="52" r="4" fill="#e5b96e"/><path d="M29 23v-9h16v9" fill="#e9f0df"/><path d="m34 18 3 3 5-6" stroke="#708c4c"/>`,
-    payment: `<path d="m15 24 31-12 4 17" fill="#fff5dc"/><path d="M12 23h37a5 5 0 0 1 5 5v23H14a5 5 0 0 1-5-5V28a5 5 0 0 1 3-5Z" fill="#e6bf80"/><path d="M43 32h13v12H43a6 6 0 0 1 0-12Z" fill="#fff8e9"/><circle cx="46" cy="38" r="1.6" fill="#aa7b3b"/><path d="M17 30h16" stroke="#fff4de"/><circle cx="47" cy="16" r="8" fill="#f5d58e"/><path d="M47 12v8m-3-6h5m-5 4h5"/>`,
-    table: `<ellipse cx="32" cy="27" rx="19" ry="7" fill="#fff8e9"/><path d="M32 34v18m-9 0h18M8 30v14h11m-11-5v13m11-8v8M56 30v14H45m11-5v13m-11-8v8"/><path d="M27 20v-7h10v7" fill="#efd5a5"/>`,
-    success: `<circle cx="30" cy="31" r="27" fill="#fff1d8" stroke="none"/><path d="M19 12h21l8 8v31H19V12Z" fill="#fffaf0"/><path d="M40 12v9h8M25 28h14M25 34h11M25 40h7"/><circle cx="47" cy="47" r="12" fill="#e9f2df" stroke="#718e4d"/><path d="m41 47 4 4 8-9" stroke="#4f7c41" stroke-width="2.7"/>`,
-    recommend: `<circle cx="29" cy="34" r="20" fill="#efd5a5"/><circle cx="29" cy="34" r="14" fill="#fff8e9"/><circle cx="29" cy="34" r="5" fill="#d2a264"/><path d="m17 27 3 1m17 10 3-1m-22 5 3-1m4-21 1 3m8 20 1 3"/><path d="m47 9 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z" fill="#e9bc64"/>`
-  };
-  return `<svg class="self-order-asik-icon" viewBox="0 0 64 64" fill="none" aria-hidden="true"><g stroke="#a6783d" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">${art[kind] || art.menu}</g></svg>`;
-}
-
 function selfOrderTabIcon(id) {
   const count = selfOrderItemsTotal();
-  const kind = id === "cart" ? "cart" : id === "payment" ? "payment" : "menu";
-  const paths = {
-    menu: '<rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 8h6M9 12h6M9 16h4"/>',
-    cart: '<path d="M3 4h2l3 12h10l3-9H6M9 11h9"/><circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/>',
-    payment: '<path d="M5 7V5l12-2v4M5 7h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><path d="M16 12h5v5h-5a2.5 2.5 0 0 1 0-5Z"/>'
-  };
-  return `<span class="self-order-nav-icon ${kind}-icon" aria-hidden="true">
-    <svg class="self-order-line-icon" viewBox="0 0 24 24" fill="none">${paths[kind]}</svg>
-    ${kind === "cart" && count ? `<em>${count}</em>` : ""}
-  </span>`;
+  if (id === "cart") {
+    return `
+      <span class="self-order-nav-icon cart-icon" aria-hidden="true">
+        <svg viewBox="0 0 48 48"><path d="M9 12h5l4 22h20l4-16H17"/><circle cx="20" cy="40" r="2"/><circle cx="36" cy="40" r="2"/></svg>
+        ${count ? `<em>${count}</em>` : ""}
+      </span>
+    `;
+  }
+  if (id === "payment") {
+    return `
+      <span class="self-order-nav-icon payment-icon" aria-hidden="true">
+        <svg viewBox="0 0 48 48"><path d="M11 17h28a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H11a4 4 0 0 1-4-4V21a4 4 0 0 1 4-4Z"/><path d="M13 17l23-8 2 8"/><path d="M35 28h8"/><circle cx="35" cy="28" r="2"/></svg>
+        <i></i>
+      </span>
+    `;
+  }
+  return `
+    <span class="self-order-nav-icon menu-icon" aria-hidden="true">
+      <svg viewBox="0 0 48 48"><path d="M15 16h18M15 24h18M15 32h18"/><circle cx="10" cy="16" r="2"/><circle cx="10" cy="24" r="2"/><circle cx="10" cy="32" r="2"/></svg>
+    </span>
+  `;
 }
 
 function posProductSearchText(product) {
@@ -12152,27 +11663,14 @@ function unpaidOrders() {
 
 function orderAdditionalItems(existingItems = [], nextItems = []) {
   const previousByKey = (existingItems || []).reduce((map, item) => {
-    map.set(cartItemKey(item), item);
+    map.set(cartItemKey(item), Number(item.qty || 0));
     return map;
   }, new Map());
   return (nextItems || [])
     .map(item => {
-      const previous = previousByKey.get(cartItemKey(item));
-      const previousQty = Number(previous?.qty || 0);
+      const previousQty = previousByKey.get(cartItemKey(item)) || 0;
       const qty = Number(item.qty || 0) - previousQty;
-      if (!(qty > 0)) return null;
-      const additional = unlockCartItemForOrder({ ...item, qty });
-      if (previous) {
-        const previousAddons = new Map((previous.addons || []).map(addon => [addon.id || addon.name, Number(addon.qty || 0)]));
-        additional.addons = (item.addons || []).map(addon => ({
-          ...addon, qty: Math.max(0, Number(addon.qty || 0) - (previousAddons.get(addon.id || addon.name) || 0))
-        })).filter(addon => addon.qty > 0);
-        const discount = Math.max(0, itemDiscountAmount(item) - itemDiscountAmount(previous));
-        additional.discount = discount;
-        additional.discountValue = discount;
-        additional.discountType = "rp";
-      }
-      return additional;
+      return qty > 0 ? unlockCartItemForOrder({ ...item, qty }) : null;
     })
     .filter(Boolean);
 }
@@ -12276,7 +11774,7 @@ function openOrderCorrection(id) {
   sessionStorage.setItem("pos_order_type", order.type || "");
   sessionStorage.setItem("pos_customer_name", order.customer || "");
   sessionStorage.setItem("pos_service_info", order.serviceInfo || "");
-  sessionStorage.setItem("pos_order_note", orderCustomerNoteDisplay(order.note));
+  sessionStorage.setItem("pos_order_note", order.note || "");
   if (Number(order.discount || 0) > 0) sessionStorage.setItem("pos_discount", order.discount);
   else sessionStorage.removeItem("pos_discount");
   sessionStorage.setItem("pos_discount_type", "rp");
@@ -12535,7 +12033,7 @@ function payUnpaidOrder(id) {
   sessionStorage.setItem("pos_order_type", order.type);
   sessionStorage.setItem("pos_customer_name", order.customer || "");
   sessionStorage.setItem("pos_service_info", order.serviceInfo || "");
-  sessionStorage.setItem("pos_order_note", orderCustomerNoteDisplay(order.note));
+  sessionStorage.setItem("pos_order_note", order.note || "");
   if (Number(order.discount || 0) > 0) sessionStorage.setItem("pos_discount", order.discount);
   else sessionStorage.removeItem("pos_discount");
   sessionStorage.setItem("pos_discount_type", "rp");
@@ -12637,7 +12135,7 @@ async function submitOrder() {
     existingOrder.subtotal = subtotal;
     existingOrder.discount = discount;
     existingOrder.tax = tax;
-    existingOrder.grandTotal = grandTotal + (orderUsesOutletPayment(existingOrder) ? Number(existingOrder.deliveryFee || 0) : 0);
+    existingOrder.grandTotal = grandTotal;
     existingOrder.updatedAt = updateCreatedAt;
     existingOrder.paidAt = updateCreatedAt;
     if (additionalItems.length) {
@@ -12663,7 +12161,7 @@ async function submitOrder() {
     cart = [];
     clearPosDraft();
     sessionStorage.setItem("pos_mobile_view", "items");
-    setLastResult("Pembayaran berhasil", additionalItems.length ? "Pesanan tambahan dikirim ke dapur. Struk kasir siap dicetak." : "pesanan sudah lunas, struk kasir siap dicetak", existingOrder);
+    setLastResult("Pembayaran berhasil", additionalItems.length ? "Pesanan tambahan dikirim ke dapur. Struk kasir siap dicetak." : "Pesanan belum bayar sudah dilunasi. Struk kasir siap dicetak.", existingOrder);
     audit("Pesanan belum bayar dilunasi", `${existingOrder.number} ${money(orderTotal(existingOrder))}`);
     saveState();
     const committedProductIds = new Set([...limitedStockItemTotals(additionalItems).values()].map(entry => entry.product.id));
@@ -13159,7 +12657,6 @@ function orderSequenceMap(orders = []) {
 
 function kitchenOrderNoteDisplay(order) {
   return String(order?.note || "")
-    .split(/(?:^|\r?\n)\s*(?:Kurir membayar harga produk di outlet|Pin lokasi\s*:|Patokan alamat\s*:|Jam pengambilan\s*:|Koordinat\s*:|Alamat (?:penerima|pengantaran)\s*:)/i)[0]
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(line => line && !/(google\.com\/maps|maps\?q=|pin lokasi|latitude|longitude|koordinat)/i.test(line))
@@ -13168,19 +12665,16 @@ function kitchenOrderNoteDisplay(order) {
 
 function kitchenCard(order, sequenceNumber = 0) {
   normalizeOrderBatches(order);
-  const cancelled = orderIsCancelled(order);
-  const next = cancelled ? null : nextKitchenAction(order.status);
+  const next = nextKitchenAction(order.status);
   const canFinish = order.status !== "Sedang Disiapkan" || areAllKitchenItemsPrepared(order);
+  const orderTitle = orderDisplayTitle(order);
   const kitchenType = String(order?.type || "").trim();
   const kitchenServiceInfo = typeof orderServiceInfoDisplay === "function"
     ? orderServiceInfoDisplay(order)
     : String(order?.serviceInfo || order?.service_info || "").trim();
-  const homeMode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || "").toUpperCase();
-  const pickupOrigin = String(order.serviceInfo ?? order.service_info ?? "");
-  const serviceLabel = kitchenType.toLowerCase() === "delivery" || homeMode === "DELIVERY" ? "Delivery"
-    : /^take[\s_-]*away$/i.test(kitchenType) || homeMode === "PICKUP_PREORDER"
-      ? (pickupOrigin === "Takeaway-Rumah" || (homeMode === "PICKUP_PREORDER" && pickupOrigin !== "Takeaway Outlet") ? "Takeaway-Rumah" : "Takeaway Outlet")
-    : kitchenServiceInfo || kitchenType || "Pesanan";
+  const kitchenServiceInfoPill = kitchenServiceInfo && kitchenServiceInfo.toLowerCase() !== kitchenType.toLowerCase()
+    ? kitchenServiceInfo
+    : "";
   const kitchenCustomer = customerDisplayName(order.customer);
   const kitchenOrderNote = kitchenOrderNoteDisplay(order);
   const carryoverLabel = typeof kitchenOrderIsCarryover === "function" && kitchenOrderIsCarryover(order)
@@ -13200,18 +12694,19 @@ function kitchenCard(order, sequenceNumber = 0) {
     : "";
   const actionButtons = [
     next ? `<button class="btn green" type="button" ${order.status === "Sedang Disiapkan" ? "data-kitchen-finish-button" : ""} onclick="event.preventDefault(); event.stopPropagation(); advanceOrder('${order.id}')" ${canFinish ? "" : "disabled"}>${next}</button>` : "",
-    !cancelled && canCancelOrder(order) ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openCancelOrderDialog('${order.id}')">Batalkan</button>` : ""
+    canCancelOrder(order) ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openCancelOrderDialog('${order.id}')">Batalkan</button>` : ""
   ].filter(Boolean).join("");
   return `
-    <div class="card kitchen-order-card ${cancelled ? "is-cancelled" : ""}" data-kitchen-order-id="${escapeHtml(order.id || "")}">
+    <div class="card kitchen-order-card" data-kitchen-order-id="${escapeHtml(order.id || "")}">
       <div class="kitchen-order-head">
         <div class="kitchen-order-titleline">
           <div>
             <div class="order-title-row">
               ${orderSequenceBadge(sequenceNumber)}
-              <span class="kitchen-service-chip">${escapeHtml(serviceLabel)}</span>
-              <strong>${escapeHtml(kitchenCustomer || "-")}</strong>
+              <strong>${escapeHtml(orderTitle)}</strong>
             </div>
+            <span>${dateTime(order.createdAt)}</span>
+            ${carryoverLabel}
           </div>
         </div>
         <div class="kitchen-order-statuses">
@@ -13220,23 +12715,18 @@ function kitchenCard(order, sequenceNumber = 0) {
         </div>
       </div>
       <div class="kitchen-order-meta">
-        <span class="kitchen-order-time">${dateTime(order.createdAt)}</span>
         ${kitchenType ? `<span class="pill">${escapeHtml(kitchenType)}</span>` : ""}
-        <span class="pill">${escapeHtml(displayOrderNumber(order.number))}</span>
-        ${carryoverLabel}
+        ${kitchenServiceInfoPill ? `<span class="pill">${escapeHtml(kitchenServiceInfoPill)}</span>` : ""}
+        ${kitchenCustomer ? `<span class="pill">${escapeHtml(kitchenCustomer)}</span>` : ""}
       </div>
-      ${cancelled ? `<p class="orders-item-group-note kitchen-cancellation-note"><b>Keterangan pembatalan:</b> ${escapeHtml(order.cancelReason || "Pesanan dibatalkan.")}</p>` : ""}
-      ${order.pickupTime || (groups.length <= 1 && kitchenOrderNote) ? `<div class="kitchen-order-notes">
-        ${order.pickupTime ? `<p class="orders-item-group-note so-takeaway-pickup-note"><b>Jam pengambilan:</b> ${escapeHtml(order.pickupTime)}</p>` : ""}
-        ${groups.length <= 1 && kitchenOrderNote ? `<p class="orders-item-group-note kitchen-order-note"><b>Catatan:</b> ${escapeHtml(kitchenOrderNote)}</p>` : ""}
-      </div>` : ""}
+      ${kitchenOrderNote ? `<p class="kitchen-order-note">${escapeHtml(kitchenOrderNote)}</p>` : ""}
       <div class="kitchen-order-items">
         ${groups.map(group => {
-          const groupNote = kitchenOrderNoteDisplay({ note: orderGroupNote(order, group) });
+          const groupNote = orderGroupNote(order, group);
           return `
           <div class="kitchen-item-group">
             ${groups.length > 1 ? `<small>${escapeHtml(group.label)}</small>` : ""}
-            ${groupNote && (groups.length > 1 || groupNote !== kitchenOrderNote) ? `<p class="kitchen-item-group-note">${escapeHtml(groupNote)}</p>` : ""}
+            ${groupNote ? `<p class="kitchen-item-group-note">${escapeHtml(groupNote)}</p>` : ""}
             ${group.items.map((item) => {
               const sourceIndex = (order.items || []).indexOf(item);
               const itemIndex = sourceIndex >= 0 ? sourceIndex : 0;
@@ -13289,7 +12779,6 @@ function nextKitchenAction(status) {
 function advanceOrder(id) {
   const order = state.orders.find(item => item.id === id);
   if (!order) return;
-  if (!order.items?.length) return toast("Rincian pesanan belum tersedia. Muat ulang pesanan terlebih dahulu.", 4800);
   if (order.status === "Sedang Disiapkan" && !areAllKitchenItemsPrepared(order)) {
     return toast("Centang semua item yang sudah siap terlebih dahulu.");
   }
@@ -13316,7 +12805,7 @@ function advanceOrder(id) {
     preparedItems: order.preparedItems
   });
   saveState();
-  syncOrderToSupabase(order, { statusOnly: true }).then(synced => {
+  syncOrderToSupabase(order).then(synced => {
     if (synced) scheduleKitchenOptimisticOrderMutationClear(order);
   });
   broadcastRealtimeEvent("orders");
@@ -13421,25 +12910,7 @@ async function cancelOrder(id, reason = "") {
     return false;
   }
   cancelOrderProcessingIds.add(id);
-  let remotelyRestored = false;
-  try {
-    if (hasLimitedStock && order.source === "Self Order" && order.type === "Take Away" && /^T\d+$/i.test(order.number)) {
-      const { data, error } = await supabaseClient.rpc("cancel_takeaway_pay_later_order", {
-        p_order_number: order.number, p_reason: reason.trim()
-      });
-      if (error) throw error;
-      const result = Array.isArray(data) ? data[0] : data;
-      if (!result?.order_id) throw new Error("Server belum mengonfirmasi pembatalan.");
-      remotelyRestored = Boolean(result.stock_restored);
-    } else {
-      remotelyRestored = hasLimitedStock ? await restoreLimitedStockCommit(order.number) : false;
-    }
-  } catch (error) {
-    console.error("Cancel order confirmation failed", error);
-    cancelOrderProcessingIds.delete(id);
-    toast("Pembatalan belum berhasil disimpan. Periksa koneksi lalu coba lagi.", 4800);
-    return false;
-  }
+  const remotelyRestored = hasLimitedStock ? await restoreLimitedStockCommit(order.number) : false;
   order.status = "Dibatalkan";
   order.cancelledAt = new Date().toISOString();
   order.cancelReason = reason.trim();
@@ -13463,7 +12934,7 @@ async function cancelOrder(id, reason = "") {
   } else {
     loadMasterDataFromSupabase({ reason: "limited-stock-restore", force: true, silent: true });
   }
-  Promise.resolve(syncOrderToSupabase(order, { statusOnly: true }))
+  Promise.resolve(syncOrderToSupabase(order))
     .catch(error => console.error("Cancel order sync failed", error))
     .finally(() => cancelOrderProcessingIds.delete(id));
   broadcastRealtimeEvent("products");
@@ -13543,7 +13014,7 @@ async function restoreOrderStockBeforeDelete(order) {
     const product = state.products.find(candidate => candidate.id === item.productId);
     return item.stockTracked === true || limitedStockRequiresOnline(product, item.stockVariantKey || cartItemVariantKey(item));
   });
-  const remotelyRestored = hasLimitedStock ? await restoreLimitedStockCommit(order.number, "manual_delete") : false;
+  const remotelyRestored = hasLimitedStock ? await restoreLimitedStockCommit(order.number) : false;
   const touchedProductIds = applyLimitedStockItems(order.items, 1, `Hapus pesanan ${order.number}`);
   for (const item of order.items || []) {
     for (const addon of item.addons || []) {
@@ -13729,7 +13200,6 @@ function renderOrders() {
   const filteredReportOrders = reportOnlyOrders.filter(order => orderMatchesQuickFilter(order, quickFilter));
   const ordered = [...filtered, ...filteredReportOrders].sort(ordersEntryStableSort);
   const visibleOrders = ordered.filter(order => orderMatchesSearch(order, query));
-  requestReportOrderDetails(visibleOrders);
   const visibleSequences = orderSequenceMap(visibleOrders);
   const visibleCount = visibleOrders.length;
   const doneCount = orderSummary.loaded ? orderSummary.totalDone : doneOrders.length;
@@ -13878,51 +13348,10 @@ function setSettingsTab(tab) {
   render();
 }
 
-function orderNeedsTakeawayCashier(order) {
-  const mode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || "").toUpperCase();
-  const origin = String(order?.serviceInfo ?? order?.service_info ?? "");
-  return mode === "PICKUP_PREORDER" && origin !== "Takeaway Outlet"
-    && isNewOrderStatus(order) && !orderIsCancelled(order) && !order.confirmedAt && !order.preparedAt
-    && orderVisibleInPosOrderList(order);
-}
-
-
-function orderNavigationBadgeCount(id) {
-  if (!["orders", "kitchen"].includes(id)) return 0;
-  const pending = (state.orders || []).filter(order => isNewOrderStatus(order) && !orderIsCancelled(order) && orderVisibleInPosOrderList(order));
-  if (id === "orders") return pending.length;
-  return pending.filter(order => orderNeedsTakeawayCashier(order)
-    || (typeof kitchenOrderIsVisible === "function" && kitchenOrderIsVisible(order, "Pesanan Baru", ["Pesanan Baru"]))).length;
-}
-
-
-function renderOrderNavigationBadge(id) {
-  if (!["orders", "kitchen"].includes(id)) return "";
-  const count = orderNavigationBadgeCount(id);
-  return `<span class="order-nav-count" data-order-nav-count="${id}" aria-label="${count} pesanan baru" ${count ? "" : "hidden"}>${count}</span>`;
-}
-
-
-function updateOrderNavigationBadges() {
-  if (typeof document === "undefined" || !document.querySelectorAll) return;
-  document.querySelectorAll("[data-order-nav-count]").forEach(badge => {
-    const count = orderNavigationBadgeCount(badge.dataset.orderNavCount);
-    badge.textContent = String(count);
-    badge.hidden = count === 0;
-    badge.setAttribute("aria-label", `${count} pesanan baru`);
-  });
-}
-
-
 function orderCenterCard(order, options = {}) {
   const qty = (order.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
   const expanded = sessionStorage.getItem(`orders_expanded_${order.id}`) === "1";
   const compactStatus = compactOrderStatus(order.status);
-  const type = String(order.type || "-");
-  const serviceLabel = /^dine[\s_-]*in$/i.test(type) ? orderServiceInfoDisplay(order)
-    : /^take[\s_-]*away$/i.test(type) ? (order.serviceInfo === "Takeaway-Rumah" ? "Takeaway-Rumah" : "Takeaway Outlet")
-    : type;
-  const heading = `${orderSequenceBadge(options.sequenceNumber)}<span class="orders-service-chip">${escapeHtml(serviceLabel)}</span><strong>${escapeHtml(customerDisplayName(order.customer) || "-")}</strong>`;
   const searchable = Object.prototype.hasOwnProperty.call(options, "searchQuery");
   const searchQuery = String(options.searchQuery || "");
   const searchAttributes = searchable
@@ -13932,48 +13361,38 @@ function orderCenterCard(order, options = {}) {
     return `
       <article class="orders-card unpaid-compact-card ${orderStatusClass(order.status)}" ${searchAttributes} onclick="toggleOrderItems('${order.id}', true)">
         <div class="unpaid-compact-head">
-          <div class="order-title-row orders-customer-heading">${heading}</div>
+          <strong>${escapeHtml(displayOrderNumber(order.number))}</strong>
           <b>${money(orderTotal(order))}</b>
         </div>
         <div class="unpaid-compact-meta">
-          <span>${escapeHtml(displayOrderNumber(order.number))}</span>
-          ${options.contact?.phoneChip || ""}
+          <span>${escapeHtml(customerDisplayName(order.customer))}</span>
+          <span>${escapeHtml(orderServiceInfoDisplay(order))}</span>
           <span>${escapeHtml(order.type || "-")}</span>
         </div>
-        ${options.contact?.actions ? `<div class="orders-card-actions">${options.contact.actions}</div>` : ""}
       </article>
     `;
   }
   if (order.reportOnly) {
-    const detailKey = order.reportKey || reportRecordKey(order);
-    const detailLoading = reportOrderDetailLoadingKeys.has(detailKey);
-    const customerNote = orderCustomerNoteDisplay(order.note);
-    const reportItemRows = (order.items || []).map(item => `
-      <div class="orders-item-line">
-        <span><b>${escapeHtml(orderItemInlineLabel(item))}</b>${item.variantLabel ? `<small class="orders-item-note">${escapeHtml(item.variantLabel)}</small>` : ""}${orderItemNoteHtml(item, "orders-item-note")}</span>
-        <strong>${money(cartItemTotal(item))}</strong>
-      </div>
-    `).join("");
     return `
       <article class="orders-card is-done" ${searchAttributes}>
         <div class="orders-card-head">
           <div>
-            <div class="order-title-row orders-customer-heading">${heading}</div>
+            <div class="order-title-row">
+              ${orderSequenceBadge(options.sequenceNumber)}
+              <strong>${escapeHtml(displayOrderNumber(order.number))}</strong>
+            </div>
             <span>${dateTime(order.paidAt || order.createdAt)}</span>
           </div>
           <span class="orders-status-pill done">Selesai</span>
         </div>
         <div class="orders-card-meta">
           <span>${escapeHtml(order.type || "-")}</span>
-          <span>${escapeHtml(displayOrderNumber(order.number))}</span>
+          <span>${escapeHtml(orderServiceInfoDisplay(order))}</span>
+          <span>${escapeHtml(customerDisplayName(order.customer))}</span>
           <span>Lunas</span>
         </div>
         <div class="orders-card-items">
-          ${customerNote ? `<p class="orders-item-group-note"><b>Catatan:</b> ${escapeHtml(customerNote)}</p>` : ""}
-          ${reportItemRows || (order.imported
-            ? '<span class="muted">Ringkasan transaksi dari laporan. Rincian item data impor belum tersedia.</span>'
-            : detailLoading ? '<span class="muted" role="status">Memuat rincian pesanan...</span>'
-            : `<button class="btn orders-report-detail-btn" type="button" onclick="openReportCardDetails(${escapeHtml(JSON.stringify(detailKey))})">Muat rincian pesanan</button>`)}
+          <span class="muted">Ringkasan transaksi dari laporan.</span>
         </div>
         <div class="orders-card-total">
           <span>Transaksi selesai</span>
@@ -14017,9 +13436,7 @@ function orderCenterCard(order, options = {}) {
     `;
   }).join("");
   const actions = [
-    options.contact?.actions,
     order.paymentStatus !== "Lunas" && order.status !== "Dibatalkan" ? `<button class="btn green" type="button" onclick="event.preventDefault(); event.stopPropagation(); payUnpaidOrder('${order.id}')">Bayar</button>` : "",
-    order.paymentStatus === "Lunas" ? `<button class="btn green orders-print-receipt-btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); printOrderCardReceipt('${order.id}')">Print Struk</button>` : "",
     canCorrectOrder(order) ? `<button class="btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); openOrderCorrection('${order.id}')">Koreksi Pesanan</button>` : "",
     canMoveOrderTable(order) ? `<button class="btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); openMoveOrderTableDialog('${order.id}', ${options.returnToUnpaid ? "'unpaid'" : "'orders'"})">Pindahkan Meja</button>` : "",
     canCancelOrder(order) ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openCancelOrderDialog('${order.id}', ${options.returnToUnpaid ? "true" : "false"})">Batalkan</button>` : "",
@@ -14036,7 +13453,10 @@ function orderCenterCard(order, options = {}) {
     <article class="orders-card ${options.compactUnpaid ? "unpaid-detail-card" : ""} ${orderStatusClass(order.status)} ${expanded ? "is-expanded" : ""}" ${searchAttributes} ${options.returnToUnpaid ? `onclick="toggleOrderItems('${order.id}', true)"` : ""}>
       <div class="orders-card-head">
         <div>
-          <div class="order-title-row orders-customer-heading">${heading}</div>
+          <div class="order-title-row">
+            ${orderSequenceBadge(options.sequenceNumber)}
+            <strong>${escapeHtml(displayOrderNumber(order.number))}</strong>
+          </div>
           <span>${dateTime(order.createdAt)}</span>
         </div>
         <div class="orders-card-statuses">
@@ -14046,8 +13466,8 @@ function orderCenterCard(order, options = {}) {
       </div>
       <div class="orders-card-meta">
         <span>${escapeHtml(order.type || "-")}</span>
-        <span>${escapeHtml(displayOrderNumber(order.number))}</span>
-        ${options.contact?.phoneChip || ""}
+        <span>${escapeHtml(orderServiceInfoDisplay(order))}</span>
+        <span>${escapeHtml(customerDisplayName(order.customer))}</span>
         <span>${escapeHtml(order.paymentStatus || "-")}</span>
       </div>
       <div class="orders-card-items">
@@ -15351,22 +14771,6 @@ function reportRecordKey(record) {
   ].join("|");
 }
 
-function reportMergeKey(record) {
-  // Amounts may differ between an old report view and the corrected local order.
-  // Keep receipt/deletion keys intact and use financial-independent identity here.
-  return [
-    record.imported ? "import" : "order",
-    record.number || record.id || "-",
-    record.createdAt ? new Date(record.createdAt).toISOString() : ""
-  ].join("|");
-}
-
-function reportRecordsCoverRange(range) {
-  return Boolean(range && supabaseReportsLoadedAt && supabaseReportCoverage
-    && Number(supabaseReportCoverage.start) <= Number(range.start)
-    && Number(supabaseReportCoverage.end) >= Number(range.end));
-}
-
 function reportRecordTime(record) {
   const source = record || {};
   const value = source.paidAt || source.paid_at || source.createdAt || source.created_at;
@@ -15397,8 +14801,6 @@ function mergeReportRecordsForDisplay(existing, incoming) {
   const incomingBreakdown = normalizePaymentBreakdown(incoming.paymentBreakdown || incoming.payment_breakdown || {});
   const existingBreakdown = normalizePaymentBreakdown(existing.paymentBreakdown || existing.payment_breakdown || {});
   const mergedFields = {
-    total: incoming.outletRevenueVerified ? incoming.total : base.total,
-    outletRevenueVerified: Boolean(existing.outletRevenueVerified || incoming.outletRevenueVerified),
     paymentMethod: base.paymentMethod || other.paymentMethod,
     paymentStatus: base.paymentStatus || other.paymentStatus,
     paidAt: base.paidAt || base.paid_at || other.paidAt || other.paid_at,
@@ -15424,12 +14826,12 @@ function reportSourceRecords(range = null) {
   });
   const merged = new Map();
   for (const record of localRecords) {
-    const key = reportMergeKey(record);
+    const key = reportRecordKey(record);
     merged.set(key, mergeReportRecordsForDisplay(merged.get(key), record));
   }
   for (const record of supabaseReportRecords.filter(record => isReportableRecord(record) && recordInRange(record, range))) {
-    const key = reportMergeKey(record);
-    if (deletedKeys.has(reportRecordKey(record))) continue;
+    const key = reportRecordKey(record);
+    if (deletedKeys.has(key)) continue;
     const existing = merged.get(key);
     merged.set(key, mergeReportRecordsForDisplay(existing, record));
   }
@@ -15490,11 +14892,7 @@ function reportOnlyCompletedOrders(range, localOrders = []) {
   const localNumbers = new Set((localOrders || []).map(order => String(order?.number || "").trim()).filter(Boolean));
   return summary.rows
     .filter(record => !localKeys.has(reportRecordKey(record)) && !localNumbers.has(String(record?.number || "").trim()))
-    .map(record => {
-      const detailKey = reportRecordKey(record);
-      const detail = record.imported ? null : supabaseReportDetailCache.get(detailKey);
-      const liveOrder = record.imported ? null : state.orders.find(order => String(order.number || "").trim() === String(record.number || "").trim());
-      return {
+    .map(record => ({
       id: `report-${reportRecordKey(record)}`,
       number: record.number,
       createdAt: record.createdAt,
@@ -15503,51 +14901,14 @@ function reportOnlyCompletedOrders(range, localOrders = []) {
       type: normalizedOrderType(record.type),
       customer: record.customer,
       serviceInfo: record.serviceInfo || "-",
-      note: record.note || detail?.note || liveOrder?.note || "",
-      imported: Boolean(record.imported),
-      reportKey: detailKey,
       status: "Selesai",
       paymentStatus: "Lunas",
       subtotal: Number(record.subtotal || record.total || 0),
       discount: Number(record.discount || 0),
       total: Number(record.total || 0),
-      items: record.items?.length ? record.items : detail?.items?.length ? detail.items : liveOrder?.items || [],
+      items: record.items || [],
       reportOnly: true
-    };
-    });
-}
-
-async function requestReportOrderDetails(orders, force = false) {
-  if (view !== "orders" || !supabaseReadable()) return;
-  const available = Math.max(0, 4 - reportOrderDetailLoadingKeys.size);
-  const candidates = (orders || []).filter(order => {
-    const key = order.reportKey || reportRecordKey(order);
-    return order.reportOnly && !order.imported && !(order.items || []).length
-      && !reportOrderDetailLoadingKeys.has(key) && (force || !supabaseReportDetailCache.has(key));
-  }).slice(0, available);
-  if (!candidates.length) return;
-  await Promise.allSettled(candidates.map(async order => {
-    const key = order.reportKey || reportRecordKey(order);
-    reportOrderDetailLoadingKeys.add(key);
-    if (force) supabaseReportDetailCache.delete(key);
-    try {
-      await loadSupabaseOrderDetailForReport(order);
-    } catch (error) {
-      console.warn("Report order detail unavailable", error);
-      supabaseReportDetailCache.set(key, order);
-    } finally {
-      reportOrderDetailLoadingKeys.delete(key);
-    }
-  }));
-  if (view === "orders") renderWhenInteractionIdle();
-}
-
-async function openReportCardDetails(recordKey) {
-  const record = reportSourceRecords().find(item => reportRecordKey(item) === recordKey);
-  if (!record || record.imported) return;
-  const pending = requestReportOrderDetails([{ ...record, reportOnly: true, reportKey: recordKey, items: [] }], true);
-  renderWhenInteractionIdle();
-  await pending;
+    }));
 }
 
 async function deleteReportTransaction(recordKey) {
@@ -16406,8 +15767,8 @@ function scanNativePrinters() {
         address: state.settings.printerDeviceId
       });
       audit("Printer Bluetooth APK dipilih", state.settings.printerDevice);
-      saveDevicePrinterSettings();
       saveState();
+      syncStoreSettingsToSupabase({ silent: true }).catch(error => console.error("Printer settings sync failed", error));
       toast("Printer Bluetooth APK dipilih.");
       render();
       resolve(true);
@@ -16456,8 +15817,8 @@ async function scanPrinters() {
     state.settings.printerDevice = device.name || "Printer Bluetooth";
     state.settings.printerDeviceId = device.id || "";
     audit("Printer Bluetooth dipilih", state.settings.printerDevice);
-    saveDevicePrinterSettings();
     saveState();
+    syncStoreSettingsToSupabase({ silent: true }).catch(error => console.error("Printer settings sync failed", error));
     toast("Printer Bluetooth dipilih.");
     render();
   } catch (error) {
@@ -16472,7 +15833,6 @@ async function savePrinterSettings(event) {
   const form = new FormData(event.target);
   try {
     state.settings.printerConnection = String(form.get("printerConnection") || "Bluetooth");
-    state.settings.printerPrintMode = (form.get("printerPrintMode") || state.settings.printerPrintMode) === "text" ? "text" : "formatted";
     state.settings.printerDevice = String(form.get("printerDevice") || state.settings.printerDevice || "").trim();
     saveNativeDefaultPrinter({
       name: state.settings.printerDevice,
@@ -16480,11 +15840,16 @@ async function savePrinterSettings(event) {
       address: state.settings.printerDeviceId
     });
     audit("Pengaturan printer disimpan", state.settings.printerDevice || state.settings.printerConnection);
-    saveDevicePrinterSettings();
     saveState();
-    toast(state.settings.printerDevice
-      ? "Printer disimpan untuk perangkat ini."
-      : "Koneksi printer disimpan untuk perangkat ini. Pindai untuk memilih printer.");
+    try {
+      const synced = await syncStoreSettingsToSupabase({ silent: true });
+      toast(state.settings.printerDevice
+        ? (synced ? "Printer disimpan online." : "Printer disimpan lokal.")
+        : "Koneksi printer disimpan. Pindai perangkat untuk memilih printer.");
+    } catch (error) {
+      console.error("Printer settings sync failed", error);
+      toast(state.settings.printerDevice ? "Printer disimpan lokal." : "Koneksi printer disimpan lokal.");
+    }
     render();
   } finally {
     stopLoading();

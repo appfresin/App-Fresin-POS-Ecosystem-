@@ -1,0 +1,222 @@
+/* Stock opname owns its final layout here. Keep this file loaded after legacy overrides. */
+
+.view-stock-opname .topbar {
+  min-height: 48px !important;
+  padding: 5px 12px !important;
+}
+
+.view-stock-opname .topbar-title {
+  gap: 10px !important;
+}
+
+.view-stock-opname .topbar h2 {
+  font-size: 20px !important;
+  font-weight: 800 !important;
+  line-height: 1.15 !important;
+}
+
+.view-stock-opname .toolbar {
+  display: none !important;
+}
+
+.view-stock-opname .stock-page {
+  gap: 9px !important;
+  max-width: 100% !important;
+  padding-inline: 4px !important;
+}
+
+.view-stock-opname .stock-module-tabs {
+  padding: 4px;
+  gap: 4px;
+  border-radius: 14px;
+}
+
+.view-stock-opname .stock-module-tabs button {
+  min-height: 34px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.view-stock-opname .stock-inventory-filter-grid {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 7px !important;
+  overflow: visible !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card {
+  min-width: 0 !important;
+  min-height: 64px !important;
+  padding: 10px 6px !important;
+  display: grid !important;
+  place-content: center !important;
+  text-align: center !important;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.clickable:active {
+  transform: translateY(1px) scale(0.985) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.clickable.active,
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.primary.active {
+  background: #0f8b6f !important;
+  border-color: #0b765e !important;
+  box-shadow: 0 14px 28px rgba(15, 139, 111, 0.28) !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.active span,
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card.active strong {
+  color: #fff !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card span {
+  display: block !important;
+  overflow: hidden !important;
+  font-size: 10px !important;
+  line-height: 1.05 !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.view-stock-opname .stock-inventory-filter-grid .stock-summary-card strong {
+  font-size: 21px !important;
+  line-height: 1 !important;
+}
+
+.view-stock-opname .stock-toolbar-card {
+  padding: 8px;
+  border-radius: 14px;
+}
+
+.view-stock-opname .stock-search-field {
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 12px;
+}
+
+.view-stock-opname .stock-search-field svg {
+  width: 18px !important;
+  height: 18px !important;
+  color: var(--green) !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2.2 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+.view-stock-opname .stock-list-card {
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.view-stock-opname .stock-section-head {
+  margin-bottom: 8px;
+}
+
+.view-stock-opname .stock-section-head h3 {
+  font-size: 17px;
+}
+
+.view-stock-opname .stock-section-head p {
+  font-size: 11px;
+}
+
+.view-stock-opname .stock-product-card {
+  min-height: 58px;
+  padding: 8px;
+  border-radius: 12px;
+}
+
+.view-stock-opname .stock-product-main {
+  width: 100%;
+}
+
+.view-stock-opname .stock-product-token {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.view-stock-opname .stock-product-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.view-stock-opname .stock-product-title {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  width: 100% !important;
+}
+
+.view-stock-opname .stock-product-title strong {
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.15;
+}
+
+.view-stock-opname .stock-product-title .pill {
+  flex: 0 0 auto !important;
+  margin-left: auto !important;
+}
+
+@media (max-width: 640px) {
+  .view-stock-opname .content {
+    padding: 6px 6px 14px !important;
+  }
+
+  .view-stock-opname .topbar {
+    min-height: 44px !important;
+    padding: 4px 8px !important;
+  }
+
+  .view-stock-opname .mobile-header-menu {
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 12px !important;
+  }
+
+  .view-stock-opname .mobile-header-menu svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+
+  .view-stock-opname .topbar h2 {
+    font-size: 17px !important;
+  }
+
+  .view-stock-opname .topbar p {
+    display: none !important;
+  }
+
+  .view-stock-opname .stock-page {
+    gap: 8px !important;
+    padding-inline: 2px !important;
+  }
+
+  .view-stock-opname .stock-inventory-filter-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  .view-stock-opname .stock-inventory-filter-grid .stock-summary-card {
+    min-width: 0 !important;
+    min-height: 58px !important;
+    padding: 8px 4px !important;
+  }
+
+  .view-stock-opname .stock-inventory-filter-grid .stock-summary-card span {
+    font-size: 8.5px;
+  }
+
+  .view-stock-opname .stock-inventory-filter-grid .stock-summary-card strong {
+    font-size: 19px;
+  }
+
+  .view-stock-opname .stock-product-title strong {
+    font-size: 13px;
+  }
+}

@@ -64,13 +64,9 @@ function renderNotificationSettingsTab() {
         <div class="notification-category-card">
           <div>
             <strong>Dapur hanya bunyi untuk kategori</strong>
-            <span>${selectedKitchenCategories.length ? `${selectedKitchenCategories.length} pilihan aktif di perangkat ini` : "Semua kategori produk; Konfirmasi dipilih terpisah"}</span>
+            <span>${selectedKitchenCategories.length ? `${selectedKitchenCategories.length} kategori dipilih di perangkat ini` : "Kosongkan untuk bunyi semua kategori"}</span>
           </div>
           <div class="notification-category-grid">
-            <label title="Bunyi untuk pesanan yang menunggu diterima kasir">
-              <input type="checkbox" name="orderKitchenNotificationCategories" value="__confirmation__" ${selectedKitchenKeys.has("__confirmation__") ? "checked" : ""} />
-              <span>Konfirmasi</span>
-            </label>
             ${categories.map(category => {
               const checked = selectedKitchenKeys.has(String(category || "").toLowerCase());
               return `
@@ -569,21 +565,13 @@ function renderPrinterSettingsTab() {
   return `
     <section class="settings-panel settings-single-panel printer-settings-panel">
       <div class="section-title">
-        <div><h3>Pilih Printer</h3><p>Atur printer untuk perangkat ini.</p></div>
+        <div><h3>Pilih Printer</h3><p>Atur perangkat cetak struk dan label.</p></div>
       </div>
       <div class="printer-note">
         <span>i</span>
-        <p>Pilihan printer tersimpan di perangkat ini dan tidak mengubah printer di HP atau tablet lain, meskipun memakai toko atau akun yang sama.</p>
+        <p>Perangkat terpasang akan terisi dari printer Bluetooth yang tersambung atau dipilih dari perangkat ini.</p>
       </div>
       <form class="printer-form" onsubmit="savePrinterSettings(event)">
-        <label class="field">
-          <span>Mode cetak Bluetooth</span>
-          <select name="printerPrintMode">
-            <option value="formatted" ${settings.printerPrintMode !== "text" ? "selected" : ""}>Format lengkap (logo dan teks tebal)</option>
-            <option value="text" ${settings.printerPrintMode === "text" ? "selected" : ""}>Teks kompatibel (tanpa logo gambar)</option>
-          </select>
-          <small>Pilih teks kompatibel jika hasil cetak terpotong atau spasi tidak konsisten. Memerlukan APK POS v1.7 atau lebih baru.</small>
-        </label>
         <div class="printer-connect-row">
           <label class="field">
             <span>Pilih koneksi printer</span>
