@@ -1,4 +1,4 @@
-﻿@media (max-width: 760px) {
+@media (max-width: 760px) {
   html, body, .app-shell, .content, .page {
     width: 100%;
     max-width: 100%;
@@ -3983,3 +3983,33 @@
     font-size: 10px;
   }
 }
+
+/* Compact paper receipt, matching the customer receipt while retaining POS controls. */
+.modal-card:has(.visitor-receipt-modal:not(.visitor-receipt-loading)) { box-sizing: border-box; width: min(390px,calc(100vw - 20px)); max-height: calc(100dvh - 28px); padding: 12px; overflow: auto; border: 1px solid #ffffffb3; border-radius: 23px; background: linear-gradient(150deg,#f8faf6,#edf3ee); box-shadow: 0 20px 65px #183a2d2b; }
+.visitor-receipt-modal { min-width: 0; gap: 8px; }
+.visitor-receipt-toolbar { position: relative; z-index: 2; padding: 0 2px; }
+.visitor-receipt-nav button, .visitor-receipt-menu-toggle { width: 33px; height: 33px; border: 1px solid #d5e3d9; border-radius: 11px; background: #fffdf7; color: #3b7769; box-shadow: 0 2px 5px #254f3a05; font-weight: 500; }
+.visitor-receipt-menu-toggle { background: #ffffffc9; }
+.visitor-receipt-paper { --receipt-paper-color: #fffdf7; position: relative; box-sizing: border-box; display: grid; width: 100%; max-width: 360px; margin: 2px auto 0; gap: 7px; padding: 23px 14px 21px; border: 0; border-radius: 0; background: linear-gradient(var(--receipt-paper-color),var(--receipt-paper-color)) 0 9px/100% calc(100% - 18px) no-repeat; color: #34594f; box-shadow: none; filter: drop-shadow(0 4px 7px #6f624814); }
+.visitor-receipt-tear { position: absolute; left: 0; width: 100%; height: 12px; pointer-events: none; }
+.visitor-receipt-tear path { fill: var(--receipt-paper-color); stroke: #e8decb; stroke-width: .9; stroke-linejoin: round; }
+.visitor-receipt-tear.is-top { top: 0; }
+.visitor-receipt-tear.is-bottom { bottom: 0; transform: rotate(180deg); }
+.visitor-receipt-head { min-width: 0; gap: 3px; padding-bottom: 11px; border-color: #d9cfbc; }
+.visitor-receipt-logo { min-height: 30px; margin-bottom: 4px; color: #34665a; }
+.visitor-receipt-logo img { max-height: 49px; }
+.visitor-receipt-head strong { color: #285b4f; font-size: 15px; line-height: 1.25; font-weight: 750; overflow-wrap: anywhere; }
+.visitor-receipt-head span { color: #8a8a7d; font-size: 10.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.visitor-receipt-meta, .visitor-receipt-total { grid-template-columns: max-content minmax(0,1fr); column-gap: 10px; row-gap: 5px; line-height: 1.4; }
+.visitor-receipt-meta span, .visitor-receipt-total span { color: #8c8a7d; font-size: 10.5px; font-weight: 500; }
+.visitor-receipt-meta b, .visitor-receipt-total b { min-width: 0; color: #35564d; font-size: 11px; line-height: 1.4; font-weight: 600; font-variant-numeric: tabular-nums; }
+.visitor-receipt-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 3px 0 9px; border-bottom: 1px dashed #d9cfbc; }
+.visitor-receipt-chips span { flex: 0 1 auto; display: inline-block; box-sizing: border-box; max-width: 100%; min-height: 0; padding: 4px 8px; border: 1px solid #e8e2d2; border-radius: 7px; background: #f3f0e6; color: #7a7868; font-size: 10px; line-height: 1.4; font-weight: 500; white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; }
+.visitor-receipt-chips span:first-child { border-color: #d5e6db; background: #eaf3eb; color: #3b7763; }
+.visitor-receipt-items { gap: 8px; padding: 5px 0 11px; border-top: 0; border-bottom: 1px dashed #d9cfbc; }
+.visitor-receipt-item { display: grid; grid-template-columns: minmax(0,1fr) max-content; gap: 10px; }
+.visitor-receipt-item > span { min-width: 0; overflow-wrap: anywhere; }
+.visitor-receipt-item strong, .visitor-receipt-item b { color: #3b5c51; font-size: 11.5px; font-weight: 550; line-height: 1.4; }
+.visitor-receipt-item small, .visitor-receipt-empty { color: #969181; font-size: 10px; line-height: 1.4; }
+.visitor-receipt-total .visitor-receipt-grand-label, .visitor-receipt-total .visitor-receipt-grand-total { margin-top: 3px; padding: 7px 0 3px; border-top: 1px solid #d9cfbc; color: #285b4f; font-size: 15px; line-height: 1.4; font-weight: 800; }
+@media (max-width:340px) { .modal-card:has(.visitor-receipt-modal:not(.visitor-receipt-loading)) { padding: 10px; } .visitor-receipt-paper { padding-inline: 12px; } }

@@ -8,11 +8,13 @@
   const WALLET_DATE_TO_KEY = "kasirin_driver_wallet_date_to_v1";
   const WALLET_MODE_KEY = "kasirin_driver_wallet_mode_v1";
   const WALLET_CLAIMS_KEY = "kasirin_driver_wallet_claims_v1";
-  const ACTIVE_STATUSES = ["SEARCHING_DRIVER", "DRIVER_ASSIGNED", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING"];
+  const PAYMENT_ACCOUNTS_KEY = "kasirin_driver_payment_accounts_v1";
+  const ACTIVE_STATUSES = ["SEARCHING_DRIVER", "DRIVER_ASSIGNED", "PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING"];
   const HISTORY_STATUSES = ["COMPLETED"];
   const DRIVER_FETCH_RETRY_MS = 30000;
   const DRIVER_REALTIME_DEBOUNCE_MS = 900;
   const DRIVER_STALE_POLL_MS = 120000;
+  const DRIVER_ACCEPT_WINDOW_MS = 5 * 60 * 1000;
   const ORDER_COLUMNS = [
     "id",
     "order_number",
@@ -24,6 +26,7 @@
     "note",
     "status",
     "payment_status",
+    "payment_provider",
     "customer_order_type",
     "customer_order_status",
     "subtotal",
@@ -31,6 +34,9 @@
     "grand_total",
     "created_at",
     "updated_at",
+    "confirmed_at",
+    "cancelled_at",
+    "cancel_reason",
     "ready_at",
     "completed_at",
     "delivery_address",
@@ -51,6 +57,7 @@
     "note",
     "status",
     "payment_status",
+    "payment_provider",
     "customer_order_type",
     "customer_order_status",
     "subtotal",
@@ -59,7 +66,7 @@
     "created_at",
     "updated_at"
   ];
-  const ITEM_COLUMNS = "id,order_id,product_name,sku,qty,price,variant_label,variant_data,note";
+  const ITEM_COLUMNS = "id,order_id,product_name,sku,qty,price,discount,variant_label,variant_data,note";
   const ADDON_COLUMNS = "order_item_id,addon_name,qty,price";
 
   const app = document.getElementById("app");
@@ -74,11 +81,20 @@
     loginLoading: false,
     actionLoading: "",
     error: "",
+    syncWarning: "",
+    refreshQueued: false,
     lastSyncAt: "",
     selectedId: "",
+    sharePayload: null,
+    shareMessage: "",
+    rejectOrderId: "",
+    rejectReason: "",
+    rejectError: "",
     menuOpen: false,
     claimLoading: false,
     claimError: "",
+    bankMessage: "",
+    bankError: "",
     claimValidator: null,
     walletMode: loadWalletMode(),
     walletDate: loadWalletDate(),
@@ -96,7 +112,7 @@
   let realtimeRefreshTimer = 0;
 
   function escapeHtml(value) {
-    return utils.escapeHtml ? utils.escapeHtml(value) : String(value ?? "");
+    return utils.escapeHtml ? utils.escapeHtml(value) : String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
   }
 
   function money(value) {
@@ -138,7 +154,7 @@
 
   function loadWalletMode() {
     const saved = String(localStorage.getItem(WALLET_MODE_KEY) || "").trim();
-    return saved === "claim" ? "claim" : "history";
+    return "history";
   }
 
   function loadWalletClaims() {
@@ -198,6 +214,47 @@
     const source = order.created_at || order.updated_at;
     if (!source) return "Waktu order belum tersedia";
     return `Masuk ${shortTime(source)} - ${elapsedLabel(source)}`;
+  }
+
+  function driverAcceptanceTime(order, nowMs = Date.now()) {
+    const startedAt = Date.parse(order?.updated_at || "") || Date.parse(order?.created_at || "");
+    if (!Number.isFinite(startedAt)) return null;
+    const expiresAt = startedAt + DRIVER_ACCEPT_WINDOW_MS;
+    const seconds = Math.ceil(Math.min(DRIVER_ACCEPT_WINDOW_MS, Math.max(0, expiresAt - nowMs)) / 1000);
+    const minutes = Math.floor(seconds / 60);
+    return { seconds, expiresAt, label: [minutes, seconds % 60].map(part => String(part).padStart(2, "0")).join(":") };
+  }
+
+  function acceptanceExpired(order) {
+    return order?.customer_order_status === "SEARCHING_DRIVER" && driverAcceptanceTime(order)?.seconds === 0;
+  }
+
+  function renderCustomerWait(order) {
+    if (driverOrderCancelled(order)) return "";
+    if (order.customer_order_status !== "SEARCHING_DRIVER") return "";
+    const wait = driverAcceptanceTime(order);
+    if (!wait) return "";
+    return `<div class="driver-customer-wait ${wait.seconds <= 60 ? "is-long-wait" : ""} ${wait.seconds === 0 ? "is-expired" : ""}" data-driver-accept-until="${wait.expiresAt}" role="timer" aria-live="off">
+      <span aria-hidden="true">${icon("clock")}</span><span>Batas terima pesanan</span>
+      <time datetime="PT${wait.seconds}S">${wait.label}</time>
+    </div>`;
+  }
+
+  function updateCustomerWaitTimers() {
+    if (!hasProfile() || document.hidden) return;
+    const nowMs = Date.now();
+    let expired = false;
+    document.querySelectorAll("[data-driver-accept-until]").forEach(timer => {
+      const expiresAt = Number(timer.dataset.driverAcceptUntil);
+      const wait = driverAcceptanceTime({ updated_at: new Date(expiresAt - DRIVER_ACCEPT_WINDOW_MS).toISOString() }, nowMs);
+      const value = timer.querySelector("time");
+      if (!wait || !value) return;
+      value.textContent = wait.label;
+      value.setAttribute("datetime", `PT${wait.seconds}S`);
+      timer.classList.toggle("is-long-wait", wait.seconds <= 60);
+      if (wait.seconds === 0 && !timer.classList.contains("is-expired")) expired = true;
+    });
+    if (expired) render();
   }
 
   function loadProfile() {
@@ -328,9 +385,33 @@
       READY_FOR_PICKUP: "Siap diambil",
       PICKED_UP: "Sudah diambil",
       DELIVERING: "Pesanan diantar",
-      COMPLETED: "Selesai"
+      COMPLETED: "Selesai",
+      NO_DRIVER_AVAILABLE: "Tidak sempat diterima",
+      CANCELLED: "Dibatalkan"
     };
     return labels[status] || status || "-";
+  }
+
+  function driverOrderCancelled(order) {
+    return Boolean(order?.cancelled_at) || order?.customer_order_status === "CANCELLED"
+      || ["dibatalkan", "batal", "cancelled", "canceled"].includes(String(order?.status || order?.order_status || "").trim().toLowerCase());
+  }
+
+  function renderCancelledNotice(order) {
+    return `<div class="driver-cancelled-notice" role="status"><strong>Pesanan dibatalkan</strong><span>${escapeHtml(order.cancel_reason || "Pesanan ini sudah dibatalkan dan tidak perlu diproses.")}</span></div>`;
+  }
+
+  function renderMissedNotice() {
+    return `<div class="driver-missed-note" role="status"><strong>Pesanan terlewat</strong><span>Batas waktu penerimaan telah berakhir. Pesanan ini tidak sempat diambil driver.</span></div>`;
+  }
+
+  function notifyNewDriverOrders(orders) {
+    const available = orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER"
+      && !driverOrderCancelled(order) && driverAcceptanceTime(order)?.seconds > 0
+      && !order.driver_id && !order.driver_name && !order.driver_phone);
+    const ready = orders.filter(order => driverMatches(order) && kitchenReady(order)
+      && !["PICKED_UP", "DELIVERING", "COMPLETED"].includes(order.customer_order_status));
+    window.DriverNotifications?.update(available, state.profile, ready);
   }
 
   function statusRank(status) {
@@ -354,14 +435,30 @@
   }
 
   function effectiveOrderStatus(order) {
+    if (driverOrderCancelled(order)) return "CANCELLED";
     const stored = String(order?.customer_order_status || "").trim();
+    if (acceptanceExpired(order)) return "NO_DRIVER_AVAILABLE";
+    if (["NO_DRIVER_AVAILABLE", "CANCELLED"].includes(stored)) return stored;
     const lifecycle = lifecycleStatus(order);
+    if (lifecycle === "PREPARING" && stored !== "COMPLETED" && !kitchenReady(order)) return lifecycle;
     if (!stored) return lifecycle;
     if (!lifecycle) return stored;
     return statusRank(lifecycle) > statusRank(stored) ? lifecycle : stored;
   }
 
+  function kitchenReady(order) {
+    if (driverOrderCancelled(order)) return false;
+    const status = String(order?.status || order?.order_status || "").trim().toLowerCase();
+    if (["selesai", "siap diambil"].includes(status) || order?.ready_at) return true;
+    return false;
+  }
+
+  function renderKitchenNotice(ready = false) {
+    return `<div class="driver-kitchen-notice ${ready ? "is-ready" : "is-waiting"}" role="status">${icon(ready ? "check" : "clock")}<span>${ready ? "Pesanan Siap Dijemput" : "Menunggu dapur menyelesaikan pesanan. Kamu bisa mengambilnya setelah siap."}</span></div>`;
+  }
+
   function statusClass(status) {
+    if (["NO_DRIVER_AVAILABLE", "CANCELLED"].includes(status)) return "missed";
     if (status === "COMPLETED") return "done";
     if (status === "SEARCHING_DRIVER") return "open";
     if (status === "DELIVERING") return "road";
@@ -407,9 +504,49 @@
   }
 
   function orderSubtotal(order) {
-    const subtotal = Number(order.subtotal || 0);
-    if (Number.isFinite(subtotal) && subtotal > 0) return subtotal;
+    const supplied = order.subtotal !== null && order.subtotal !== undefined && order.subtotal !== "";
+    const subtotal = Number(order.subtotal);
+    if (supplied && Number.isFinite(subtotal) && subtotal >= 0) return subtotal;
     return Math.max(0, orderTotal(order) - Number(order.delivery_fee || 0));
+  }
+
+  function paymentAccount() {
+    try {
+      const accounts = JSON.parse(localStorage.getItem(PAYMENT_ACCOUNTS_KEY) || "{}");
+      const account = accounts?.[state.profile.id];
+      if (!account || typeof account !== "object") return null;
+      const bank = String(account.bank || "").trim();
+      const number = String(account.number || "").trim();
+      const holder = String(account.holder || "").trim();
+      return bank && /^[0-9]{6,34}$/.test(number) && holder ? { bank, number, holder } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function savePaymentAccount(data) {
+    if (!hasProfile()) throw new Error("Masuk sebagai driver terlebih dahulu.");
+    const account = {
+      bank: String(data.get("bank") || "").trim().slice(0, 60),
+      number: String(data.get("accountNumber") || "").trim(),
+      holder: String(data.get("accountHolder") || "").trim().slice(0, 100)
+    };
+    if (!account.bank || !account.holder || !/^[0-9]{6,34}$/.test(account.number)) {
+      throw new Error("Lengkapi bank, nomor rekening yang valid, dan nama pemilik rekening.");
+    }
+    let accounts;
+    try { accounts = JSON.parse(localStorage.getItem(PAYMENT_ACCOUNTS_KEY) || "{}"); } catch { accounts = {}; }
+    if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) accounts = {};
+    accounts[state.profile.id] = account;
+    localStorage.setItem(PAYMENT_ACCOUNTS_KEY, JSON.stringify(accounts));
+  }
+
+  function isCourierCash(order) {
+    return String(order?.payment_provider || "").toLowerCase() === "courier_cash";
+  }
+
+  function claimableOrdersForMonth(monthKey = walletMonthKey()) {
+    return completedOrdersForMonth(monthKey).filter(order => !isCourierCash(order));
   }
 
   function isPaidOrder(order) {
@@ -427,10 +564,11 @@
 
   function stripDeliveryLabels(text) {
     return String(text || "")
+      .split(/\s*Kurir membayar harga produk di outlet[\s\S]*/i)[0]
       .replace(/Pin lokasi\s*:\s*https?:\/\/\S+/ig, "")
       .replace(/Pin lokasi\s*:\s*[-0-9.,\s]+/ig, "")
       .replace(/Patokan alamat\s*:[\s\S]*$/i, "")
-      .replace(/\s{2,}/g, " ")
+      .replace(/[\t ]{2,}/g, " ")
       .trim();
   }
 
@@ -484,6 +622,132 @@
     return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
   }
 
+  function shareLocationPayload(order) {
+    if (!order) return null;
+    const meta = deliveryMeta(order);
+    const coordinates = meta.coordinates;
+    const validCoordinates = coordinates && Math.abs(coordinates.latitude) <= 90 && Math.abs(coordinates.longitude) <= 180;
+    const link = validCoordinates ? `https://www.google.com/maps?q=${coordinates.latitude},${coordinates.longitude}` : mapsUrl(order);
+    try {
+      const url = new URL(link);
+      if (url.protocol !== "https:" || !["google.com", "www.google.com", "maps.google.com", "maps.app.goo.gl", "goo.gl"].includes(url.hostname)) return null;
+      if (!meta.pin && !validCoordinates && meta.address === "Pin lokasi belum tersedia") return null;
+      return { title: "Lokasi pengantaran", text: `Lokasi pengantaran ${order.customer_name || "pelanggan"}`, url: url.href };
+    } catch (_) { return null; }
+  }
+
+  async function shareMapsLocation(orderId) {
+    const payload = shareLocationPayload(state.orders.find(order => order.id === orderId));
+    return shareContent(payload);
+  }
+
+  async function sharePhoneNumber(orderId) {
+    const order = state.orders.find(order => order.id === orderId);
+    if (!order || !cleanPhone(order.customer_phone)) return;
+    return shareContent({ title: "Nomor pelanggan", text: `Nama: ${order.customer_name || "Pelanggan"}\nWhatsApp: ${order.customer_phone}` });
+  }
+
+  function deliveryLocationLines(order) {
+    const meta = deliveryMeta(order);
+    const location = shareLocationPayload(order);
+    return [
+      ...(meta.landmark !== "-" ? ["Patokan:", meta.landmark, ""] : []),
+      ...(location ? ["Lokasi:", location.url] : [])
+    ];
+  }
+
+  function itemLineTotal(item) {
+    const qty = Math.max(0, Number(item.qty ?? 1) || 0);
+    const addonTotal = (item.addons || []).reduce((sum, addon) => sum + Number(addon.price || 0) * Number(addon.qty || 0), 0);
+    return Math.max(0, Number(item.price || 0) * qty + addonTotal - Math.max(0, Number(item.discount || 0)));
+  }
+
+  function orderShareText(order) {
+    const status = effectiveOrderStatus(order);
+    const meta = deliveryMeta(order);
+    const created = new Date(order.created_at || "");
+    const itemLines = (order.items || []).flatMap(item => [
+      `${Math.max(0, Number(item.qty ?? 1) || 0).toLocaleString("id-ID")}× ${item.product_name || "Item"} — ${money(itemLineTotal(item))}`,
+      ...(item.variant_label ? [`  Pilihan: ${item.variant_label}`] : []),
+      ...(item.note ? [`  Catatan: ${item.note}`] : []),
+      ...(item.addons?.length ? [`  Tambahan: ${item.addons.map(addon => `${addon.addon_name} ×${Number(addon.qty || 1)}`).join(", ")}`] : [])
+    ]);
+    return [
+      `PESANAN DELIVERY ${order.order_number || "-"}`,
+      `Waktu: ${Number.isNaN(created.getTime()) ? "-" : created.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}`,
+      `Status: ${order.confirmed_at && status === "DRIVER_ASSIGNED" ? "Menunggu dapur" : statusLabel(status)}`,
+      "", "PEMESAN",
+      `Pemesan: ${order.customer_name || "-"}`,
+      `WhatsApp: ${order.customer_phone || "-"}`,
+      "", "ITEM PESANAN",
+      ...(itemLines.length ? itemLines : ["Rincian item belum tersedia."]),
+      "", "RINCIAN PEMBAYARAN",
+      `Pesanan: ${money(orderSubtotal(order))}`,
+      `Ongkir: ${money(Math.max(0, Number(order.delivery_fee || 0)))}`,
+      `Total: ${money(orderSubtotal(order) + Math.max(0, Number(order.delivery_fee || 0)))}`,
+      `Status bayar: ${order.payment_status || "Belum dibayar"}`,
+      "", "PENGANTARAN", "Pickup: Outlet Fresin", "",
+      ...deliveryLocationLines(order),
+      ...(meta.note !== "-" ? ["", "Catatan pelanggan:", meta.note] : []),
+      "", `Driver: ${order.driver_name || state.profile.name || "-"}`,
+      `WhatsApp driver: ${order.driver_phone || state.profile.phone || "-"}`
+    ].join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  async function shareOrderSummary(orderId) {
+    const order = state.orders.find(order => order.id === orderId);
+    if (!order || state.itemLoadingId === order.id) return;
+    return shareContent({ title: `Pesanan ${order.order_number || "Delivery"}`, text: orderShareText(order) });
+  }
+
+  function sharedContentText(payload) {
+    return [payload.text, payload.url].filter(Boolean).join("\n");
+  }
+
+  async function shareContent(payload) {
+    if (!payload) return;
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share(payload);
+        return;
+      } catch (error) {
+        if (error.name === "AbortError") return;
+      }
+    }
+    state.sharePayload = payload;
+    state.shareMessage = "";
+    render();
+  }
+
+  async function copySharedContent() {
+    const payload = state.sharePayload;
+    if (!payload) return;
+    try {
+      await navigator.clipboard.writeText(payload.url ? payload.url : sharedContentText(payload));
+      state.shareMessage = payload.url ? "Tautan berhasil disalin." : "Teks berhasil disalin.";
+    } catch (_) {
+      state.shareMessage = "Pilih dan salin isi di atas, atau bagikan lewat WhatsApp.";
+    }
+    if (state.sharePayload === payload) render();
+  }
+
+  function renderShareDialog() {
+    const payload = state.sharePayload;
+    if (!payload) return "";
+    const whatsapp = `https://wa.me/?text=${encodeURIComponent(sharedContentText(payload))}`;
+    const location = Boolean(payload.url);
+    const title = location ? "Bagikan lokasi" : payload.title === "Nomor pelanggan" ? "Bagikan nomor" : "Bagikan pesanan";
+    return `<dialog class="driver-share-dialog" id="driverShareDialog" aria-labelledby="driverShareTitle">
+      <div class="driver-share-heading">${icon("send")}<h2 id="driverShareTitle">${escapeHtml(title)}</h2></div>
+      <p>Pilih aplikasi untuk ${location ? "mengirim titik pengantaran" : "membagikan informasi ini"}.</p>
+      ${location ? `<input aria-label="Tautan Google Maps" readonly value="${escapeHtml(payload.url)}">` : `<textarea aria-label="Isi pesan yang dibagikan" readonly rows="${payload.title === "Nomor pelanggan" ? 3 : 12}">${escapeHtml(payload.text)}</textarea>`}
+      <a class="driver-secondary" href="${escapeHtml(whatsapp)}" target="_blank" rel="noopener">${icon("chat")}<span>WhatsApp</span></a>
+      <button class="driver-secondary" type="button" data-action="copy-share">${location ? "Salin tautan" : "Salin teks"}</button>
+      <p role="status">${escapeHtml(state.shareMessage)}</p>
+      <button class="driver-share-close" type="button" data-action="close-share">Tutup</button>
+    </dialog>`;
+  }
+
   function mapsTarget(order) {
     const web = mapsUrl(order);
     const meta = deliveryMeta(order);
@@ -515,22 +779,44 @@
   function whatsappUrl(order) {
     const phone = cleanPhone(order.customer_phone);
     if (!phone) return "";
-    const text = encodeURIComponent(`Halo Kak ${order.customer_name || ""}, saya driver Fresin untuk pesanan ${order.order_number || ""}.`);
+    const account = paymentAccount();
+    const fee = Math.max(0, Number(order.delivery_fee || 0));
+    const productAmount = orderSubtotal(order);
+    const paidOnline = !isCourierCash(order) && isPaidOrder(order);
+    const lines = [
+      `Halo Kak ${order.customer_name || ""}, saya ${state.profile.name || "driver"} dari Anterin Delivery.`,
+      "",
+      `Konfirmasi pesanan ${order.order_number || ""}:`,
+      `Pesanan: ${money(productAmount)}`,
+      `Ongkir: ${money(fee)}`,
+      `Total: ${money(productAmount + fee)}`,
+      "",
+      ...deliveryLocationLines(order),
+      "",
+      paidOnline ? "Pembayaran pesanan sudah tercatat lunas." : !isCourierCash(order)
+        ? "Silakan selesaikan pembayaran melalui halaman pesanan."
+        : account
+        ? `Jika ingin melakukan pembayaran online, boleh transfer ke:\n${account.bank}\nNomor rekening: ${account.number}\nAtas nama: ${account.holder}\nMohon konfirmasi setelah transfer.`
+        : "",
+      "", "apakah sudah benar kak ?"
+    ];
+    const text = encodeURIComponent(lines.join("\n").replace(/\n{3,}/g, "\n\n"));
     return `https://wa.me/${phone}?text=${text}`;
   }
 
   function driverMatches(order) {
     const phone = cleanPhone(order.driver_phone);
     const currentPhone = cleanPhone(state.profile.phone);
-    if (order.driver_id && order.driver_id === state.profile.id) return true;
+    if (order.driver_id) return order.driver_id === state.profile.id;
     if (phone && currentPhone && phone === currentPhone) return true;
     return Boolean(order.driver_name && state.profile.name && String(order.driver_name).toLowerCase() === String(state.profile.name).toLowerCase());
   }
 
   function canShowActive(order) {
+    if (driverOrderCancelled(order)) return false;
     const status = order.customer_order_status;
-    if (!["DRIVER_ASSIGNED", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING"].includes(status)) return false;
-    return driverMatches(order) || (!order.driver_id && !order.driver_name && !order.driver_phone);
+    if (!["DRIVER_ASSIGNED", "PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING"].includes(status)) return false;
+    return driverMatches(order);
   }
 
   function isToday(value) {
@@ -556,8 +842,9 @@
 
   function completedDriverOrders() {
     return state.orders.filter(order => (
-      order.customer_order_status === "COMPLETED"
+      !driverOrderCancelled(order) && order.customer_order_status === "COMPLETED"
       && (driverMatches(order) || !order.driver_id)
+      && (isCourierCash(order) || !walletClaimForMonth(orderCompletedKey(order).slice(0, 7)))
     ));
   }
 
@@ -604,7 +891,7 @@
 
   function saveWalletClaim(cashier) {
     const monthKey = walletMonthKey();
-    const monthOrders = completedOrdersForMonth(monthKey);
+    const monthOrders = claimableOrdersForMonth(monthKey);
     const claim = {
       id: `${state.profile.id || "driver"}_${monthKey}`,
       driverId: state.profile.id,
@@ -621,21 +908,23 @@
     };
     state.walletClaims = [claim, ...state.walletClaims.filter(item => !(item?.driverId === claim.driverId && item?.monthKey === claim.monthKey))];
     saveWalletClaims();
-    state.orders = state.orders.filter(order => !(order.customer_order_status === "COMPLETED" && (driverMatches(order) || !order.driver_id) && orderCompletedKey(order).slice(0, 7) === monthKey));
+    state.orders = state.orders.filter(order => !(!isCourierCash(order) && order.customer_order_status === "COMPLETED" && (driverMatches(order) || !order.driver_id) && orderCompletedKey(order).slice(0, 7) === monthKey));
     return claim;
   }
 
   function filteredOrders() {
+    if (state.view === "missed") return missedOrdersToday();
     if (state.view === "active") return state.orders.filter(canShowActive);
     if (state.view === "history") return todayCompletedOrders();
-    return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER");
+    return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER" && !driverOrderCancelled(order) && !acceptanceExpired(order));
   }
 
   function ordersCount(view) {
+    if (view === "missed") return missedOrdersToday().length;
     if (view === "active") return state.orders.filter(canShowActive).length;
     if (view === "history") return todayCompletedOrders().length;
     if (view === "earnings") return completedDriverOrders().length;
-    return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER").length;
+    return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER" && !driverOrderCancelled(order) && !acceptanceExpired(order)).length;
   }
 
   function missingColumnName(error) {
@@ -650,6 +939,7 @@
 
   function driverFetchErrorMessage(error) {
     const code = String(error?.code || "").trim();
+    if (code === "28000") return "Sesi akun driver berakhir. Buka pengaturan lalu verifikasi PIN kembali.";
     const message = String(error?.message || error?.details || "").trim();
     if (code === "42501" || /permission denied|row-level security|violates row-level security/i.test(message)) {
       return "Gagal memuat tugas. Policy/GRANT Driver di Supabase belum aktif.";
@@ -673,6 +963,24 @@
       .limit(80);
   }
 
+  function missedOrdersToday() {
+    return state.orders.filter(order => {
+      if (!["NO_DRIVER_AVAILABLE", "CANCELLED"].includes(effectiveOrderStatus(order))) return false;
+      if (!isToday(order.updated_at || order.created_at)) return false;
+      const unassigned = !order.driver_id && !order.driver_name && !order.driver_phone;
+      return unassigned || driverMatches(order);
+    });
+  }
+
+  function missedOrdersQuery(client, columns) {
+    const range = dayRange(localDateKey());
+    return client.from("orders").select(columns.join(","))
+      .eq("customer_order_type", "DELIVERY")
+      .in("customer_order_status", ["NO_DRIVER_AVAILABLE", "CANCELLED"])
+      .gte("updated_at", range.start).lt("updated_at", range.end)
+      .order("updated_at", { ascending: false }).limit(80);
+  }
+
   function walletMonthRange(monthKey = walletMonthKey()) {
     const [year, month] = String(monthKey).split("-").map(Number);
     const start = new Date(year, Math.max(0, month - 1), 1);
@@ -689,17 +997,11 @@
 
   function completedFetchRange() {
     if (state.view === "earnings") {
-      if (state.walletMode === "history") {
-        const range = walletDateRange();
-        if (range.from.slice(0, 7) === range.to.slice(0, 7) && walletClaimForMonth(range.from.slice(0, 7))) return null;
-        return {
-          start: new Date(`${range.from}T00:00:00`).toISOString(),
-          end: new Date(new Date(`${range.to}T00:00:00`).getTime() + 86400000).toISOString()
-        };
-      }
-      const monthKey = walletMonthKey();
-      if (walletClaimForMonth(monthKey)) return null;
-      return walletMonthRange(monthKey);
+      const range = walletDateRange();
+      return {
+        start: new Date(`${range.from}T00:00:00`).toISOString(),
+        end: new Date(new Date(`${range.to}T00:00:00`).getTime() + 86400000).toISOString()
+      };
     }
     return dayRange(localDateKey());
   }
@@ -718,15 +1020,29 @@
   }
 
   async function selectOrders(client, columns) {
+    const credentials = window.DriverNotifications?.deviceCredentials?.();
+    let feedWarning = window.DriverNotifications?.deviceCredentials ? "Verifikasi PIN di pengaturan untuk menyamakan data akun driver di semua perangkat." : "";
+    if (credentials && client.rpc) {
+      const range = completedFetchRange() || dayRange(localDateKey());
+      const result = await client.rpc("driver_order_feed", { p_device_id: credentials.id, p_secret: credentials.secret, p_from: range.start, p_to: range.end });
+      if (!result.error) return { data: result.data || [], error: null };
+      if (!["PGRST202", "42883"].includes(result.error.code)) {
+        if (result.error.code === "28000") window.DriverNotifications?.invalidateSession?.();
+        return result;
+      }
+      feedWarning = "Layanan sinkronisasi akun driver belum diaktifkan di server.";
+    }
     const activeResult = await activeOrdersQuery(client, columns);
     if (activeResult.error) return activeResult;
+    const missedResult = await missedOrdersQuery(client, columns);
     const range = completedFetchRange();
     if (!range) return activeResult;
     const completedResult = await completedOrdersQuery(client, columns, range);
-    if (completedResult.error) return completedResult;
+    const warning = [feedWarning, missedResult.error || completedResult.error ? "Sebagian riwayat belum termuat. Pesanan aktif tetap ditampilkan." : ""].filter(Boolean).join(" ");
     return {
-      data: [...(activeResult.data || []), ...(completedResult.data || [])],
-      error: null
+      data: Array.from(new Map([...(activeResult.data || []), ...(missedResult.data || []), ...(completedResult.data || [])].map(order => [order.id, order])).values()),
+      error: null,
+      warning
     };
   }
 
@@ -740,7 +1056,9 @@
   }
 
   async function fetchOrders(options = {}) {
-    if (state.fetching || !hasProfile()) return;
+    if (!hasProfile()) return;
+    if (state.fetching) { if (options.force || options.realtime) state.refreshQueued = true; return; }
+    const profileId = state.profile.id;
     const nowMs = Date.now();
     if (!options.force && state.nextFetchAt && nowMs < state.nextFetchAt) return;
     const backgroundRefresh = options.quiet && state.orders.length > 0;
@@ -762,14 +1080,18 @@
         result = await selectOrders(client, columns);
       }
       if (result.error) throw result.error;
+      if (state.profile.id !== profileId) return;
       const orders = mergeOrderItems(result.data || []);
       state.orders = orders;
+      state.syncWarning = result.warning || "";
+      notifyNewDriverOrders(orders);
       state.lastSyncAt = new Date().toISOString();
       state.error = "";
       state.fetchFailCount = 0;
       state.nextFetchAt = 0;
       setupRealtime(client);
     } catch (error) {
+      if (state.profile.id !== profileId) return;
       const now = Date.now();
       if (!state.lastFetchErrorAt || now - state.lastFetchErrorAt > DRIVER_FETCH_RETRY_MS) {
         console.warn("Driver orders refresh failed", error);
@@ -782,6 +1104,10 @@
       state.fetching = false;
       state.loading = false;
       render();
+      if (state.refreshQueued && hasProfile()) {
+        state.refreshQueued = false;
+        window.setTimeout(() => fetchOrders({ force: true, quiet: true }), 0);
+      }
     }
   }
 
@@ -850,10 +1176,9 @@
   function scheduleRealtimeRefresh() {
     if (document.hidden) {
       state.pendingVisibleRefresh = true;
-      return;
     }
     window.clearTimeout(realtimeRefreshTimer);
-    realtimeRefreshTimer = window.setTimeout(() => fetchOrders({ quiet: true }), DRIVER_REALTIME_DEBOUNCE_MS);
+    realtimeRefreshTimer = window.setTimeout(() => fetchOrders({ quiet: true, realtime: true }), DRIVER_REALTIME_DEBOUNCE_MS);
   }
 
   function setupRealtime(client) {
@@ -874,7 +1199,10 @@
     let payload = { ...patch, updated_at: new Date().toISOString() };
     for (let attempt = 0; attempt < 12; attempt += 1) {
       let query = client.from("orders").update(payload).eq("id", order.id);
+      query = query.is("cancelled_at", null);
       if (options.onlyStatus) query = query.eq("customer_order_status", options.onlyStatus);
+      if (options.kitchenStatus) query = query.eq("status", options.kitchenStatus);
+      if (options.driverId) query = query.eq("driver_id", options.driverId);
       const { data, error } = await query.select("id");
       if (!error) {
         if (!Array.isArray(data) || data.length < 1) throw new Error("Order sudah berubah atau sudah diambil driver lain.");
@@ -891,6 +1219,34 @@
   async function runAction(action, orderId) {
     const order = state.orders.find(item => item.id === orderId);
     if (!order || !hasProfile()) return;
+    if (driverOrderCancelled(order)) { state.error = "Pesanan sudah dibatalkan dan tidak dapat diproses."; render(); return; }
+    if (action === "reject") {
+      if (!canRejectOrder(order) || state.actionLoading) return;
+      state.rejectOrderId = order.id;
+      state.rejectReason = "";
+      state.rejectError = "";
+      render();
+      return;
+    }
+    if (action === "process") return processAssignedOrder(order);
+    const kitchenAction = ["picked", "delivering", "complete"].includes(action);
+    if (kitchenAction && (!driverMatches(order) || !kitchenReady(order)
+      || ["CANCELLED", "COMPLETED"].includes(order.customer_order_status) || order.status === "Dibatalkan")) {
+      state.error = "Pesanan belum siap diambil. Tunggu dapur menyelesaikan pesanan.";
+      render();
+      return;
+    }
+    if (action === "complete" && effectiveOrderStatus(order) !== "DELIVERING") return;
+    if (action === "take" && (order.customer_order_status !== "SEARCHING_DRIVER" || !driverAcceptanceTime(order)?.seconds)) {
+      state.error = "Batas terima pesanan sudah habis. Tunggu sesi pencarian baru dari pelanggan.";
+      render();
+      return;
+    }
+    if (isCourierCash(order) && ["picked", "delivering", "complete"].includes(action) && !isPaidOrder(order)) {
+      state.error = "Bayar harga produk di outlet dan tunggu kasir mencatat pelunasannya.";
+      render();
+      return;
+    }
     const now = new Date().toISOString();
     const actions = {
       take: {
@@ -927,14 +1283,141 @@
     state.error = "";
     render();
     try {
-      await updateOrder(order, next.patch, { onlyStatus: next.onlyStatus });
+      await updateOrder(order, next.patch, {
+        onlyStatus: next.onlyStatus || (kitchenAction ? order.customer_order_status : ""),
+        kitchenStatus: kitchenAction || action === "take" ? order.status : "",
+        driverId: kitchenAction ? order.driver_id : ""
+      });
       if (action === "take" || action === "picked" || action === "delivering") state.view = "active";
-      if (action === "complete") state.view = "earnings";
+      if (action === "complete") {
+        state.view = "active";
+        state.selectedId = "";
+      }
       localStorage.setItem(VIEW_KEY, state.view);
       await fetchOrders({ force: true });
     } catch (error) {
       console.warn("Driver order action failed", error);
       state.error = "Status belum tersimpan. Cek koneksi lalu coba lagi.";
+    } finally {
+      state.actionLoading = "";
+      render();
+    }
+  }
+
+  function canProcessAssignedOrder(order) {
+    return hasProfile() && isCourierCash(order)
+      && order.customer_order_type === "DELIVERY"
+      && order.driver_id === state.profile.id
+      && order.customer_order_status === "DRIVER_ASSIGNED"
+      && order.status === "Pesanan Baru"
+      && !order.confirmed_at && !order.cancelled_at;
+  }
+
+  function canRejectOrder(order) {
+    if (!hasProfile() || !isCourierCash(order) || isPaidOrder(order) || driverOrderCancelled(order)
+      || order.customer_order_type !== "DELIVERY" || order.confirmed_at || order.status !== "Pesanan Baru") return false;
+    if (order.customer_order_status === "SEARCHING_DRIVER") {
+      return !order.driver_id && !order.driver_name && !order.driver_phone && !acceptanceExpired(order);
+    }
+    return order.customer_order_status === "DRIVER_ASSIGNED" && order.driver_id === state.profile.id;
+  }
+
+  function renderRejectButton(order) {
+    return canRejectOrder(order) ? `<button class="driver-reject-action" type="button" data-action="reject" data-order="${escapeHtml(order.id)}" ${state.actionLoading ? "disabled" : ""}>Tolak pesanan</button>` : "";
+  }
+
+  function renderRejectDialog() {
+    const order = state.orders.find(item => item.id === state.rejectOrderId);
+    if (!order) return "";
+    return `<dialog class="driver-share-dialog driver-reject-dialog" id="driverRejectDialog" aria-labelledby="driverRejectTitle">
+      <form data-driver-form="reject">
+        <div class="driver-share-heading">${icon("orders")}<h2 id="driverRejectTitle">Tolak pesanan</h2></div>
+        <p>Pesanan ${escapeHtml(order.order_number || "")} · ${escapeHtml(order.customer_name || "Pelanggan")}</p>
+        <label for="driverRejectReason">Alasan penolakan</label>
+        <textarea id="driverRejectReason" name="reason" rows="3" maxlength="500" required placeholder="Tulis alasan untuk pelanggan">${escapeHtml(state.rejectReason)}</textarea>
+        <small>Pesanan akan dibatalkan. Alasan ini tampil di halaman pesanan pelanggan.</small>
+        ${state.rejectError ? `<p class="driver-alert" role="alert">${escapeHtml(state.rejectError)}</p>` : ""}
+        <button class="driver-reject-action" type="submit" ${state.actionLoading ? "disabled" : ""}>${state.actionLoading ? "Menyimpan…" : "Kirim penolakan"}</button>
+        <button class="driver-share-close" type="button" data-action="close-reject" ${state.actionLoading ? "disabled" : ""}>Kembali</button>
+      </form>
+    </dialog>`;
+  }
+
+  async function rejectOrder(reason) {
+    const order = state.orders.find(item => item.id === state.rejectOrderId);
+    if (state.actionLoading) return;
+    state.rejectReason = String(reason || "").trim();
+    if (!order || !canRejectOrder(order)) {
+      state.rejectError = "Pesanan sudah berubah dan tidak dapat ditolak. Muat ulang daftar tugas.";
+      render();
+      return;
+    }
+    if (!state.rejectReason || [...state.rejectReason].length > 500) {
+      state.rejectError = "Isi alasan penolakan, maksimal 500 karakter.";
+      render();
+      return;
+    }
+    const credentials = window.DriverNotifications?.deviceCredentials?.();
+    if (!credentials) {
+      state.rejectError = "Verifikasi PIN akun di pengaturan sebelum menolak pesanan.";
+      render();
+      return;
+    }
+    state.actionLoading = "Menyimpan penolakan...";
+    state.rejectError = "";
+    render();
+    try {
+      const client = await window.DriverSupabase.ready();
+      const { data, error } = await client.rpc("driver_reject_order", {
+        p_device_id: credentials.id, p_secret: credentials.secret,
+        p_order_id: order.id, p_reason: state.rejectReason
+      });
+      if (error) throw error;
+      if (!data?.id || data.customer_order_status !== "CANCELLED") throw Error("Invalid rejection response");
+      Object.assign(order, data);
+      state.rejectOrderId = "";
+      state.rejectReason = "";
+      state.view = "missed";
+      localStorage.setItem(VIEW_KEY, state.view);
+      notifyNewDriverOrders(state.orders);
+      await fetchOrders({ force: true, quiet: true });
+    } catch (error) {
+      if (error?.code === "28000") window.DriverNotifications?.invalidateSession?.();
+      state.rejectError = error?.code === "28000" ? "Sesi driver berakhir. Verifikasi PIN di pengaturan."
+        : error?.code === "55000" ? "Pesanan sudah diambil, diproses, atau dibayar. Muat ulang daftar tugas."
+        : "Penolakan belum tersimpan. Periksa koneksi dan coba lagi.";
+    } finally {
+      state.actionLoading = "";
+      render();
+    }
+  }
+
+  async function processAssignedOrder(order) {
+    if (state.actionLoading || !canProcessAssignedOrder(order)) return;
+    state.actionLoading = "Mengirim pesanan ke dapur...";
+    state.error = "";
+    render();
+    try {
+      const client = await window.DriverSupabase.ready();
+      const now = new Date().toISOString();
+      const { data, error } = await client.from("orders")
+        .update({ confirmed_at: now, updated_at: now })
+        .eq("id", order.id).eq("driver_id", state.profile.id)
+        .eq("customer_order_type", "DELIVERY").eq("payment_provider", "courier_cash")
+        .eq("customer_order_status", "DRIVER_ASSIGNED").eq("status", "Pesanan Baru")
+        .is("confirmed_at", null).is("cancelled_at", null)
+        .select("id,confirmed_at").maybeSingle();
+      if (error) throw error;
+      if (!data?.confirmed_at) {
+        state.error = "Pesanan sudah berubah atau telah diproses. Muat ulang daftar tugas.";
+        return;
+      }
+      const current = state.orders.find(item => item.id === order.id);
+      if (current) Object.assign(current, { confirmed_at: data.confirmed_at, updated_at: now });
+      await fetchOrders({ force: true, quiet: true });
+    } catch (error) {
+      console.warn("Driver kitchen release failed", error);
+      state.error = "Pesanan belum terkirim ke dapur. Muat ulang dan coba lagi.";
     } finally {
       state.actionLoading = "";
       render();
@@ -981,11 +1464,18 @@
     app.innerHTML = `
       <main class="driver-shell">
         ${renderTopbar()}
-        ${selected ? renderDetail(selected) : state.view === "earnings" ? renderEarnings() : renderList()}
-        ${selected ? "" : renderBottomNav()}
+        ${window.DriverNotifications?.render() || ""}
+        ${state.view === "settings" ? window.DriverNotifications?.renderSettings() || "" : selected ? renderDetail(selected) : state.view === "earnings" ? renderEarnings() : renderList()}
+        ${selected || state.view === "settings" ? "" : renderBottomNav()}
         ${state.actionLoading ? `<div class="driver-busy">${escapeHtml(state.actionLoading)}</div>` : ""}
+        ${renderShareDialog()}
+        ${renderRejectDialog()}
       </main>
     `;
+    const shareDialog = document.getElementById("driverShareDialog");
+    if (shareDialog && !shareDialog.open) shareDialog.showModal();
+    const rejectDialog = document.getElementById("driverRejectDialog");
+    if (rejectDialog && !rejectDialog.open) rejectDialog.showModal();
   }
 
   function renderTopbar() {
@@ -997,7 +1487,9 @@
             <strong class="driver-brand-title"><span class="brand-anterin">Anterin</span> <span class="brand-delivery">Delivery</span></strong>
           </div>
         </div>
-        <button class="driver-icon-btn ${state.fetching ? "is-refreshing" : ""}" type="button" data-action="refresh" aria-label="Refresh tugas" title="Refresh tugas">${icon("refresh")}</button>
+        <div class="driver-topbar-actions"><button class="driver-icon-btn ${state.fetching ? "is-refreshing" : ""}" type="button" data-action="refresh" aria-label="Refresh tugas" title="Refresh tugas">${icon("refresh")}</button>
+        <button class="driver-icon-btn driver-settings-menu" type="button" data-action="toggle-settings-menu" aria-label="Menu pengaturan" aria-expanded="${state.menuOpen}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.7" fill="currentColor"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><circle cx="12" cy="19" r="1.7" fill="currentColor"/></svg></button></div>
+        ${state.menuOpen ? '<div class="driver-settings-popover"><button type="button" data-view="settings">Dering & notifikasi <span aria-hidden="true">›</span></button></div>' : ""}
       </header>
     `;
   }
@@ -1023,6 +1515,7 @@
       tasks: ["Tugas Baru", "Order delivery lunas yang siap diambil."],
       active: ["Tugas Aktif", "Order yang sedang kamu antar."],
       history: ["Riwayat hari ini", "Order selesai hari ini."],
+      missed: ["Pesanan batal dan terlewat", "Pesanan dibatalkan atau batas penerimaannya berakhir hari ini."],
       earnings: ["Pendapatan", "Total ongkir untuk diambil di toko."]
     };
     return titles[state.view] || titles.tasks;
@@ -1035,6 +1528,7 @@
       <section class="driver-content">
         ${renderShiftCard()}
         ${state.error ? `<div class="driver-alert">${escapeHtml(state.error)}</div>` : ""}
+        ${state.syncWarning ? `<div class="driver-sync-warning" role="status">${escapeHtml(state.syncWarning)}</div>` : ""}
         <div class="driver-list">
           ${showSkeleton ? skeletonCards() : orders.map(renderOrderCard).join("") || emptyState()}
         </div>
@@ -1062,43 +1556,47 @@
           <button class="${state.view === "tasks" ? "active" : ""}" type="button" data-view="tasks"><b>${newCount}</b><small>Baru</small></button>
           <button class="${state.view === "active" ? "active" : ""}" type="button" data-view="active"><b>${activeCount}</b><small>Aktif</small></button>
           <button class="${state.view === "history" ? "active" : ""}" type="button" data-view="history"><b>${doneCount}</b><small>Selesai</small></button>
+          <button class="driver-missed-stat ${state.view === "missed" ? "active" : ""}" type="button" data-view="missed" aria-label="${ordersCount("missed")} pesanan batal atau terlewat hari ini"><b>${ordersCount("missed")}</b><small>Batal</small></button>
         </div>
       </section>
     `;
   }
 
   function renderEarnings() {
-    const monthKey = walletMonthKey();
-    const claim = walletClaimForMonth(monthKey);
-    const monthOrders = claim ? [] : completedOrdersForMonth(monthKey);
     const range = walletDateRange();
     const historyOrders = completedOrdersForRange(range);
     const historyClaims = walletClaimsForRange(range);
     const historyTotal = earningsTotal(historyOrders) + historyClaims.reduce((total, item) => total + Number(item.total || 0), 0);
     const historyCount = historyOrders.length + historyClaims.reduce((total, item) => total + Number(item.count || 0), 0);
-    const claimTotal = earningsTotal(monthOrders);
-    const isHistory = state.walletMode === "history";
-    const showSkeleton = state.loading && ((isHistory && historyOrders.length < 1 && historyClaims.length < 1) || (!isHistory && monthOrders.length < 1 && !claim));
+    const showSkeleton = state.loading && historyOrders.length < 1 && historyClaims.length < 1;
     return `
       <section class="driver-content">
         ${state.error ? `<div class="driver-alert">${escapeHtml(state.error)}</div>` : ""}
-        ${renderWalletModeTabs()}
         <article class="driver-earnings-hero">
-          <small>${isHistory ? `Riwayat ${escapeHtml(walletDateRangeLabel())}` : `Siap diklaim ${escapeHtml(walletMonthLabel(monthKey))}`}</small>
-          <strong>${money(isHistory ? historyTotal : claimTotal)}</strong>
-          <span>${isHistory ? `${historyCount} transaksi tercatat` : `${monthOrders.length} transaksi belum diklaim`}</span>
+          <small>Riwayat ${escapeHtml(walletDateRangeLabel())}</small>
+          <strong>${money(historyTotal)}</strong>
+          <span>${historyCount} transaksi tercatat</span>
         </article>
-        ${isHistory ? renderWalletHistory(historyOrders, historyClaims, showSkeleton) : renderWalletClaim(claim, monthOrders, showSkeleton)}
+        ${renderWalletHistory(historyOrders, historyClaims, showSkeleton)}
+        ${renderPaymentAccount()}
       </section>
     `;
   }
 
-  function renderWalletModeTabs() {
+  function renderPaymentAccount() {
+    const account = paymentAccount();
     return `
-      <div class="driver-wallet-tabs" role="tablist" aria-label="Menu dompet driver">
-        <button class="${state.walletMode === "history" ? "active" : ""}" type="button" data-wallet-mode="history">Riwayat</button>
-        <button class="${state.walletMode === "claim" ? "active" : ""}" type="button" data-wallet-mode="claim">Klaim</button>
-      </div>
+      <details class="driver-bank-panel" ${!account || state.bankError ? "open" : ""}>
+        <summary><span class="driver-bank-icon" aria-hidden="true">${icon("wallet")}</span><span><strong>Rekening pembayaran</strong><small>${account ? escapeHtml(`${account.bank} · ${account.holder}`) : "Atur rekening untuk konfirmasi ke customer"}</small></span><span class="driver-bank-chevron" aria-hidden="true">${icon("back")}</span></summary>
+        <form class="driver-bank-form" data-driver-form="bank">
+          <p>Rekening ini disertakan dalam pesan WhatsApp untuk pembayaran ke driver. Tersimpan khusus akun ini di perangkat ini.</p>
+          <label><span>Bank / e-wallet</span><input name="bank" autocomplete="off" maxlength="60" required placeholder="Contoh: BSI" value="${escapeHtml(account?.bank || "")}" /></label>
+          <label><span>Nomor rekening</span><input name="accountNumber" type="text" inputmode="numeric" autocomplete="off" pattern="[0-9]{6,34}" maxlength="34" required placeholder="Masukkan nomor rekening" value="${escapeHtml(account?.number || "")}" /></label>
+          <label><span>Atas nama</span><input name="accountHolder" autocomplete="name" maxlength="100" required placeholder="Nama pemilik rekening" value="${escapeHtml(account?.holder || "")}" /></label>
+          <button class="driver-primary" type="submit">${icon("check")}<span>Simpan rekening</span></button>
+          <p class="driver-bank-message ${state.bankError ? "error" : ""}" role="status">${escapeHtml(state.bankError || state.bankMessage)}</p>
+        </form>
+      </details>
     `;
   }
 
@@ -1124,7 +1622,7 @@
       total: item.total
     }));
     const claimBars = historyClaims.map(claim => ({
-      label: `Klaim ${claim.monthLabel || walletMonthLabel(claim.monthKey)}`,
+      label: `Pendapatan ${claim.monthLabel || walletMonthLabel(claim.monthKey)}`,
       meta: `${Number(claim.count || 0).toLocaleString("id-ID")} order - ${escapeHtml(shortDateTime(claim.validatedAt))}`,
       total: Number(claim.total || 0)
     }));
@@ -1135,37 +1633,6 @@
         <div class="driver-wallet-section-title compact">
           <strong>Riwayat pendapatan</strong>
           <small>Ringkasan tanggal saja, tanpa membuka detail order.</small>
-        </div>
-        <div class="driver-wallet-bars">
-          ${showSkeleton ? skeletonCards() : bars.map(renderWalletBar).join("") || emptyState()}
-        </div>
-      </section>
-    `;
-  }
-
-  function renderWalletClaim(claim, monthOrders, showSkeleton) {
-    if (claim || monthOrders.length < 1) {
-      return `
-        <section class="driver-earning-history" aria-label="Klaim pendapatan driver">
-          <div class="driver-wallet-section-title compact">
-            <strong>Klaim kosong</strong>
-            <small>Seluruh transaksi pada bulan ini sudah diklaim atau belum ada saldo klaim.</small>
-          </div>
-          ${claim ? renderWalletClaimSummary(claim) : emptyState()}
-        </section>
-      `;
-    }
-    const bars = summarizeOrdersByDate(monthOrders).map(item => ({
-      label: item.label,
-      meta: `${item.count} order belum diklaim`,
-      total: item.total
-    }));
-    return `
-      ${renderClaimPanel(null, monthOrders)}
-      <section class="driver-earning-history" aria-label="Saldo klaim driver">
-        <div class="driver-wallet-section-title compact">
-          <strong>Siap diklaim</strong>
-          <small>Ringkasan ongkir bulan ini, tanpa membuka detail order.</small>
         </div>
         <div class="driver-wallet-bars">
           ${showSkeleton ? skeletonCards() : bars.map(renderWalletBar).join("") || emptyState()}
@@ -1187,80 +1654,15 @@
     `;
   }
 
-  function renderClaimPanel(claim = null, monthOrders = completedOrdersForMonth()) {
-    const validator = state.claimValidator;
-    if (claim) {
-      return `
-        <section class="driver-claim-panel claim-modern claimed">
-          <span>${icon("check")}</span>
-          <div class="driver-claim-copy">
-            <strong>Pendapatan sudah diklaim</strong>
-            <small>${escapeHtml(claim.monthLabel || walletMonthLabel(claim.monthKey))} divalidasi oleh ${escapeHtml(claim.cashierName || "Kasir")}.</small>
-          </div>
-          <div class="driver-claim-status">
-            <b>${icon("wallet")}</b>
-            <span>
-              <strong>${money(claim.total || 0)} dari ${Number(claim.count || 0).toLocaleString("id-ID")} order</strong>
-              <small>${escapeHtml(shortDateTime(claim.validatedAt))} - detail per pesanan disembunyikan.</small>
-            </span>
-          </div>
-        </section>
-      `;
-    }
-    const canClaim = monthOrders.length > 0;
-    return `
-      <section class="driver-claim-panel claim-modern">
-        <span>${icon("wallet")}</span>
-        <div class="driver-claim-copy">
-          <strong>Validasi klaim outlet</strong>
-          <small>Outlet ${escapeHtml(claimOutletName())}. Klaim pendapatan bulan ${escapeHtml(walletMonthLabel(walletMonthKey()))} dengan kode validasi kasir.</small>
-        </div>
-        <form class="driver-claim-form" data-driver-form="claim">
-          <label class="driver-claim-field">
-            <span>Kode validasi</span>
-            <input class="driver-claim-code" name="claimPin" type="password" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="••••••" aria-label="Kode validasi kasir" />
-          </label>
-          <button class="driver-claim-submit" type="submit" ${state.claimLoading || !canClaim ? "disabled" : ""}>
-            ${state.claimLoading ? "Memeriksa..." : "Validasi"}
-          </button>
-        </form>
-        ${!canClaim ? `<p class="driver-claim-message">Belum ada pendapatan pada bulan ini untuk diklaim.</p>` : ""}
-        ${state.claimError ? `<p class="driver-claim-message error">${escapeHtml(state.claimError)}</p>` : ""}
-        ${validator ? `
-          <div class="driver-claim-status">
-            <b>${icon("check")}</b>
-            <span>
-              <strong>Divalidasi oleh ${escapeHtml(validator.name || validator.username || "Kasir")}</strong>
-              <small>${escapeHtml(staffRoleLabel(validator.role))} Outlet ${escapeHtml(validator.outlet_name || claimOutletName())} - ${escapeHtml(shortDateTime(validator.validatedAt))}</small>
-            </span>
-          </div>
-        ` : ""}
-      </section>
-    `;
-  }
-
-  function renderWalletClaimSummary(claim) {
-    return `
-      <article class="driver-wallet-claim-summary">
-        <span>${icon("wallet")}</span>
-        <div>
-          <small>${escapeHtml(claim.monthLabel || walletMonthLabel(claim.monthKey))}</small>
-          <strong>${money(claim.total || 0)}</strong>
-          <em>${Number(claim.count || 0).toLocaleString("id-ID")} order - ${escapeHtml(staffRoleLabel(claim.cashierRole))} ${escapeHtml(claim.cashierName || "Kasir")}</em>
-        </div>
-      </article>
-    `;
-  }
-
   function renderOrderCard(order) {
     const rawStatus = order.customer_order_status;
     const status = effectiveOrderStatus(order);
     const orderTime = shortTime(order.created_at || order.updated_at);
     return `
-      <article class="driver-order-card" data-order-id="${escapeHtml(order.id)}">
+      <article class="driver-order-card ${status === "CANCELLED" ? "is-cancelled" : status === "NO_DRIVER_AVAILABLE" ? "is-missed" : ""}" data-order-id="${escapeHtml(order.id)}">
         <div class="driver-card-top">
           <span class="driver-card-top-right">
-            <span><small>Total pesanan</small><em>${money(orderSubtotal(order))}</em></span>
+            <span><small>Pesanan</small><em>${money(orderSubtotal(order))}</em></span>
             <span><small>Ongkir</small><em>${money(order.delivery_fee || 0)}</em></span>
           </span>
         </div>
@@ -1281,7 +1683,7 @@
           <span class="driver-route-status">
             <i class="status-dot" aria-hidden="true"></i>
             <b>Status order</b>
-            <strong>${escapeHtml(statusLabel(status))}</strong>
+            <strong>${escapeHtml(order.confirmed_at && rawStatus === "DRIVER_ASSIGNED" && status === "DRIVER_ASSIGNED" ? "Menunggu dapur" : statusLabel(status))}</strong>
           </span>
           <span>
             <i class="pickup-dot" aria-hidden="true"></i>
@@ -1289,20 +1691,28 @@
             <strong>Outlet Fresin</strong>
           </span>
         </div>
+        ${renderCustomerWait(order)}
         ${renderCardActions(order, rawStatus, status)}
+        ${renderRejectButton(order)}
       </article>
     `;
   }
 
   function renderCardActions(order, rawStatus, status) {
+    if (status === "CANCELLED") return renderCancelledNotice(order);
+    if (status === "NO_DRIVER_AVAILABLE") return renderMissedNotice();
+    if (acceptanceExpired(order)) return "";
+    if (["NO_DRIVER_AVAILABLE", "CANCELLED"].includes(rawStatus)) return "";
     const orderId = escapeHtml(order.id);
     if (rawStatus === "SEARCHING_DRIVER") {
       return `<button class="driver-primary compact-btn" type="button" data-action="take" data-order="${orderId}">${icon("plus")}<span>Ambil order</span></button>`;
     }
     if (status === "COMPLETED") return "";
+    if (isCourierCash(order) && (canProcessAssignedOrder(order) || !isPaidOrder(order))) return renderCourierProcessActions(order);
     if (status === "DRIVER_ASSIGNED" && !isPaidOrder(order)) {
       return `<button class="driver-card-action waiting-payment" type="button" disabled>${icon("clock")}<span>Menunggu pembayaran customer</span></button>`;
     }
+    if (!kitchenReady(order)) return renderKitchenNotice();
     if (status === "DELIVERING") {
       return `
         <div class="driver-card-actions">
@@ -1312,9 +1722,20 @@
     }
     return `
       <div class="driver-card-actions">
-        <button class="driver-card-action" type="button" data-action="delivering" data-order="${orderId}">${icon("bag")}<span>Ambil ke outlet</span></button>
+        ${renderKitchenNotice(true)}
+        <button class="driver-card-action driver-pickup-action" type="button" data-action="delivering" data-order="${orderId}">${icon("bag")}<span>Antar pesanan</span></button>
       </div>
     `;
+  }
+
+  function renderCourierProcessActions(order) {
+    const whatsapp = whatsappUrl(order);
+    const canProcess = canProcessAssignedOrder(order);
+    if (!canProcess) return renderKitchenNotice(kitchenReady(order));
+    return `<div class="driver-process-actions">
+      ${whatsapp ? `<a class="driver-whatsapp-action" href="${escapeHtml(whatsapp)}" target="_blank" rel="noopener">${icon("chat")}<span>Konfirmasi WhatsApp</span></a>` : '<span class="driver-process-note">Nomor WhatsApp pelanggan belum tersedia.</span>'}
+      <button class="driver-card-action done" type="button" data-action="process" data-order="${escapeHtml(order.id)}" ${state.actionLoading ? 'disabled aria-busy="true"' : ""}>${icon("bag")}<span>Proses Pesanan</span></button>
+    </div>`;
   }
 
   function renderEarningCard(order) {
@@ -1346,19 +1767,17 @@
             <h1>${escapeHtml(order.customer_name || "Customer")}</h1>
             <p>${escapeHtml(detailHeroTiming(order))}</p>
           </div>
-          <span class="driver-pill ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
+          <div class="driver-detail-tools">
+            <span class="driver-pill ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
+            <button class="driver-share-order" type="button" data-action="share-order" data-order="${escapeHtml(order.id)}" aria-label="Bagikan pesanan" ${state.itemLoadingId === order.id ? "disabled" : ""}>${icon("send")}<span>Bagikan</span></button>
+          </div>
         </article>
+        ${renderCustomerWait(order)}
         <section class="driver-summary-grid">
-          <span><b>Total pesanan</b><strong>${money(orderTotal(order))}</strong></span>
+          <span><b>Pesanan</b><strong>${money(orderSubtotal(order))}</strong></span>
           <span><b>Ongkir</b><strong>${money(order.delivery_fee || 0)}</strong></span>
           <span><b>Jarak</b><strong>${distanceLabel(order)}</strong></span>
-          <span><b>WhatsApp</b><strong>${escapeHtml(order.customer_phone || "-")}</strong></span>
-        </section>
-        <section class="driver-panel driver-items-panel">
-          <h2>Item pesanan</h2>
-          <div class="driver-items">
-            ${state.itemLoadingId === order.id ? `<p class="driver-muted">Memuat item pesanan...</p>` : (order.items || []).map(renderItem).join("") || `<p class="driver-muted">Item belum termuat.</p>`}
-          </div>
+          <span><b>WhatsApp</b><strong class="driver-phone-value"><em>${escapeHtml(order.customer_phone || "-")}</em><button class="driver-share-phone" type="button" data-action="share-phone" data-order="${escapeHtml(order.id)}" aria-label="Bagikan nomor WhatsApp" ${cleanPhone(order.customer_phone) ? "" : "disabled"}>${icon("send")}</button></strong></span>
         </section>
         <section class="driver-panel">
           <h2>Alamat pengantaran</h2>
@@ -1373,11 +1792,21 @@
             </div>
           </div>
           <div class="driver-action-row">
-            <button class="driver-secondary ${map.web ? "" : "disabled"}" type="button" data-action="open-maps" data-map-web="${escapeHtml(map.web || "")}" data-map-app="${escapeHtml(map.app || "")}">${icon("map")}<span>Buka Maps</span></button>
+            <div class="driver-map-action" role="group" aria-label="Lokasi pengantaran">
+              <button class="driver-secondary" type="button" data-action="open-maps" data-map-web="${escapeHtml(map.web || "")}" data-map-app="${escapeHtml(map.app || "")}" ${map.web ? "" : "disabled"}>${icon("map")}<span>Buka Maps</span></button>
+              <button class="driver-share-location" type="button" data-action="share-maps" data-order="${escapeHtml(order.id)}" aria-label="Bagikan lokasi pengantaran" title="Bagikan lokasi" ${shareLocationPayload(order) ? "" : "disabled"}>${icon("send")}</button>
+            </div>
             <a class="driver-secondary ${wa ? "" : "disabled"}" href="${escapeHtml(wa || "#")}" target="_blank" rel="noopener">${icon("chat")}<span>Chat Customer</span></a>
           </div>
         </section>
+        <section class="driver-panel driver-items-panel">
+          <h2>Item pesanan</h2>
+          <div class="driver-items">
+            ${state.itemLoadingId === order.id ? `<p class="driver-muted">Memuat item pesanan...</p>` : (order.items || []).map(renderItem).join("") || `<p class="driver-muted">Item belum termuat.</p>`}
+          </div>
+        </section>
         ${renderStatusAction(order)}
+        ${renderRejectButton(order)}
       </section>
     `;
   }
@@ -1385,24 +1814,31 @@
   function renderItem(item) {
     const addons = (item.addons || []).map(addon => `${addon.addon_name} x${Number(addon.qty || 1)}`).join(", ");
     const description = [item.variant_label, item.note, addons].map(value => String(value || "").trim()).filter(Boolean).join(" - ");
+    const qty = Math.max(0, Number(item.qty ?? 1) || 0);
+    const total = itemLineTotal(item);
     return `
       <div class="driver-item-row">
-        <span>
+        <span class="driver-item-qty">${qty.toLocaleString("id-ID")}×</span>
+        <span class="driver-item-copy">
           <strong>${escapeHtml(item.product_name || "Item")}</strong>
           ${description ? `<small>${escapeHtml(description)}</small>` : ""}
         </span>
-        <b>${Number(item.qty || 1).toLocaleString("id-ID")}x</b>
+        <b class="driver-item-price">${money(total)}</b>
       </div>
     `;
   }
 
   function renderStatusAction(order) {
     const status = effectiveOrderStatus(order);
+    if (status === "CANCELLED") return renderCancelledNotice(order);
+    if (status === "NO_DRIVER_AVAILABLE") return renderMissedNotice();
     const rawStatus = order.customer_order_status;
     if (status === "COMPLETED") return `<div class="driver-completed">${icon("check")} Pesanan selesai diantar</div>`;
     if (rawStatus === "SEARCHING_DRIVER") return `<button class="driver-sticky-action" type="button" data-action="take" data-order="${escapeHtml(order.id)}">${icon("plus")}<span>Ambil order</span></button>`;
+    if (isCourierCash(order) && (canProcessAssignedOrder(order) || !isPaidOrder(order))) return renderCourierProcessActions(order);
     if (status === "DRIVER_ASSIGNED" && !isPaidOrder(order)) return `<button class="driver-sticky-action" type="button" disabled>${icon("clock")}<span>Menunggu pembayaran customer</span></button>`;
-    if (status === "DRIVER_ASSIGNED" || status === "PREPARING" || status === "READY_FOR_PICKUP" || status === "PICKED_UP") return `<button class="driver-sticky-action" type="button" data-action="delivering" data-order="${escapeHtml(order.id)}">${icon("bag")}<span>Ambil ke outlet</span></button>`;
+    if (!kitchenReady(order)) return renderKitchenNotice();
+    if (status === "DRIVER_ASSIGNED" || status === "PREPARING" || status === "READY_FOR_PICKUP" || status === "PICKED_UP") return `${renderKitchenNotice(true)}<button class="driver-sticky-action" type="button" data-action="delivering" data-order="${escapeHtml(order.id)}">${icon("bag")}<span>Antar pesanan</span></button>`;
     if (status === "DELIVERING") return `<button class="driver-sticky-action done" type="button" data-action="complete" data-order="${escapeHtml(order.id)}">${icon("check")}<span>Pesanan selesai diantar</span></button>`;
     return `<div class="driver-completed">${icon("check")} Pesanan selesai diantar</div>`;
   }
@@ -1412,6 +1848,7 @@
       tasks: ["Belum ada tugas tersedia", "Order delivery yang mencari driver akan muncul di sini."],
       active: ["Belum ada tugas aktif", "Order yang kamu ambil akan tampil di sini."],
       history: ["Riwayat hari ini kosong", "Order selesai hari ini akan masuk ke riwayat."],
+      missed: ["Belum ada pesanan batal atau terlewat", "Pesanan dibatalkan atau batas penerimaannya berakhir hari ini akan tampil di sini."],
       earnings: ["Pendapatan kosong", "Order selesai akan dihitung sebagai riwayat pendapatan ongkir."]
     }[state.view] || [];
     return `
@@ -1438,6 +1875,7 @@
       plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
       fee: '<svg viewBox="0 0 24 24"><path d="M4 7h16v10H4V7ZM8 12h.1M16 12h.1M12 9v6"/></svg>',
       map: '<svg viewBox="0 0 24 24"><path d="m9 18-6 3V6l6-3 6 3 6-3v15l-6 3-6-3ZM9 3v15M15 6v15"/></svg>',
+      send: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-6 18-4-8-8-4L21 3ZM11 13 21 3"/></svg>',
       chat: '<svg viewBox="0 0 24 24"><path d="M5 19.5 6.2 16A7 7 0 1 1 9 18.7L5 19.5Z"/></svg>',
       back: '<svg viewBox="0 0 24 24"><path d="M15 18 9 12l6-6"/></svg>',
       start: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
@@ -1451,20 +1889,27 @@
 
   function appLogo() {
     return `
-      <svg viewBox="0 0 64 64" role="img">
+      <svg viewBox="0 0 72 72" role="img">
         <defs>
           <linearGradient id="anterinBox" x1="12" y1="12" x2="52" y2="54" gradientUnits="userSpaceOnUse">
             <stop offset="0" stop-color="#ff7a1a"/>
             <stop offset="1" stop-color="#ffb11f"/>
           </linearGradient>
         </defs>
-        <path class="logo-speed speed-1" d="M6 28h24"/>
-        <path class="logo-speed speed-2" d="M11 36h23"/>
-        <path class="logo-speed speed-3" d="M17 44h20"/>
-        <path class="logo-box-left" d="M31 23 47 32v18L31 41Z"/>
-        <path class="logo-box-right" d="M47 32 58 25v18L47 50Z"/>
-        <path class="logo-box-top" d="M31 23 43 16l15 9-11 7Z"/>
-        <path class="logo-box-edge" d="M31 23 47 32 58 25M47 32v18"/>
+        <circle cx="39" cy="37" r="29" fill="#f2f7e9" stroke="#dbe8c9" stroke-width="1.2"/>
+        <path d="M19 52c7 12 28 13 40 2" fill="none" stroke="#92b875" stroke-width="1.6" stroke-dasharray="3 4"/>
+        <ellipse cx="42" cy="58" rx="16" ry="3" fill="#3c6126" opacity=".1" stroke="none"/>
+        <path class="logo-speed speed-1" d="M5 29h19"/>
+        <path class="logo-speed speed-2" d="M9 37h14"/>
+        <path class="logo-speed speed-3" d="M14 45h10"/>
+        <path class="logo-box-left" d="M26 28 43 38v20L26 48Z"/>
+        <path class="logo-box-right" d="M43 38 61 28v20L43 58Z"/>
+        <path class="logo-box-top" d="M26 28 44 18l17 10-18 10Z"/>
+        <path class="logo-box-edge" d="M26 28 44 18l17 10v20L43 58 26 48V28Zm0 0 17 10 18-10M43 38v20"/>
+        <path d="m35 23 18 10v9l-6 3v-9L30 26" fill="#ffe6a4" stroke="none"/>
+        <path d="m31 40 7 4m-7 1 5 3" stroke="#fff4de" stroke-width="1.5"/>
+        <path d="M59 7c-5 0-8 3.5-8 8 0 6 8 12 8 12s8-6 8-12c0-4.5-3-8-8-8Z" fill="#458b2e" stroke="#fff" stroke-width="2"/>
+        <path d="m55.5 15 2.5 2.5 4-4.5" stroke="#fff" stroke-width="2"/>
       </svg>
     `;
   }
@@ -1478,41 +1923,37 @@
   }
 
   app?.addEventListener("submit", async event => {
-    const claimForm = event.target.closest("[data-driver-form='claim']");
-    if (claimForm) {
+    const rejectForm = event.target.closest("[data-driver-form='reject']");
+    if (rejectForm) {
       event.preventDefault();
-      const data = new FormData(claimForm);
-      const pin = String(data.get("claimPin") || "").replace(/[^0-9]/g, "").slice(0, 6);
-      state.claimError = "";
-      state.claimValidator = null;
-      if (pin.length !== 6) {
-        state.claimError = "Masukkan kode validasi 6 digit.";
-        render();
-        return;
-      }
-      state.claimLoading = true;
-      render();
+      await rejectOrder(new FormData(rejectForm).get("reason"));
+      return;
+    }
+    const notificationForm = event.target.closest("[data-driver-form='notification-auth']");
+    if (notificationForm) {
+      event.preventDefault();
+      const pin = String(new FormData(notificationForm).get("pin") || "");
+      notificationForm.reset();
+      await window.DriverNotifications?.authorize(state.profile.username, pin);
+      return;
+    }
+    const bankForm = event.target.closest("[data-driver-form='bank']");
+    if (bankForm) {
+      event.preventDefault();
+      state.bankError = "";
+      state.bankMessage = "";
       try {
-        const cashier = await validateClaimPin(pin);
-        if (!cashier) {
-          state.claimError = "Kode validasi tidak cocok untuk outlet ini.";
-          return;
-        }
-        state.claimValidator = {
-          ...cashier,
-          validatedAt: new Date().toISOString()
-        };
-        saveWalletClaim(cashier);
+        savePaymentAccount(new FormData(bankForm));
+        state.bankMessage = "Rekening tersimpan. Pesan WhatsApp akan memakai rekening ini.";
+        bankForm.querySelector(".driver-bank-message").textContent = state.bankMessage;
+        bankForm.querySelector(".driver-bank-message").classList.remove("error");
       } catch (error) {
-        console.warn("Driver claim validation failed", error);
-        state.claimError = error?.message || "Validasi klaim belum berhasil.";
-      } finally {
-        state.claimLoading = false;
-        render();
+        state.bankError = error?.message || "Rekening belum tersimpan. Coba lagi.";
+        bankForm.querySelector(".driver-bank-message").textContent = state.bankError;
+        bankForm.querySelector(".driver-bank-message").classList.add("error");
       }
       return;
     }
-
     const form = event.target.closest("[data-driver-form='login']");
     if (!form) return;
     event.preventDefault();
@@ -1538,6 +1979,7 @@
         return;
       }
       saveProfile(member);
+      window.DriverNotifications?.authorize(staffCode, pin);
       state.view = localStorage.getItem(VIEW_KEY) || "tasks";
       fetchOrders({ force: true });
     } catch (error) {
@@ -1549,7 +1991,20 @@
     }
   });
 
+  app?.addEventListener("input", event => {
+    if (event.target.id === "driverRejectReason") state.rejectReason = event.target.value;
+  });
+
   app?.addEventListener("change", event => {
+    const notificationSetting = event.target.closest("[data-notification-setting]");
+    if (notificationSetting) {
+      const key = notificationSetting.dataset.notificationSetting;
+      const value = notificationSetting.type === "checkbox" ? notificationSetting.checked : notificationSetting.value;
+      window.DriverNotifications?.configure({ [key]: value });
+      if (key === "enabled" || key === "readyEnabled") window.DriverNotifications?.authorize();
+      render();
+      return;
+    }
     const walletDate = event.target.closest("[data-driver-wallet-date]");
     if (!walletDate) return;
     const value = String(walletDate.value || "").trim();
@@ -1568,16 +2023,7 @@
   });
 
   app?.addEventListener("click", event => {
-    const walletModeButton = event.target.closest("[data-wallet-mode]");
-    if (walletModeButton) {
-      state.walletMode = walletModeButton.dataset.walletMode === "claim" ? "claim" : "history";
-      state.claimError = "";
-      state.claimValidator = null;
-      localStorage.setItem(WALLET_MODE_KEY, state.walletMode);
-      render();
-      fetchOrders({ force: true, quiet: true });
-      return;
-    }
+    window.DriverNotifications?.prepareAudio();
     const viewButton = event.target.closest("[data-view]");
     if (viewButton) {
       setView(viewButton.dataset.view);
@@ -1585,6 +2031,7 @@
     }
     const openButton = event.target.closest("[data-open-order]");
     if (openButton) {
+      if (state.view === "settings") state.view = "tasks";
       state.selectedId = openButton.dataset.openOrder;
       state.menuOpen = false;
       render();
@@ -1594,6 +2041,22 @@
     const actionButton = event.target.closest("[data-action]");
     if (!actionButton) return;
     const action = actionButton.dataset.action;
+    if (action === "close-reject") {
+      if (state.actionLoading) return;
+      state.rejectOrderId = "";
+      state.rejectReason = "";
+      render();
+      return;
+    }
+    if (action === "toggle-settings-menu") { state.menuOpen = !state.menuOpen; render(); return; }
+    if (action === "close-settings") { setView("tasks"); return; }
+    if (action === "test-notification") { window.DriverNotifications?.test(); return; }
+    if (action === "test-ready-notification") { window.DriverNotifications?.testReady(); return; }
+    if (action === "driver-background-settings") { window.KasirinAndroid?.openDriverBackgroundSettings?.(); return; }
+    if (action === "device-notification-settings") { window.KasirinAndroid?.openDriverNotificationSettings?.(); return; }
+    if (action === "enable-notifications") { window.DriverNotifications?.enable(); return; }
+    if (action === "dismiss-alert") { window.DriverNotifications?.dismiss(); return; }
+    if (action === "dismiss-ready-alert") { window.DriverNotifications?.dismissReady(); return; }
     if (action === "back") {
       state.selectedId = "";
       render();
@@ -1608,7 +2071,29 @@
       openMapsTarget(actionButton);
       return;
     }
+    if (action === "share-maps") {
+      shareMapsLocation(actionButton.dataset.order);
+      return;
+    }
+    if (action === "share-phone") {
+      sharePhoneNumber(actionButton.dataset.order);
+      return;
+    }
+    if (action === "share-order") {
+      shareOrderSummary(actionButton.dataset.order);
+      return;
+    }
+    if (action === "copy-share") {
+      copySharedContent();
+      return;
+    }
+    if (action === "close-share") {
+      state.sharePayload = null;
+      render();
+      return;
+    }
     if (action === "logout") {
+      window.DriverNotifications?.logout();
       clearProfile();
       render();
       return;
@@ -1616,7 +2101,16 @@
     runAction(action, actionButton.dataset.order);
   });
 
+  app.addEventListener("cancel", event => {
+    if (event.target.id === "driverShareDialog") state.sharePayload = null;
+    if (event.target.id === "driverRejectDialog") {
+      if (state.actionLoading) event.preventDefault();
+      else { state.rejectOrderId = ""; state.rejectReason = ""; }
+    }
+  }, true);
+
   window.DriverOrder = {
+    renderUI: render,
     refresh: fetchOrders,
     setView,
     state,
@@ -1628,13 +2122,16 @@
   };
 
   render();
+  window.DriverNotifications?.syncNative();
   if (hasProfile()) fetchOrders({ force: true });
+  window.setInterval(updateCustomerWaitTimers, 1000);
   window.setInterval(() => {
-    if (!hasProfile() || document.hidden) return;
+    if (!hasProfile()) return;
     fetchOrders({ quiet: true });
   }, Number(config.staleRefreshMs || config.refreshMs || DRIVER_STALE_POLL_MS));
   document.addEventListener("visibilitychange", () => {
     if (!hasProfile() || document.hidden) return;
+    updateCustomerWaitTimers();
     if (state.pendingVisibleRefresh) {
       state.pendingVisibleRefresh = false;
       fetchOrders({ quiet: true });
