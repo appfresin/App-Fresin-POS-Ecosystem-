@@ -307,19 +307,19 @@ test("only the customer's own session displays the compact active order notice",
   assert.doesNotMatch(second.ctx.renderSelfOrderPayment(), /so-takeaway-active-card/);
 });
 
-test("outlet takeaway uses the customer heading and Takeaway Outlet chip", () => {
+test("self-order takeaway uses the customer heading and Takeaway Online chip", () => {
   const env = setup();
   for (const options of [{}, { compactUnpaid: true }]) {
     const html = env.ctx.orderCenterCard(env.order, options);
     assert.match(html, /<strong class="so-takeaway-order-number">-<\/strong>/);
-    assert.match(html, /<span class="so-takeaway-type-chip">Takeaway Outlet<\/span>/);
+    assert.match(html, /<span class="so-takeaway-type-chip">Takeaway Online<\/span>/);
     assert.match(html, /T001/);
     assert.doesNotMatch(html, /TAKEAWAY · T001/);
   }
 });
 
-test("home pickup and a store QR pickup share the same card with distinct origin chips", () => {
-  for(const [serviceInfo,label] of [['Takeaway-Rumah','Takeaway-Rumah'],['Takeaway Outlet','Takeaway Outlet'],['Pickup','Takeaway-Rumah']]) {
+test("home pickup and a store QR pickup share the Takeaway Online chip", () => {
+  for(const [serviceInfo,label] of [['Takeaway-Rumah','Takeaway Online'],['Takeaway Outlet','Takeaway Online'],['Pickup','Takeaway Online']]) {
     const env=setup({order:{number:'P001',customer:'Pemesan Contoh',customerOrderType:'PICKUP_PREORDER',orderMode:'PICKUP_PREORDER',paymentProvider:'cash_at_outlet',serviceInfo}});
     for(const options of [{},{compactUnpaid:true}]) {
       const html=env.ctx.orderCenterCard(env.order,options);

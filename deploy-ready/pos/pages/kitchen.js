@@ -38,7 +38,7 @@ function renderKitchenTakeawayNotice(order) {
   const customer = customerDisplayName(order.customer) || "-";
   return `<article class="card kitchen-order-card kitchen-takeaway-notice" role="status" aria-label="Pemberitahuan takeaway menunggu kasir">
     <div class="kitchen-order-head">
-      <div class="kitchen-order-titleline"><div><div class="order-title-row"><span class="kitchen-service-chip">Takeaway-Rumah</span><strong>${escapeHtml(customer)}</strong></div></div></div>
+      <div class="kitchen-order-titleline"><div><div class="order-title-row"><span class="kitchen-service-chip">Takeaway Online</span><strong>${escapeHtml(customer)}</strong></div></div></div>
       <span class="pill kitchen-notice-status">Menunggu diterima kasir</span>
     </div>
     <div class="kitchen-order-meta"><span class="kitchen-order-time">${dateTime(order.createdAt)}</span><span class="pill">${escapeHtml(displayOrderNumber(order.number))}</span><span class="pill">Pemberitahuan takeaway</span></div>

@@ -743,8 +743,10 @@
   function soTakeawayServiceLabel(order) {
     if (soTakeawayIsDelivery(order)) return "Delivery";
     const mode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || "").toUpperCase();
-    if (mode === "PICKUP_PREORDER") return order.serviceInfo === "Takeaway Outlet" || order.service_info === "Takeaway Outlet" ? "Takeaway Outlet" : "Takeaway-Rumah";
-    return "Takeaway Outlet";
+    const online = ["PICKUP_PREORDER", "TAKEAWAY"].includes(mode)
+      || String(order?.source || "").trim().toLowerCase().includes("self order")
+      || [order?.serviceInfo, order?.service_info].includes("Takeaway-Rumah");
+    return online ? "Takeaway Online" : "Takeaway";
   }
 
   function soTakeawayDeliveryStatusLabel(order) {

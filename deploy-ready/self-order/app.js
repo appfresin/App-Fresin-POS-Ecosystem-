@@ -13052,10 +13052,12 @@ function kitchenCard(order, sequenceNumber = 0) {
     ? orderServiceInfoDisplay(order)
     : String(order?.serviceInfo || order?.service_info || "").trim();
   const homeMode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || "").toUpperCase();
-  const pickupOrigin = String(order.serviceInfo ?? order.service_info ?? "");
+  const onlineTakeaway = ["PICKUP_PREORDER", "TAKEAWAY"].includes(homeMode)
+    || String(order.source || "").trim().toLowerCase().includes("self order")
+    || [order.serviceInfo, order.service_info].includes("Takeaway-Rumah");
   const serviceLabel = kitchenType.toLowerCase() === "delivery" || homeMode === "DELIVERY" ? "Delivery"
     : /^take[\s_-]*away$/i.test(kitchenType) || homeMode === "PICKUP_PREORDER"
-      ? (pickupOrigin === "Takeaway-Rumah" || (homeMode === "PICKUP_PREORDER" && pickupOrigin !== "Takeaway Outlet") ? "Takeaway-Rumah" : "Takeaway Outlet")
+      ? (onlineTakeaway ? "Takeaway Online" : "Takeaway")
     : kitchenServiceInfo || kitchenType || "Pesanan";
   const kitchenCustomer = customerDisplayName(order.customer);
   const kitchenOrderNote = kitchenOrderNoteDisplay(order);
@@ -13810,8 +13812,11 @@ function orderCenterCard(order, options = {}) {
   const expanded = sessionStorage.getItem(`orders_expanded_${order.id}`) === "1";
   const compactStatus = compactOrderStatus(order.status);
   const type = String(order.type || "-");
+  const onlineTakeaway = ["PICKUP_PREORDER", "TAKEAWAY"].includes(String(order.customerOrderType || order.orderMode || order.customer_order_type || "").toUpperCase())
+    || String(order.source || "").trim().toLowerCase().includes("self order")
+    || [order.serviceInfo, order.service_info].includes("Takeaway-Rumah");
   const serviceLabel = /^dine[\s_-]*in$/i.test(type) ? orderServiceInfoDisplay(order)
-    : /^take[\s_-]*away$/i.test(type) ? (order.serviceInfo === "Takeaway-Rumah" ? "Takeaway-Rumah" : "Takeaway Outlet")
+    : /^take[\s_-]*away$/i.test(type) ? (onlineTakeaway ? "Takeaway Online" : "Takeaway")
     : type;
   const heading = `${orderSequenceBadge(options.sequenceNumber)}<span class="orders-service-chip">${escapeHtml(serviceLabel)}</span><strong>${escapeHtml(customerDisplayName(order.customer) || "-")}</strong>`;
   const searchable = Object.prototype.hasOwnProperty.call(options, "searchQuery");
