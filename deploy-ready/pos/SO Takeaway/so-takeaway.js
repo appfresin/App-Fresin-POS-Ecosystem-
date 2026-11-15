@@ -4,8 +4,8 @@
   const TAKEAWAY_MODE = "TAKEAWAY";
   const TAKEAWAY_TYPE = "Take Away";
   const TAKEAWAY_ACTIVE_KEY = "so_takeaway_active_order";
-  const TAKEAWAY_EXPIRY_MINUTES = 10;
   const TAKEAWAY_STATUS_REFRESH_MS = 20000;
+  const soTakeawayProcessingIds = new Set();
   let soTakeawayStatusRefreshLoading = false;
   let soTakeawayStatusRefreshAt = 0;
 
@@ -33,7 +33,10 @@
       hash.get("orderType")
     ].map(value => String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, ""));
     const path = String(location.pathname || "").toLowerCase();
-    return values.includes("takeaway") || path.includes("takeaway");
+    const defaultOrderEntry = /^\/order\/?$/.test(path)
+      && !values.some(Boolean)
+      && !selfOrderTableCodeFromUrl();
+    return values.includes("takeaway") || path.includes("takeaway") || defaultOrderEntry;
   }
 
   function soTakeawayEscape(value) {
@@ -56,13 +59,6 @@
     return typeof dateTime === "function" ? dateTime(value) : new Date(value || Date.now()).toLocaleString("id-ID");
   }
 
-  function soTakeawayFormatDuration(ms) {
-    const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-
   function soTakeawayIsPaid(order) {
     if (typeof orderIsPaid === "function") return orderIsPaid(order);
     return String(order?.paymentStatus || order?.payment_status || "").trim().toLowerCase() === "lunas";
@@ -70,42 +66,20 @@
 
   function soTakeawayIsOrder(order) {
     if (!order) return false;
+    if (typeof orderUsesOutletPayment === "function" && orderUsesOutletPayment(order)) return true;
     if (order.orderMode === TAKEAWAY_MODE || order.takeawayNumber) return true;
+    if (typeof orderIsCustomerHomeOrder === "function" && orderIsCustomerHomeOrder(order)) return false;
     return order.type === TAKEAWAY_TYPE && String(order.source || "").toLowerCase().includes("self order");
   }
 
   function soTakeawayNumber(order) {
+    if (typeof orderUsesOutletPayment === "function" && orderUsesOutletPayment(order)) return String(order.number || "").trim();
     return String(order?.takeawayNumber || order?.serviceInfo || order?.number || "").trim();
   }
 
-  function soTakeawayExpiryMs(order) {
-    const expiresAt = Date.parse(order?.takeawayExpiresAt || "");
-    if (Number.isFinite(expiresAt)) return expiresAt;
-    const createdAt = Date.parse(order?.createdAt || "");
-    return Number.isFinite(createdAt) ? createdAt + TAKEAWAY_EXPIRY_MINUTES * 60 * 1000 : 0;
-  }
-
-  function soTakeawayIsExpired(order, now = Date.now()) {
+  function soTakeawayIsExpired(order) {
     if (!soTakeawayIsOrder(order)) return false;
-    if (order.takeawayStatus === "EXPIRED") return true;
-    if (soTakeawayIsPaid(order) || order?.status === "Dibatalkan") return false;
-    const expiresAt = soTakeawayExpiryMs(order);
-    return Boolean(expiresAt && now >= expiresAt);
-  }
-
-  function soTakeawayPaymentWindowLabel(order, now = Date.now()) {
-    if (soTakeawayIsPaid(order)) return "Lunas";
-    if (soTakeawayIsExpired(order, now)) return "Habis";
-    const expiresAt = soTakeawayExpiryMs(order);
-    return expiresAt ? soTakeawayFormatDuration(expiresAt - now) : "-";
-  }
-
-  function soTakeawayPaymentWindowHtml(order) {
-    const expiresAt = soTakeawayExpiryMs(order);
-    const countdownAttr = expiresAt && !soTakeawayIsPaid(order) && !soTakeawayIsExpired(order)
-      ? ` data-so-takeaway-countdown="${expiresAt}"`
-      : "";
-    return `<strong class="so-takeaway-payment-window"${countdownAttr}>${soTakeawayPaymentWindowLabel(order)}</strong>`;
+    return order.takeawayStatus === "EXPIRED";
   }
 
   function soTakeawayKitchenAccepted(order) {
@@ -125,8 +99,65 @@
 
   function soTakeawayStatusLabel(order) {
     if (soTakeawayIsExpired(order)) return "KEDALUWARSA";
-    if (soTakeawayIsPaid(order)) return "DIBAYAR";
-    return "MENUNGGU PEMBAYARAN";
+    if (order?.status === "Dibatalkan") return "DIBATALKAN";
+    if (soTakeawayIsCompleted(order)) return "SELESAI";
+    if (soTakeawayKitchenAccepted(order)) return "DIPROSES DAPUR";
+    return soTakeawayIsReleasedToKitchen(order) ? "DITERIMA KASIR" : "MENUNGGU KASIR";
+  }
+
+  function soTakeawayIsReleasedToKitchen(order) {
+    return Boolean(order?.confirmedAt || soTakeawayKitchenAccepted(order));
+  }
+
+  function soTakeawayCanProcessOrder(order) {
+    return !IS_SELF_ORDER_APP && Boolean(activeStaff()) && canAccessView("orders")
+      && soTakeawayIsOrder(order) && order.status === "Pesanan Baru"
+      && (typeof orderVisibleInPosOrderList !== "function" || orderVisibleInPosOrderList(order))
+      && !order.cancelledAt && !soTakeawayIsExpired(order) && !soTakeawayIsReleasedToKitchen(order);
+  }
+
+  async function soTakeawayProcessOrder(id) {
+    const order = (state.orders || []).find(item => item.id === id);
+    if (!soTakeawayCanProcessOrder(order) || soTakeawayProcessingIds.has(id)) return;
+    if (!order.items?.length) return toast("Rincian pesanan belum tersedia. Muat ulang pesanan terlebih dahulu.", 4800);
+    if (orderHasPendingLocalSync(order)) return toast("Pesanan masih menunggu sinkronisasi. Coba lagi setelah tersinkron.", 4800);
+    if (!canAttemptSupabaseSync()) return toast("Periksa koneksi internet sebelum memproses pesanan.", 4800);
+    soTakeawayProcessingIds.add(id);
+    render();
+    let releaseLock;
+    try {
+      releaseLock = await acquireOrderSyncLock(order);
+      await ensureSupabaseProfile();
+      // Only acknowledge cashier acceptance; never rewrite payment, items or kitchen progress.
+      const now = new Date().toISOString();
+      let query = supabaseClient.from("orders").update({ confirmed_at: now, updated_at: now });
+      query = order.supabaseId ? query.eq("id", order.supabaseId) : query.eq("order_number", order.number);
+      const { data, error } = await query.eq("status", "Pesanan Baru")
+        .is("cancelled_at", null).is("confirmed_at", null)
+        .select("id,confirmed_at").maybeSingle();
+      if (error) throw error;
+      if (!data?.confirmed_at) {
+        toast("Pesanan telah berubah di perangkat lain. Muat ulang daftar pesanan.", 4800);
+        return;
+      }
+      const currentOrder = (state.orders || []).find(item => item.id === id) || order;
+      currentOrder.confirmedAt = data.confirmed_at;
+      currentOrder.updatedAt = now;
+      currentOrder.supabaseId = data.id;
+      audit("Takeaway diterima kasir", order.number);
+      saveState();
+      broadcastRealtimeEvent("orders");
+      toast("Pesanan diterima dan dikirim ke dapur. Pembayaran bisa dilakukan nanti.", 3600);
+      notifyNativePushForOrder(currentOrder, { eventType: "new_order" })
+        .catch(error => console.warn("Takeaway acceptance notification failed", error));
+    } catch (error) {
+      console.warn("Takeaway acceptance failed", error);
+      toast("Pesanan belum berhasil diproses. Periksa koneksi lalu coba lagi.", 4800);
+    } finally {
+      if (releaseLock) releaseLock();
+      soTakeawayProcessingIds.delete(id);
+      render();
+    }
   }
 
   function soTakeawayGenerateNumber(orders = state.orders || []) {
@@ -150,9 +181,9 @@
       && item.status !== "Dibatalkan"
       && !soTakeawayIsExpired(item)
       && (
-        item.id === stored?.id
-        || item.number === stored?.number
-        || item.takeawayNumber === stored?.takeawayNumber
+        (stored?.id && item.id === stored.id)
+        || (stored?.number && item.number === stored.number)
+        || (stored?.takeawayNumber && soTakeawayNumber(item) === stored.takeawayNumber)
       )
     ));
     if (!order) sessionStorage.removeItem(TAKEAWAY_ACTIVE_KEY);
@@ -168,7 +199,7 @@
   }
 
   function soTakeawayMarkSnapshot(order, checkoutTotal = null) {
-    const total = Number.isFinite(Number(checkoutTotal)) ? Number(checkoutTotal) : orderTotal(order);
+    const total = checkoutTotal !== null && Number.isFinite(Number(checkoutTotal)) ? Number(checkoutTotal) : orderTotal(order);
     sessionStorage.setItem("self_order_last_order", JSON.stringify({
       id: order?.id || "",
       number: order.number || soTakeawayNumber(order),
@@ -180,8 +211,13 @@
       table: "Takeaway",
       customer: order.customer || "",
       orderMode: TAKEAWAY_MODE,
-      status: order.takeawayStatus || (soTakeawayIsPaid(order) ? "PAID" : "WAITING_PAYMENT"),
-      expiresAt: order.takeawayExpiresAt || "",
+      status: order.status,
+      paymentStatus: order.paymentStatus,
+      confirmedAt: order.confirmedAt || null,
+      preparedAt: order.preparedAt || null,
+      completedAt: order.completedAt || null,
+      takeawayStatus: order.takeawayStatus || "WAITING_ACCEPTANCE",
+      expiresAt: "",
       items: (order.items || []).map(item => ({
         name: item.name || "Item",
         qty: Number(item.qty || 1),
@@ -221,7 +257,7 @@
     const snapshot = soTakeawayLastSnapshot();
     if (!snapshot) return false;
     const order = soTakeawayFindOrder(snapshot);
-    return !order || (!soTakeawayIsExpired(order) && !soTakeawayIsCompleted(order));
+    return !order || (!soTakeawayIsExpired(order) && !(soTakeawayIsCompleted(order) && soTakeawayIsPaid(order)));
   }
 
   async function soTakeawayRefreshActiveOrderFromSupabase(options = {}) {
@@ -277,7 +313,7 @@
       );
       mergeSupabaseLiveOrders([liveOrder]);
       saveState();
-      if (soTakeawayIsPaid(liveOrder) || soTakeawayKitchenAccepted(liveOrder) || soTakeawayIsCompleted(liveOrder)) render();
+      render();
       return true;
     } catch (error) {
       console.warn("Takeaway status refresh failed", error);
@@ -299,29 +335,20 @@
     `;
   }
 
-  function soTakeawayDetailHtml({ number, customer, total, statusText, order }) {
+  function soTakeawayDetailHtml({ number, customer, total, order, paymentCopy = "" }) {
+    const delivery = String(order.customerOrderType || order.orderMode || order.customer_order_type || "").toUpperCase() === "DELIVERY" || order.type === "Delivery";
+    const deliveryFee = Math.max(0, Number(order.deliveryFee ?? order.delivery_fee ?? 0) || 0);
+    const productTotal = Math.max(0, (Number(total) || 0) - deliveryFee);
     return `
       <div class="self-order-success-detail so-takeaway-detail-card">
         <span><b>Nomor pesanan</b><strong class="so-takeaway-number-inline">${soTakeawayEscape(number)}</strong></span>
-        <span><b>Nama pemesan</b><strong>${customer ? soTakeawayEscape(customer) : "-"}</strong></span>
-        <span><b>Total pembayaran</b><strong>${soTakeawayMoney(total)}</strong></span>
-        <span><b>Status</b><strong>${soTakeawayEscape(statusText)}</strong></span>
-        <span><b>Masa bayar</b>${soTakeawayPaymentWindowHtml(order)}</span>
+        <span><b>Nama pemesan</b><strong class="so-takeaway-customer-copy">${customer ? soTakeawayEscape(customer) : "-"}</strong></span>
+        ${delivery ? `<span><b>Nominal pesanan</b><strong class="so-takeaway-detail-copy">${soTakeawayMoney(productTotal)}</strong></span><span><b>Nominal ongkir</b><strong class="so-takeaway-detail-copy">${soTakeawayMoney(deliveryFee)}</strong></span>` : ""}
+        ${order.pickupTime ? `<span><b>Jam pengambilan</b><strong class="so-takeaway-pickup-copy">${soTakeawayEscape(order.pickupTime === "Secepatnya" ? "Sekarang" : order.pickupTime)}</strong></span>` : ""}
+        <span class="so-takeaway-total-row"><b>Total pembayaran</b><strong>${soTakeawayMoney(total)}</strong></span>
+        <span><b>Pembayaran</b><strong class="so-takeaway-payment-copy">${paymentCopy ? soTakeawayEscape(paymentCopy) : soTakeawayIsPaid(order) ? "Lunas" : "Nanti di kasir"}</strong></span>
       </div>
     `;
-  }
-
-  function soTakeawayUpdateCountdowns() {
-    const nodes = document.querySelectorAll("[data-so-takeaway-countdown]");
-    if (!nodes.length) return;
-    let shouldRender = false;
-    nodes.forEach(node => {
-      const expiresAt = Number(node.getAttribute("data-so-takeaway-countdown") || 0);
-      const remaining = expiresAt - Date.now();
-      node.textContent = soTakeawayFormatDuration(remaining);
-      if (remaining <= 0) shouldRender = true;
-    });
-    if (shouldRender && soTakeawayExpireWaitingOrders()) render();
   }
 
   function soTakeawayStartNewOrder(event) {
@@ -331,6 +358,7 @@
     sessionStorage.removeItem("self_order_last_order");
     sessionStorage.removeItem("self_order_checkout_note");
     sessionStorage.removeItem("self_order_payment");
+    if (window.FresinGateway?.restart) return window.FresinGateway.restart();
     sessionStorage.setItem("self_order_step", "menu");
     if (typeof pushSelfOrderHistory === "function") pushSelfOrderHistory("menu");
     selfOrderCart = [];
@@ -345,7 +373,117 @@
     soTakeawayStartNewOrder(event);
   }
 
-  function soTakeawayStatusBar({ paid = false, expired = false, processing = false, completed = false } = {}) {
+  function soTakeawayResultHero({ title, note, tone = "waiting" }) {
+    const cancelled = tone === "cancelled";
+    return `<header class="so-takeaway-result-hero is-${soTakeawayEscape(tone)}">
+      <span class="so-takeaway-result-spark" aria-hidden="true">✦</span>
+      <div class="so-takeaway-result-heading">
+        ${cancelled ? `<div class="so-takeaway-success-icon icon-asik is-cancelled" aria-hidden="true"><svg viewBox="0 0 96 96" fill="none"><circle cx="44" cy="45" r="36" fill="#fff1d8"/><path d="M12 44a33 33 0 0 1 47-30" stroke="#d9b16c" stroke-width="1.5" stroke-dasharray="3 5" stroke-linecap="round"/><path d="M28 21h29l12 12v39H28V21Z" fill="#fffaf0" stroke="#a5773c" stroke-width="2" stroke-linejoin="round"/><path d="M57 21v12h12" fill="#efd5a6"/><path d="M36 42h21M36 50h16M36 58h9" stroke="#bd9256" stroke-width="2.5" stroke-linecap="round"/><circle cx="67" cy="68" r="17" fill="#fbe8df" stroke="#b87b62" stroke-width="2"/><path d="m61 62 12 12m0-12L61 74" stroke="#ae654d" stroke-width="3" stroke-linecap="round"/></svg></div>` : `<div class="success-icon so-takeaway-success-icon icon-asik" aria-hidden="true">
+          <svg viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="45" cy="46" r="37" fill="#fff1d8"/>
+            <path d="M12 45a34 34 0 0 1 50-30" stroke="#d9b16c" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="3 5"/>
+            <path d="M29 21h29l11 11v40H29V21Z" fill="#fffaf0" stroke="#a5773c" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M58 21v12h11" fill="#efd5a6"/>
+            <path d="M58 21v12h11M37 42h20M37 49h16M37 56h10" stroke="#bd9256" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M29 72v-8h26" stroke="#a5773c" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="67" cy="68" r="17" fill="#e9f2df" stroke="#718e4d" stroke-width="2"/>
+            <path d="m59 68 5 5 10-11" stroke="#4f7c41" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M77 17v7m-3.5-3.5h7" stroke="#e5bc73" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>`}
+        <div><span class="so-takeaway-result-eyebrow">Fresin App</span><h2>${soTakeawayEscape(title)}</h2></div>
+      </div>
+      ${note ? `<div class="so-takeaway-status-highlight is-${soTakeawayEscape(tone)}" role="status" aria-live="polite"><span class="so-takeaway-status-chip">${soTakeawayEscape(note)}</span></div>` : ""}
+    </header>`;
+  }
+
+  function soTakeawaySuccessActions(againAction) {
+    const takeaway = againAction === "window.SOTakeaway.newOrder(event)";
+    return `<div class="fresin-order-success-actions">
+      <button class="self-order-secondary fresin-view-receipt" type="button" onclick="window.SOTakeaway.openReceipt()">Lihat Pesanan</button>
+      <button class="self-order-primary ${takeaway ? "so-takeaway-new-order-btn" : ""}" ${takeaway ? 'data-so-takeaway-new-order="1"' : ""} type="button" onclick="${soTakeawayEscape(againAction)}">Pesan Lagi</button>
+    </div>`;
+  }
+
+  function soTakeawayReceiptOrder() {
+    if (window.CustomerOrder?.isMode?.()) return window.CustomerOrder.currentOrder?.() || null;
+    if (soTakeawayIsMode()) return soTakeawayActiveOrder() || soTakeawayFindOrder() || soTakeawayLastSnapshot();
+    return (typeof selfOrderLastLiveOrder === "function" ? selfOrderLastLiveOrder() : null)
+      || (typeof selfOrderLastOrderSnapshot === "function" ? selfOrderLastOrderSnapshot() : null);
+  }
+
+  function soTakeawayOpenReceipt() {
+    if (!soTakeawayReceiptOrder()) return toast("Pesanan belum tersedia.");
+    sessionStorage.setItem("self_order_step", "receipt");
+    pushSelfOrderHistory("receipt");
+    render();
+    window.scrollTo?.({ top: 0, behavior: "smooth" });
+  }
+
+  function soTakeawayCloseReceipt() {
+    sessionStorage.setItem("self_order_step", "success");
+    if (typeof history !== "undefined") history.replaceState({ ...(history.state || {}), selfOrderStep: "success" }, "", location.href);
+    render();
+    window.scrollTo?.({ top: 0, behavior: "smooth" });
+  }
+
+  function soTakeawayRenderReceiptPage() {
+    const order = soTakeawayReceiptOrder();
+    if (!order) return `<main class="self-order-main fresin-receipt-page"><p>Pesanan belum tersedia.</p><button class="self-order-secondary" type="button" onclick="window.SOTakeaway.closeReceipt()">Kembali</button></main>`;
+    return soTakeawayRenderReceipt(order);
+  }
+
+  function soTakeawayRenderReceipt(order) {
+    const items = order.items || [];
+    const lineTotal = item => typeof cartItemTotal === "function" ? cartItemTotal(item)
+      : Number(item.qty || 0) * Number(item.price || 0)
+        + (item.addons || []).reduce((sum, addon) => sum + Number(addon.price || 0) * Number(addon.qty || 0), 0);
+    const subtotal = Number(order.subtotal ?? items.reduce((sum, item) => sum + lineTotal(item), 0));
+    const discount = Number(order.discount || 0);
+    const fee = Number(order.deliveryFee ?? order.delivery_fee ?? 0);
+    const tax = Number(order.tax ?? order.tax_amount ?? 0);
+    const service = Number(order.serviceFee ?? order.service_fee ?? 0);
+    const total = Math.max(0, Number(order.grandTotal ?? order.total ?? 0), subtotal - discount + fee + tax + service);
+    const delivery = order.type === "Delivery" || order.customerOrderType === "DELIVERY";
+    // Courier settlement with the outlet does not confirm the customer's COD payment.
+    const payment = soTakeawayIsPaid(order) && !(delivery && order.paymentProvider === "courier_cash") ? "Lunas" : "Belum Lunas";
+    const store = state.settings?.selfOrderAppName || state.settings?.receiptStoreName || "Fresin Indonesia";
+    const logo = String(state.settings?.selfOrderProfileImageDataUrl || state.settings?.receiptLogoDataUrl || "").trim();
+    const emblem = logo ? mediaImageTag(logo, "Logo usaha", "fresin-receipt-logo", 160, "eager") : soTakeawayEscape(store.charAt(0));
+    const rawNumber = String(order.number || "-").trim();
+    const number = /^ORD-\d{8}-[A-Z0-9]+$/i.test(rawNumber)
+      ? (typeof displayOrderNumber === "function" ? displayOrderNumber(rawNumber) : rawNumber.replace(/^ORD-\d{8}-/i, "#"))
+      : rawNumber;
+    const created = Date.parse(order.createdAt || "");
+    return `<main class="self-order-main fresin-receipt-page">
+      <article class="fresin-customer-receipt" aria-label="Rincian pesanan ${soTakeawayEscape(number)}">
+        <header class="fresin-receipt-brand"><span class="fresin-receipt-emblem">${emblem}</span><strong>${soTakeawayEscape(store)}</strong></header>
+        <div class="fresin-receipt-meta"><strong>${soTakeawayEscape(number)}</strong><span>${soTakeawayEscape(delivery ? "Delivery" : order.type || "Takeaway")}</span>
+          ${order.customer ? `<span>${soTakeawayEscape(order.customer)}</span>` : ""}
+          ${Number.isFinite(created) ? `<span>${soTakeawayEscape(soTakeawayDateTime(order.createdAt))}</span>` : ""}
+        </div>
+        <div class="fresin-receipt-items">
+          ${items.map(item => `<div class="fresin-receipt-item"><div><strong>${Number(item.qty || 0)}× ${soTakeawayEscape(item.name || "Produk")}</strong>
+            ${item.variantLabel || item.variant ? `<small>${soTakeawayEscape(item.variantLabel || item.variant)}</small>` : ""}
+            ${(item.addons || []).map(addon => `<small>+ ${Number(addon.qty || 1)}× ${soTakeawayEscape(addon.name || "Tambahan")}</small>`).join("")}
+            ${item.note ? `<small>${soTakeawayEscape(item.note)}</small>` : ""}</div><b>${soTakeawayMoney(lineTotal(item))}</b></div>`).join("") || '<p class="fresin-receipt-empty">Rincian item sedang dimuat. Kembali ke status untuk memperbarui pesanan.</p>'}
+        </div>
+        <div class="fresin-receipt-totals">
+          ${discount ? `<span><b>Diskon</b><strong>− ${soTakeawayMoney(discount)}</strong></span>` : ""}
+          ${fee ? `<span><b>Ongkir</b><strong>${soTakeawayMoney(fee)}</strong></span>` : ""}
+          ${tax ? `<span><b>Pajak</b><strong>${soTakeawayMoney(tax)}</strong></span>` : ""}
+          ${service ? `<span><b>Biaya layanan</b><strong>${soTakeawayMoney(service)}</strong></span>` : ""}
+          <span class="fresin-receipt-grand"><b>Total</b><strong>${soTakeawayMoney(total)}</strong></span>
+        </div>
+        <div class="fresin-receipt-payment"><span>Pembayaran</span><strong>${soTakeawayEscape(payment)}</strong></div>
+        <footer class="fresin-receipt-footer"><p>Terima kasih sudah memesan.</p><span>Dari Fresin, untuk hari baikmu.</span></footer>
+      </article>
+      <button class="self-order-secondary fresin-receipt-back" type="button" onclick="window.SOTakeaway.closeReceipt()">Kembali ke status pesanan</button>
+      ${window.CustomerOrder?.isMode?.() ? window.CustomerOrder.renderSupport() : ""}
+    </main>`;
+  }
+
+  function soTakeawayStatusBar({ paid = false, expired = false, accepted = false, processing = false, completed = false } = {}) {
     const steps = expired
       ? [
         ["expired", "Kedaluwarsa", "Waktu pembayaran sudah habis.", true, "!"],
@@ -353,8 +491,8 @@
         ["process", "Proses", "Pesanan belum diproses.", false, "3"]
       ]
       : [
-        ["payment", paid ? "Pembayaran diterima" : "Menunggu pembayaran", paid ? "Kasir sudah menerima pembayaran." : "Tunjukkan halaman ini ke kasir untuk membayar.", true, paid ? "&#10003;" : "1"],
-        ["process", processing ? "Diproses" : "Menunggu diproses", processing ? "Pesanan sedang disiapkan." : "Pesanan masuk antrean setelah pembayaran diterima.", paid, processing ? "&#10003;" : "2"],
+        ["accept", accepted ? "Diterima kasir" : "Menunggu kasir", accepted ? "Pesanan sudah diteruskan ke dapur." : "Menunggu kasir menerima pesanan.", true, accepted ? "&#10003;" : "1"],
+        ["process", processing ? "Diproses" : "Menunggu diproses", processing ? "Pesanan sedang disiapkan." : "Dapur akan menyiapkan pesanan setelah diterima kasir.", accepted, processing ? "&#10003;" : "2"],
         ["done", "Selesai", completed ? "Pesanan sudah selesai." : "Tunggu sampai pesanan siap diambil.", completed, completed ? "&#10003;" : "3"]
       ];
     return `
@@ -371,23 +509,8 @@
   }
 
   function soTakeawayExpireWaitingOrders() {
-    const now = Date.now();
-    const expired = (state.orders || []).filter(order => soTakeawayIsExpired(order, now) && order.status !== "Dibatalkan");
-    if (!expired.length) return false;
-    expired.forEach(order => {
-      order.takeawayStatus = "EXPIRED";
-      order.status = "Dibatalkan";
-      order.cancelledAt = order.cancelledAt || new Date(now).toISOString();
-      order.cancelReason = order.cancelReason || "Pesanan Takeaway kedaluwarsa otomatis karena belum dibayar.";
-      if (typeof restoreLimitedStockCommit === "function") {
-        restoreLimitedStockCommit(order.number).catch(error => console.warn("Takeaway stock restore failed", error));
-      }
-      if (typeof syncOrderToSupabase === "function") {
-        syncOrderToSupabase(order, { silent: true }).catch(error => console.warn("Takeaway expiry sync failed", error));
-      }
-    });
-    saveState();
-    return true;
+    // Retained for existing callers; unpaid Take Away orders no longer expire automatically.
+    return false;
   }
 
   function soTakeawayPrimeMode() {
@@ -410,19 +533,21 @@
         </div>
         ${activeOrder ? `
           <section class="so-takeaway-active-card">
-            <span>Anda masih memiliki pesanan yang menunggu pembayaran.</span>
-            <strong>${soTakeawayEscape(soTakeawayNumber(activeOrder))}</strong>
-            <button class="self-order-primary" type="button" onclick="SOTakeaway.showActiveOrder()">Lihat Pesanan</button>
+            <div class="so-takeaway-active-copy">
+              <span>Pesanan aktif</span>
+              <strong>${soTakeawayEscape(soTakeawayNumber(activeOrder))}</strong>
+            </div>
+            <button class="so-takeaway-active-link" type="button" onclick="SOTakeaway.showActiveOrder()">Lihat pesanan</button>
           </section>
         ` : ""}
         <section class="self-order-payment-shell">
           <div class="self-order-checkout">
             <label class="self-order-customer-field">
-              <span>Nama Pemesan</span>
-              <input id="selfOrderCustomer" value="${soTakeawayEscape(customer)}" placeholder="Wajib" required aria-required="true" aria-describedby="selfOrderCustomerError" oninput="sessionStorage.setItem('self_order_customer', this.value); selfOrderClearCustomerError(this)" />
+              <span class="self-order-field-label">Nama Pemesan</span>
+              <input id="selfOrderCustomer" value="${soTakeawayEscape(customer)}" placeholder="Nama pemesan" required aria-required="true" aria-describedby="selfOrderCustomerError" oninput="sessionStorage.setItem('self_order_customer', this.value); selfOrderClearCustomerError(this)" />
               <small id="selfOrderCustomerError" class="self-order-customer-error" role="alert" hidden>Nama wajib diisi.</small>
             </label>
-            <label class="wide"><span>Catatan</span><textarea id="selfOrderCheckoutNote" placeholder="Opsional" oninput="sessionStorage.setItem('self_order_checkout_note', this.value)">${soTakeawayEscape(note)}</textarea></label>
+            <label class="wide"><span class="self-order-field-label">Catatan</span><textarea id="selfOrderCheckoutNote" placeholder="Catatan pesanan (opsional)" rows="2" oninput="sessionStorage.setItem('self_order_checkout_note', this.value)">${soTakeawayEscape(note)}</textarea></label>
           </div>
         </section>
         ${typeof renderSelfOrderUpsellCard === "function" ? renderSelfOrderUpsellCard("payment") : ""}
@@ -441,35 +566,29 @@
     const expired = soTakeawayIsExpired(order) || String(order.status || snapshot.status || "") === "EXPIRED";
     const processing = soTakeawayKitchenAccepted(order);
     const completed = soTakeawayIsCompleted(order);
+    const accepted = soTakeawayIsReleasedToKitchen(order);
+    const cancelled = order.status === "Dibatalkan" || Boolean(order.cancelledAt);
     const number = String(soTakeawayNumber(order) || snapshot.takeawayNumber || snapshot.number || "-").trim();
     const customer = String(order.customer || snapshot.customer || "").trim();
     const total = liveOrder ? orderTotal(liveOrder) : Number(snapshot.checkoutTotal ?? snapshot.total ?? 0);
     const title = expired
       ? "Pesanan telah kedaluwarsa"
-      : paid
-        ? "Pesanan berhasil dibuat"
-        : "Mohon melakukan pembayaran";
+      : cancelled ? "Pesanan dibatalkan" : "Pesanan berhasil dibuat";
     const note = expired
       ? "Silakan buat pesanan baru jika masih ingin melakukan pemesanan."
-      : paid
-        ? "Pembayaran telah diterima kasir. Pesanan anda sedang masuk antrean proses."
-        : "";
-    const instruction = expired
-      ? ""
-      : paid
-        ? ""
-        : "Tunjukkan halaman ini kepada kasir dalam melakukan pembayaran sebelum masa bayar habis.";
-    const statusText = expired ? "Kedaluwarsa" : completed ? "Selesai" : processing ? "Diproses Dapur" : paid ? "Pembayaran Diterima" : "Menunggu Pembayaran";
+      : cancelled ? (order.cancelReason || "Pesanan ini telah dibatalkan.")
+        : completed ? "Pesanan sudah selesai dan siap diambil."
+        : processing ? "Pesanan sedang disiapkan oleh dapur."
+        : accepted ? "Kasir sudah menerima pesanan anda."
+        : "Menunggu kasir menerima pesanan anda.";
+    const statusTone = expired || cancelled ? "cancelled" : completed ? "completed" : processing ? "processing" : accepted ? "accepted" : "waiting";
     return `
       <main class="self-order-main success so-takeaway-success">
         <section class="self-order-success-card so-takeaway-status-card ${paid ? "is-paid" : "is-pending"} ${expired ? "is-expired" : ""}">
-          <div class="so-takeaway-mark ${expired ? "expired" : paid ? "paid" : "pending"}" aria-hidden="true">${soTakeawayPaymentIcon({ paid, expired })}</div>
-          <h2>${soTakeawayEscape(title)}</h2>
-          ${note ? `<p>${soTakeawayEscape(note)}</p>` : ""}
-          ${instruction ? `<p class="so-takeaway-cashier-note">${soTakeawayEscape(instruction)}</p>` : ""}
-          ${soTakeawayDetailHtml({ number, customer, total, statusText, order })}
-          ${soTakeawayStatusBar({ paid, expired, processing, completed })}
-          <button class="self-order-primary so-takeaway-new-order-btn" type="button" data-so-takeaway-new-order="1" onclick="window.SOTakeaway.newOrder(event)">Pesan Lagi</button>
+          ${soTakeawayResultHero({ title, note, tone: statusTone })}
+          ${soTakeawayDetailHtml({ number, customer, total, order })}
+          ${cancelled ? "" : soTakeawayStatusBar({ paid, expired, accepted, processing, completed })}
+          ${soTakeawaySuccessActions("window.SOTakeaway.newOrder(event)")}
         </section>
       </main>
     `;
@@ -501,6 +620,7 @@
 
     let renderedCompletion = false;
     selfOrderSubmitting = true;
+    selfOrderSubmitStartedAt = Date.now();
     try {
       sessionStorage.setItem("self_order_payment", "cash");
       render();
@@ -518,8 +638,8 @@
         type: "Take Away",
         orderMode: TAKEAWAY_MODE,
         takeawayNumber,
-        takeawayStatus: "WAITING_PAYMENT",
-        takeawayExpiresAt: new Date(Date.parse(orderCreatedAt) + TAKEAWAY_EXPIRY_MINUTES * 60 * 1000).toISOString(),
+        takeawayStatus: "WAITING_ACCEPTANCE",
+        takeawayExpiresAt: "",
         customer,
         serviceInfo: takeawayNumber,
         note,
@@ -559,9 +679,9 @@
       order.limitedStockCommitToken = stockCommit.token || "";
       state.orders.unshift(order);
       saveState();
-      const synced = await syncOrderToSupabase(order, { silent: true });
+      const synced = await submitSelfOrderConfirmed(order);
       if (!synced) {
-        if (stockCommit.token) await restoreLimitedStockCommit(order.number);
+        if (stockCommit.token) await restoreLimitedStockCommit(order.number, "submit_failed");
         state.orders = state.orders.filter(item => item.id !== order.id);
         state.syncQueue = (state.syncQueue || []).filter(item => item.orderId !== orderSyncQueueId(order));
         saveState();
@@ -589,63 +709,123 @@
       selfOrderSubmitError = error?.userMessage || "Gagal mengirim pesanan, cek koneksi anda lalu coba lagi";
     } finally {
       selfOrderSubmitting = false;
+      selfOrderSubmitStartedAt = 0;
       if (!renderedCompletion) render();
     }
+  }
+
+  function soTakeawayIsDelivery(order) {
+    return String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || "").toUpperCase() === "DELIVERY"
+      || String(order?.type || "").toLowerCase() === "delivery";
+  }
+
+  function soTakeawayServiceLabel(order) {
+    if (soTakeawayIsDelivery(order)) return "Delivery";
+    const mode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || "").toUpperCase();
+    if (mode === "PICKUP_PREORDER") return order.serviceInfo === "Takeaway Outlet" || order.service_info === "Takeaway Outlet" ? "Takeaway Outlet" : "Takeaway-Rumah";
+    return "Takeaway Outlet";
+  }
+
+  function soTakeawayDeliveryStatusLabel(order) {
+    const status = order.customerOrderStatus || order.customer_order_status || "";
+    if (status === "CANCELLED" || order.status === "Dibatalkan") return "Dibatalkan";
+    if (status === "COMPLETED") return "Selesai diantar";
+    if (status === "DELIVERING") return "Sedang diantar";
+    if (status === "PICKED_UP") return "Diambil kurir";
+    if (status === "READY_FOR_PICKUP" || ["Siap Diambil", "Selesai"].includes(order.status)) return "Siap diambil kurir";
+    if (status === "PREPARING" || order.status === "Sedang Disiapkan") return "Diproses dapur";
+    if (order.confirmedAt) return "Menunggu dapur";
+    if (status === "DRIVER_ASSIGNED" || order.driverId || order.driver_id) return "Kurir ditugaskan";
+    return status === "NO_DRIVER_AVAILABLE" ? "Driver belum tersedia" : "Mencari kurir";
+  }
+
+  function soTakeawayPosDeliveryNote(note) {
+    const text = String(note || "").trim();
+    return text.split(/\s*(?:Kurir membayar harga produk di outlet|Pin lokasi\s*:|Patokan alamat\s*:|Jam pengambilan\s*:|Koordinat\s*:|Alamat (?:penerima|pengantaran)\s*:)/i)[0].trim();
   }
 
   function soTakeawayOrderCard(order, options = {}) {
     const qty = (order.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
     const expanded = sessionStorage.getItem(`orders_expanded_${order.id}`) === "1";
-    const statusLabel = soTakeawayStatusLabel(order);
-    const header = `TAKEAWAY · ${soTakeawayNumber(order)}`;
+    const delivery = soTakeawayIsDelivery(order);
+    const statusLabel = delivery ? soTakeawayDeliveryStatusLabel(order) : soTakeawayStatusLabel(order);
+    const serviceLabel = soTakeawayServiceLabel(order);
+    const header = `<span class="so-takeaway-type-chip">${serviceLabel}</span><strong class="so-takeaway-order-number">${soTakeawayEscape(customerDisplayName(order.customer) || "-")}</strong>`;
+    const cardNote = soTakeawayPosDeliveryNote(order.note);
+    const pickupNote = !delivery && order.pickupTime
+      ? `<p class="orders-item-group-note so-takeaway-pickup-note"><b>Jam pengambilan:</b> ${soTakeawayEscape(order.pickupTime)}</p>` : "";
+    const searchAttributes = Object.prototype.hasOwnProperty.call(options, "searchQuery")
+      ? `data-order-search="${soTakeawayEscape(orderSearchText(order))}" ${orderMatchesSearch(order, options.searchQuery) ? "" : "hidden"}` : "";
+    const processing = soTakeawayProcessingIds.has(order.id);
+    const processAction = soTakeawayCanProcessOrder(order)
+      ? `<button class="btn so-takeaway-process-btn" type="button" ${processing ? 'disabled aria-busy="true"' : ""} onclick="event.preventDefault(); event.stopPropagation(); SOTakeaway.processOrder('${order.id}')">${processing ? "Memproses..." : "Proses Pesanan"}</button>` : "";
     const deleteAction = typeof canDeleteOrderCard === "function" && canDeleteOrderCard(order)
       ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openDeleteOrderDialog('${order.id}')">Hapus</button>`
       : "";
     if (options.compactUnpaid && !expanded) {
       return `
-        <article class="orders-card unpaid-compact-card so-takeaway-card" onclick="toggleOrderItems('${order.id}', true)">
+        <article class="orders-card unpaid-compact-card so-takeaway-card" ${searchAttributes} onclick="toggleOrderItems('${order.id}', true)">
           <div class="unpaid-compact-head">
-            <strong>${soTakeawayEscape(header)}</strong>
+            <div class="so-takeaway-order-heading">${header}</div>
             <b>${soTakeawayMoney(orderTotal(order))}</b>
           </div>
           <div class="unpaid-compact-meta">
-            <span>${soTakeawayEscape(customerDisplayName(order.customer) || "-")}</span>
-            <span>${qty} item</span>
+            <span>${soTakeawayEscape(soTakeawayNumber(order))}</span>
             <span class="so-takeaway-badge">${soTakeawayEscape(statusLabel)}</span>
           </div>
+          ${pickupNote}
+          ${cardNote ? `<p class="orders-item-group-note"><b>Catatan:</b> ${soTakeawayEscape(cardNote)}</p>` : ""}
+          ${processAction}
           <button class="btn green so-takeaway-pay-btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); payUnpaidOrder('${order.id}')">Bayar</button>
           ${deleteAction}
         </article>
       `;
     }
-    const itemPreview = (order.items || []).map(item => `
-      <div class="orders-item-line">
-        <span><b>${soTakeawayEscape(orderItemInlineLabel(item))}</b>${orderItemNoteHtml(item, "orders-item-note")}</span>
-        <strong>${soTakeawayMoney(cartItemTotal(item))}</strong>
-      </div>
-    `).join("");
+    const groups = groupedOrderItems(order);
+    const itemPreview = groups.map(group => {
+      const rawGroupNote = orderGroupNote(order, group);
+      const groupNote = soTakeawayPosDeliveryNote(rawGroupNote);
+      return `
+        <div class="orders-item-group">
+          ${groups.length > 1 ? `<small>${soTakeawayEscape(group.label)}</small>` : ""}
+          ${groupNote ? `<p class="orders-item-group-note"><b>Catatan:</b> ${soTakeawayEscape(groupNote)}</p>` : ""}
+          ${group.items.map(item => `
+            <div class="orders-item-line">
+              <span><b>${soTakeawayEscape(orderItemInlineLabel(item))}</b>${orderItemNoteHtml(item, "orders-item-note")}</span>
+              <strong>${soTakeawayMoney(cartItemTotal(item))}</strong>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }).join("");
     const actions = [
+      processAction,
       order.paymentStatus !== "Lunas" && order.status !== "Dibatalkan"
         ? `<button class="btn green" type="button" onclick="event.preventDefault(); event.stopPropagation(); payUnpaidOrder('${order.id}')">Bayar</button>`
         : "",
+      soTakeawayIsPaid(order)
+        ? `<button class="btn green orders-print-receipt-btn" type="button" onclick="event.preventDefault(); event.stopPropagation(); printOrderCardReceipt('${order.id}')">Print Struk</button>` : "",
+      typeof canCancelOrder === "function" && canCancelOrder(order)
+        ? `<button class="btn red" type="button" onclick="event.preventDefault(); event.stopPropagation(); openCancelOrderDialog('${order.id}', ${options.returnToUnpaid ? "true" : "false"})">Batalkan</button>` : "",
       deleteAction
     ].filter(Boolean).join("");
     return `
-      <article class="orders-card unpaid-detail-card so-takeaway-card ${expanded ? "is-expanded" : ""}" ${options.returnToUnpaid ? `onclick="toggleOrderItems('${order.id}', true)"` : ""}>
+      <article class="orders-card unpaid-detail-card so-takeaway-card ${expanded ? "is-expanded" : ""}" ${searchAttributes} ${options.returnToUnpaid ? `onclick="toggleOrderItems('${order.id}', true)"` : ""}>
         <div class="orders-card-head">
-          <div>
-            <div class="order-title-row"><strong>${soTakeawayEscape(header)}</strong></div>
-            <span>${soTakeawayDateTime(order.createdAt)}</span>
+          <div class="so-takeaway-card-identity">
+            <div class="order-title-row so-takeaway-order-heading">${orderSequenceBadge(options.sequenceNumber)}${header}</div>
           </div>
-          <span class="orders-status-pill ready">${soTakeawayEscape(statusLabel)}</span>
+          <span class="orders-status-pill ready ${statusLabel === "MENUNGGU KASIR" ? "is-waiting" : ""}">${soTakeawayEscape(statusLabel)}</span>
         </div>
-        <div class="orders-card-meta">
-          <span>Takeaway</span>
-          <span>${soTakeawayEscape(customerDisplayName(order.customer) || "-")}</span>
-          <span>${qty} item</span>
-          <span>${soTakeawayMoney(orderTotal(order))}</span>
+        <div class="so-takeaway-order-meta-line">
+          <span class="so-takeaway-order-time">${soTakeawayDateTime(order.createdAt)}</span>
+          <div class="orders-card-meta">
+            <span>${soTakeawayEscape(soTakeawayNumber(order))}</span>
+            <span>${soTakeawayIsPaid(order) ? "Lunas" : "Belum dibayar"}</span>
+          </div>
         </div>
-        <div class="orders-card-items">${itemPreview || `<span class="muted">Belum ada rincian item.</span>`}</div>
+        <div class="orders-card-items">${pickupNote}${itemPreview || `<span class="muted">Belum ada rincian item.</span>`}</div>
+        <div class="orders-card-total"><span>${qty} barang</span><strong>${soTakeawayMoney(orderTotal(order))}</strong></div>
         ${actions ? `<div class="orders-card-actions">${actions}</div>` : ""}
       </article>
     `;
@@ -727,6 +907,7 @@
     const basePayUnpaidOrder = payUnpaidOrder;
     payUnpaidOrder = function (id) {
       const order = state.orders.find(item => item.id === id);
+      if (typeof orderUsesOutletPayment === "function" && orderUsesOutletPayment(order)) return basePayUnpaidOrder(id);
       if (!soTakeawayIsOrder(order)) return basePayUnpaidOrder(id);
       cart = (order.items || []).map(item => ({ ...item }));
       clearPosDraft();
@@ -744,25 +925,6 @@
       render();
     };
 
-    const baseSubmitOrder = submitOrder;
-    submitOrder = async function () {
-      const payingId = sessionStorage.getItem("pos_pay_unpaid_id");
-      const existingOrder = payingId ? state.orders.find(item => item.id === payingId) : null;
-      const wasTakeawayPayment = soTakeawayIsOrder(existingOrder);
-      const result = await baseSubmitOrder();
-      if (wasTakeawayPayment && existingOrder.paymentStatus === "Lunas") {
-        existingOrder.status = "Pesanan Baru";
-        existingOrder.paymentStatus = "Lunas";
-        existingOrder.takeawayStatus = "PAID";
-        existingOrder.confirmedAt = existingOrder.confirmedAt || new Date().toISOString();
-        existingOrder.serviceInfo = soTakeawayNumber(existingOrder);
-        saveState();
-        syncOrderToSupabase(existingOrder, { silent: true }).catch(error => console.warn("Takeaway paid sync failed", error));
-        broadcastRealtimeEvent("orders");
-      }
-      return result;
-    };
-
     if (typeof renderKitchen === "function") {
       const baseRenderKitchen = renderKitchen;
       renderKitchen = function () {
@@ -774,7 +936,7 @@
     if (typeof kitchenOrderIsVisible === "function") {
       const baseKitchenOrderIsVisible = kitchenOrderIsVisible;
       kitchenOrderIsVisible = function (order, filter, visibleStatuses) {
-        if (soTakeawayIsOrder(order) && !soTakeawayIsPaid(order)) return false;
+        if (soTakeawayIsOrder(order) && !soTakeawayIsReleasedToKitchen(order) && !order.cancelledAt && order.status !== "Dibatalkan") return false;
         return baseKitchenOrderIsVisible(order, filter, visibleStatuses);
       };
     }
@@ -782,7 +944,7 @@
     if (typeof kitchenOrderHasSequence === "function") {
       const baseKitchenOrderHasSequence = kitchenOrderHasSequence;
       kitchenOrderHasSequence = function (order) {
-        if (soTakeawayIsOrder(order) && !soTakeawayIsPaid(order)) return false;
+        if (soTakeawayIsOrder(order) && !soTakeawayIsReleasedToKitchen(order)) return false;
         return baseKitchenOrderHasSequence(order);
       };
     }
@@ -792,6 +954,7 @@
       if (!soTakeawayIsOrder(order)) return baseOrderDisplayTitle(order);
       const number = soTakeawayNumber(order);
       const customer = customerDisplayName(order?.customer);
+      if (soTakeawayIsDelivery(order)) return `Delivery · ${customer || number}`;
       return customer ? `TAKEAWAY · ${number} - ${customer}` : `TAKEAWAY · ${number}`;
     };
 
@@ -803,13 +966,15 @@
 
     const baseOrderPushNotificationCategories = orderPushNotificationCategories;
     orderPushNotificationCategories = function (order = {}) {
-      if (soTakeawayIsOrder(order) && !soTakeawayIsPaid(order)) return [];
+      if (soTakeawayIsOrder(order) && !soTakeawayIsReleasedToKitchen(order)
+        && !(typeof orderNeedsCashierConfirmation === "function" && orderNeedsCashierConfirmation(order))) return [];
       return baseOrderPushNotificationCategories(order);
     };
 
     const baseNotifyNativePushForOrder = notifyNativePushForOrder;
     notifyNativePushForOrder = async function (order, options = {}) {
-      if (soTakeawayIsOrder(order) && !soTakeawayIsPaid(order)) return false;
+      if (soTakeawayIsOrder(order) && !soTakeawayIsReleasedToKitchen(order)
+        && !(typeof orderNeedsCashierConfirmation === "function" && orderNeedsCashierConfirmation(order))) return false;
       return baseNotifyNativePushForOrder(order, options);
     };
 
@@ -817,13 +982,23 @@
       const baseDetectNewIncomingOrders = detectNewIncomingOrders;
       detectNewIncomingOrders = function (orders = [], previousKeys = orderNotificationKnownKeys) {
         return baseDetectNewIncomingOrders(orders, previousKeys)
-          .filter(order => !soTakeawayIsOrder(order) || soTakeawayIsPaid(order));
+          .filter(order => view !== "kitchen" || !soTakeawayIsOrder(order) || soTakeawayIsReleasedToKitchen(order)
+            || (typeof orderNeedsCashierConfirmation === "function" && orderNeedsCashierConfirmation(order)));
       };
     }
 
     window.SOTakeaway = {
       isMode: soTakeawayIsMode,
       isOrder: soTakeawayIsOrder,
+      processOrder: soTakeawayProcessOrder,
+      renderDetails: soTakeawayDetailHtml,
+      renderHero: soTakeawayResultHero,
+      renderSuccessActions: soTakeawaySuccessActions,
+      renderReceipt: soTakeawayRenderReceipt,
+      renderReceiptPage: soTakeawayRenderReceiptPage,
+      openReceipt: soTakeawayOpenReceipt,
+      closeReceipt: soTakeawayCloseReceipt,
+      renderProgress: soTakeawayStatusBar,
       showActiveOrder() {
         const order = soTakeawayActiveOrder();
         if (!order) return toast("Tidak ada pesanan Takeaway aktif.");
@@ -843,11 +1018,6 @@
 
     if (soTakeawayIsMode() && (IS_SELF_ORDER_APP || view === "selforder")) {
       window.setTimeout(() => render(), 0);
-    }
-
-    if (!window.__soTakeawayCountdownTimer) {
-      window.__soTakeawayCountdownTimer = window.setInterval(soTakeawayUpdateCountdowns, 1000);
-      window.setTimeout(soTakeawayUpdateCountdowns, 0);
     }
 
     if (!window.__soTakeawayStatusRefreshTimer) {

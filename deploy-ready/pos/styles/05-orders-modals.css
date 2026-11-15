@@ -548,9 +548,13 @@
   font-weight: 700;
 }
 
-.receipt-success-btn {
+.receipt-success-btn,
+.new-sale-success-btn {
   min-width: 220px;
   border-radius: 999px;
+}
+
+.receipt-success-btn {
   background: white;
   border-color: #7ac8ab;
   color: #0f7a5c;
@@ -1469,3 +1473,6 @@ th {
   text-transform: uppercase;
   letter-spacing: .04em;
 }
+
+.success-icon.pos-success-asik { background: transparent; box-shadow: none; }
+.success-icon.pos-success-asik svg { display: block; width: 76px; height: 76px; fill: none; stroke: none; }

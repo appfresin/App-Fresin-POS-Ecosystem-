@@ -1472,3 +1472,8 @@ a {
   background: #f8fffb;
   border: 1px solid #d7e7df;
 }
+
+.nav button { position: relative; }
+.nav .order-nav-count { display: inline-grid; place-items: center; flex: 0 0 auto; min-width: 22px; height: 22px; margin-left: auto; padding: 0 5px; border: 1px solid #ffb7b7; border-radius: 999px; background: #dc2626; color: #fff; font: 700 11px/1 system-ui, sans-serif; box-shadow: 0 2px 6px #711b1b25; }
+.nav .order-nav-count[hidden] { display: none !important; }
+.app-shell.nav-collapsed .nav .order-nav-count { position: absolute; top: 2px; right: 2px; min-width: 18px; height: 18px; margin: 0; font-size: 10px; }

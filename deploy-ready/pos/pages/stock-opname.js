@@ -185,7 +185,7 @@ function renderStockAuditPanel() {
 
 function renderStockHistoryPanel() {
   const watchedIds = new Set(stockOpnameProducts().map(product => product.id));
-  const rows = (state.stockMovements || []).filter(move => watchedIds.has(move.productId)).slice(0, 80);
+  const rows = stockOpnameHistoryRows(state.stockMovements, watchedIds, stockOpnameHistorySince());
   return `
     <div class="stock-list-card">
       <div class="stock-section-head">
@@ -207,6 +207,16 @@ function renderStockHistoryPanel() {
       </div>
     </div>
   `;
+}
+
+function stockOpnameHistoryRows(movements, watchedIds, since) {
+  const cutoff = Date.parse(since || "");
+  return (movements || [])
+    .filter(move => watchedIds.has(move.productId)
+      && (move.movementType === "audit" || /^Audit stok opname\b/i.test(String(move.reason || "")))
+      && Number(move.qty) !== 0
+      && Date.parse(move.at || "") >= cutoff)
+    .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
 }
 
 function stockMovementCheckedBy(move) {
@@ -272,6 +282,7 @@ function stockAuditInputValue(product) {
 }
 
 function stockAuditResultMessage(adjustedCount, synced) {
+  if (!adjustedCount) return synced ? "Pengecekan tersimpan, stok tetap" : "Pengecekan masuk antrean";
   if (synced) return `${adjustedCount} stok item diupdate`;
   return `${adjustedCount} stok item masuk antrean`;
 }
@@ -407,21 +418,23 @@ async function submitStockAudit() {
     product.stockOpnameCheckedBy = checkedBy;
     checkedCount += 1;
     changedProductIds.push(product.id);
-    if (diff) adjustedCount += 1;
-    const movement = {
-      id: uid(),
-      at,
-      productId: product.id,
-      productName: product.name,
-      qty: diff,
-      reason: `Audit stok opname oleh ${checkedBy}`,
-      checkedBy,
-      movementType: "audit",
-      balanceAfter: actual,
-      pendingSync: true
-    };
-    state.stockMovements.unshift(movement);
-    auditMovements.push(movement);
+    if (diff !== 0) {
+      adjustedCount += 1;
+      const movement = {
+        id: uid(),
+        at,
+        productId: product.id,
+        productName: product.name,
+        qty: diff,
+        reason: `Audit stok opname oleh ${checkedBy}`,
+        checkedBy,
+        movementType: "audit",
+        balanceAfter: actual,
+        pendingSync: true
+      };
+      state.stockMovements.unshift(movement);
+      auditMovements.push(movement);
+    }
   });
   if (!checkedCount) {
     stockAuditSubmitting = false;
