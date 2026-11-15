@@ -1266,12 +1266,13 @@
   function canRejectOrder(order) {
     if (!hasProfile() || !isCourierCash(order) || isPaidOrder(order) || driverOrderCancelled(order)
       || order.customer_order_type !== "DELIVERY" || order.confirmed_at || order.status !== "Pesanan Baru") return false;
+    if (order.customer_order_status === "DRIVER_ASSIGNED") return order.driver_id === state.profile.id;
     return order.customer_order_status === "SEARCHING_DRIVER"
       && !order.driver_id && !order.driver_name && !order.driver_phone && !acceptanceExpired(order);
   }
 
   function renderRejectButton(order) {
-    return canRejectOrder(order) ? `<button class="driver-reject-action" type="button" data-action="reject" data-order="${escapeHtml(order.id)}" ${state.actionLoading ? "disabled" : ""}>Tolak pesanan</button>` : "";
+    return canRejectOrder(order) ? `<button class="driver-reject-action" type="button" data-action="reject" data-order="${escapeHtml(order.id)}" ${state.actionLoading ? "disabled" : ""}>${order.customer_order_status === "DRIVER_ASSIGNED" ? "Batalkan pesanan" : "Tolak pesanan"}</button>` : "";
   }
 
   function renderRejectDialog() {
@@ -1279,13 +1280,13 @@
     if (!order || !canRejectOrder(order)) return "";
     return `<dialog class="driver-share-dialog driver-reject-dialog" id="driverRejectDialog" aria-labelledby="driverRejectTitle">
       <form data-driver-form="reject">
-        <div class="driver-share-heading">${icon("orders")}<h2 id="driverRejectTitle">Tolak pesanan</h2></div>
+        <div class="driver-share-heading">${icon("orders")}<h2 id="driverRejectTitle">${order.customer_order_status === "DRIVER_ASSIGNED" ? "Batalkan pesanan" : "Tolak pesanan"}</h2></div>
         <p>Pesanan ${escapeHtml(order.order_number || "")} · ${escapeHtml(order.customer_name || "Pelanggan")}</p>
-        <label for="driverRejectReason">Alasan penolakan</label>
+        <label for="driverRejectReason">${order.customer_order_status === "DRIVER_ASSIGNED" ? "Alasan pembatalan" : "Alasan penolakan"}</label>
         <textarea id="driverRejectReason" name="reason" rows="3" maxlength="500" required placeholder="Tulis alasan untuk pelanggan">${escapeHtml(state.rejectReason)}</textarea>
         <small>Pesanan akan dibatalkan. Alasan ini tampil di halaman pesanan pelanggan.</small>
         ${state.rejectError ? `<p class="driver-alert" role="alert">${escapeHtml(state.rejectError)}</p>` : ""}
-        <button class="driver-reject-action" type="submit" ${state.actionLoading ? "disabled" : ""}>${state.actionLoading ? "Menyimpan…" : "Kirim penolakan"}</button>
+        <button class="driver-reject-action" type="submit" ${state.actionLoading ? "disabled" : ""}>${state.actionLoading ? "Menyimpan…" : order.customer_order_status === "DRIVER_ASSIGNED" ? "Batalkan pesanan" : "Kirim penolakan"}</button>
         <button class="driver-share-close" type="button" data-action="close-reject" ${state.actionLoading ? "disabled" : ""}>Kembali</button>
       </form>
     </dialog>`;
@@ -1332,7 +1333,7 @@
     } catch (error) {
       if (error?.code === "28000") window.DriverNotifications?.invalidateSession?.();
       state.rejectError = error?.code === "28000" ? "Sesi driver berakhir. Verifikasi PIN di pengaturan."
-        : error?.code === "55000" ? "Pesanan sudah diambil, diproses, atau dibayar. Muat ulang daftar tugas."
+        : error?.code === "55000" ? "Pesanan sudah diproses, dibayar, atau ditugaskan ke driver lain. Muat ulang daftar tugas."
         : "Penolakan belum tersimpan. Periksa koneksi dan coba lagi.";
     } finally {
       state.actionLoading = "";

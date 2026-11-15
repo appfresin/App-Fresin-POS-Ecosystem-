@@ -374,6 +374,24 @@ test('invalid choices and service changes during submission do not navigate', ()
   assert.equal(env.navigations.length, 0);
 });
 
+test('closed online ordering blocks pickup and delivery without changing drafts while table dining stays available', () => {
+  for (const engine of ['home', 'takeaway']) {
+    const env = setup({ engine, url: engine === 'home' ? 'https://www.fresin.id/pesan/' : 'https://www.fresin.id/order/' });
+    let checks = 0;
+    env.window.FresinOnlineHours = { allow() { checks++; return false; } };
+    const before = JSON.stringify(Array.from(env.storage));
+    for (const service of ['pickup', 'delivery']) env.window.FresinGateway.choose(service);
+    assert.equal(checks, 2);
+    assert.equal(env.navigations.length, 0);
+    assert.equal(env.methods.length, 0);
+    assert.equal(JSON.stringify(Array.from(env.storage)), before);
+  }
+  const table = setup({ dineIn: true, url: 'https://www.fresin.id/order/?table=A-1' });
+  table.window.FresinOnlineHours = { allow() { throw Error('Table dining must not check online hours'); } };
+  table.window.FresinGateway.choose('dinein');
+  assert.equal(table.storage.get('self_order_step'), 'menu');
+});
+
 test('table category photos reuse visible catalog products and preserve category filtering', () => {
   const env = setup({ dineIn: true, url: 'https://www.fresin.id/self-order/?table=D-12' });
   const core = fs.readFileSync(sourcePath('app.js'), 'utf8');

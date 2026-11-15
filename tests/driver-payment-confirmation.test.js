@@ -106,6 +106,18 @@ test('kitchen readiness is visible before payment and WhatsApp confirmation ends
   assert.doesNotMatch(env.app.innerHTML,/Konfirmasi WhatsApp|Menunggu kasir mencatat pelunasan/);
 });
 
+test('own accepted order keeps cancellation in list and detail until the driver processes it', () => {
+  const env = setup();
+  env.api.state.orders = [env.order];
+  env.api.setView('active');
+  assert.match(env.app.innerHTML, /data-action="reject"[^>]*>Batalkan pesanan/);
+  assert.match(env.api.renderDetail(env.order), /data-action="reject"[^>]*>Batalkan pesanan/);
+  env.order.confirmed_at = new Date().toISOString();
+  env.api.setView('active');
+  assert.doesNotMatch(env.app.innerHTML, /data-action="reject"/);
+  assert.doesNotMatch(env.api.renderDetail(env.order), /data-action="reject"/);
+});
+
 test("driver processing acknowledges kitchen release only for its assigned, unchanged order", async () => {
   const writes=[];
   let remote;

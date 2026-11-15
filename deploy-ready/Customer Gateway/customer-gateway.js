@@ -284,6 +284,11 @@
   }
 
   function markMenu(service, replace = false) {
+    if (service !== "dinein" && window.FresinOnlineHours?.allow() === false) {
+      sessionStorage.setItem("self_order_step", "gateway");
+      history.replaceState({ ...(history.state || {}), selfOrderStep: "gateway", fresinService: null }, "", location.href);
+      return;
+    }
     if (!switchDraftContext(service === "dinein" ? `table:${tableCode()}` : homeMode() ? (service === "delivery" ? "delivery" : "home-pickup") : "takeaway")) return;
     if (service === "dinein") sessionStorage.setItem("self_order_table", tableCode());
     sessionStorage.setItem("self_order_step", "menu");
@@ -297,6 +302,7 @@
   function choose(service) {
     if (!enabled() || !validService(service) || selfOrderSubmitting) return;
     if (service === "dinein") return tableMode() ? markMenu(service) : undefined;
+    if (window.FresinOnlineHours?.allow() === false) return;
     if (homeMode() || (service === "pickup" && takeawayMode())) return markMenu(service);
     const pickupPath = tableMode() ? "/pesan/" : (window.FRESIN_PICKUP_URL || "/order/");
     const target = new URL(service === "delivery" ? "/pesan/" : pickupPath, location.href);

@@ -150,6 +150,7 @@ const initialState = {
     receiptWidth: "58mm",
     receiptBottomFeedLines: 1,
     selfOrderAppName: "",
+    selfOrderOperatingHours: null,
     selfOrderOutletName: "",
     selfOrderProfileImageDataUrl: "",
     selfOrderPromoImageDataUrl: "",
@@ -5417,6 +5418,7 @@ function normalizeStoreSettingsRow(row) {
     syncEndpoint: row.sync_endpoint || state.settings.syncEndpoint,
     autoBackup: row.auto_backup !== false,
     selfOrderAppName: selfOrderSettings.appName || "",
+    selfOrderOperatingHours: selfOrderSettings.onlineOperatingHours || null,
     selfOrderOutletName: selfOrderSettings.outletName || "",
     selfOrderProfileImageDataUrl: normalizePersistedImageUrl(selfOrderSettings.profileImage || ""),
     selfOrderPromoImageDataUrl: normalizePersistedImageUrl(selfOrderSettings.promoImage || ""),
@@ -5459,6 +5461,7 @@ function storeSettingsPayload() {
     auto_backup: settings.autoBackup !== false,
     self_order_settings: {
       appName: settings.selfOrderAppName || "",
+      onlineOperatingHours: settings.selfOrderOperatingHours || null,
       outletName: settings.selfOrderOutletName || "",
       profileImage: normalizePersistedImageUrl(settings.selfOrderProfileImageDataUrl || ""),
       promoImage,
@@ -5526,7 +5529,8 @@ async function selectPublicSelfOrderSettingsRow() {
     "profile_image:self_order_settings->>profileImage", "promo_image:self_order_settings->>promoImage",
     "promo_target:self_order_settings->>promoTargetProductId", "promo_label:self_order_settings->>promoButtonLabel",
     "promo_slides:self_order_settings->promoSlides", "upsell_ids:self_order_settings->upsellProductIds",
-    "receipt_logo:self_order_settings->receipt->>logoDataUrl"
+    "receipt_logo:self_order_settings->receipt->>logoDataUrl",
+    "online_hours:self_order_settings->onlineOperatingHours"
   ];
   const rows = await supabaseRestSelect("store_settings", fields.join(","), { id: `eq.${STORE_SETTINGS_ROW_ID}`, limit: "1" });
   const row = rows?.[0];
@@ -5535,7 +5539,8 @@ async function selectPublicSelfOrderSettingsRow() {
     appName: row.app_name, outletName: row.outlet_name, profileImage: row.profile_image,
     promoImage: row.promo_image, promoTargetProductId: row.promo_target,
     promoButtonLabel: row.promo_label, promoSlides: row.promo_slides,
-    upsellProductIds: row.upsell_ids, receipt: { logoDataUrl: row.receipt_logo }
+    upsellProductIds: row.upsell_ids, receipt: { logoDataUrl: row.receipt_logo },
+    onlineOperatingHours: row.online_hours
   } };
 }
 
@@ -7061,6 +7066,7 @@ function ensureToastElement() {
 
 function toast(message, duration = 2400) {
   const el = ensureToastElement();
+  el.classList.remove("online-hours-toast");
   el.textContent = message;
   el.classList.add("show");
   window.clearTimeout(toast.timer);
@@ -13881,11 +13887,7 @@ function setSettingsTab(tab) {
 }
 
 function orderNeedsTakeawayCashier(order) {
-  const mode = String(order?.customerOrderType || order?.orderMode || order?.customer_order_type || "").toUpperCase();
-  const origin = String(order?.serviceInfo ?? order?.service_info ?? "");
-  return mode === "PICKUP_PREORDER" && origin !== "Takeaway Outlet"
-    && isNewOrderStatus(order) && !orderIsCancelled(order) && !order.confirmedAt && !order.preparedAt
-    && orderVisibleInPosOrderList(order);
+  return orderNeedsCashierConfirmation(order);
 }
 
 
@@ -16334,14 +16336,18 @@ function saveSelfOrderSettings(event) {
     render();
     return;
   }
-  selfOrderSettingsSaving = true;
   const form = new FormData(event.target);
+  let operatingHours;
+  try { operatingHours = window.FresinOnlineHours.readForm(form); }
+  catch (error) { toast(error.message); return; }
+  selfOrderSettingsSaving = true;
   const slideCount = Math.max(0, Math.min(4, Number(form.get("selfOrderPromoSlideCount") || 0) || 0));
   const slides = normalizeSelfOrderPromoSlides(Array.from({ length: slideCount }, (_, index) => ({
     image: String(form.get(`selfOrderPromoImage_${index}`) || "").trim(),
     productId: String(form.get(`selfOrderPromoTargetProductId_${index}`) || "").trim(),
     label: String(form.get(`selfOrderPromoButtonLabel_${index}`) || "Order Now").trim() || "Order Now"
   })));
+  state.settings.selfOrderOperatingHours = operatingHours;
   state.settings.selfOrderAppName = String(form.get("selfOrderAppName") || "").trim();
   state.settings.selfOrderOutletName = String(form.get("selfOrderOutletName") || "").trim();
   state.settings.selfOrderProfileImageDataUrl = normalizePersistedImageUrl(form.get("selfOrderProfileImageDataUrl") || state.settings.selfOrderProfileImageDataUrl || "");

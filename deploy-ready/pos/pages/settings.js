@@ -327,6 +327,7 @@ function renderSelfOrderSettingsTab() {
         <div><h3>Self Order</h3><p>Atur identitas aplikasi dan slide promo yang tampil ke pelanggan.</p></div>
       </div>
       <form class="self-order-admin-form" onsubmit="saveSelfOrderSettings(event)">
+        ${window.FresinOnlineHours.renderSettings(settings.selfOrderOperatingHours)}
         <div class="self-order-identity-card">
           <div class="self-order-profile-preview">
             ${profileImage ? mediaImageTag(profileImage, "Foto profil self order", "", 320) : `<span>${navIcon("selforder")}</span>`}

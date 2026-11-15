@@ -1,0 +1,15 @@
+.online-hours-settings { grid-column: 1 / -1; min-width: 0; padding: 18px; border: 1px solid #b9d8ce; border-radius: 20px; background: linear-gradient(135deg,#f2fcf8,#fff); color: #194d42; }
+.online-hours-settings header { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; }
+.online-hours-clock { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 auto; border-radius: 14px; background: #e0f2e9; color: #168266; font-size: 30px; }
+.online-hours-settings h4 { margin: 0 0 4px; font-size: 17px; }
+.online-hours-settings p,.online-hours-settings small { margin: 0; color: #68867d; font-size: 12px; line-height: 1.6; }
+.online-hours-enable { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; font-size: 13px; font-weight: 650; }
+.online-hours-table-head,.online-hours-day { display: grid; grid-template-columns: minmax(95px,1.1fr) minmax(0,1fr) minmax(0,1fr); align-items: center; gap: 8px; }
+.online-hours-table-head { padding: 0 0 7px; color: #6f8e84; font-size: 11px; }
+.online-hours-day { padding: 8px 0; border-top: 1px solid #dfede7; }
+.online-hours-day label { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; }
+.online-hours-settings input[type=checkbox] { accent-color: #168266; width: 16px; height: 16px; flex: 0 0 auto; margin: 0; }
+.online-hours-day input[type=time] { box-sizing: border-box; min-width: 0; width: 100%; padding: 9px 6px; border: 1px solid #cee4dc; border-radius: 10px; background: #fff; color: #194d42; font: inherit; font-size: 12px; }
+.online-hours-day:not(:has(input[type=checkbox]:checked)) input[type=time] { opacity: .45; }
+.online-hours-settings > small { display: block; margin-top: 10px; }
+.toast.online-hours-toast.show { white-space: pre-line; padding: 19px 21px; border: 1px solid #bdd7f4; border-top: 4px solid #e7b960; border-radius: 22px; background: linear-gradient(140deg,#eff6ff,#fffaf0); color: #19548a; font-weight: 500; line-height: 1.75; box-shadow: 0 18px 48px #1b4f8129; }

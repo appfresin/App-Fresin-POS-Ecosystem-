@@ -619,6 +619,8 @@
       return;
     }
 
+    if (await window.FresinOnlineHours?.check() === false) return;
+    if (selfOrderSubmitting) return;
     selfOrderSubmitError = "";
     const customerInput = document.getElementById("selfOrderCustomer");
     const customer = String(customerInput?.value || sessionStorage.getItem("self_order_customer") || "").trim();

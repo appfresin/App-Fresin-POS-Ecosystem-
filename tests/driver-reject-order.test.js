@@ -24,11 +24,13 @@ function fixture() {
   vm.runInContext(extract('canRejectOrder')+'\n'+extract('rejectOrder'),context);
   return {context,order,calls};
 }
-test('only an unassigned, unpaid offer can be rejected',()=>{
+test('an unpaid offer or own assignment can be cancelled until processing',()=>{
   const {context:c,order}=fixture();
   assert.equal(c.canRejectOrder(order),true);
   const assigned = { ...order, customer_order_status: 'DRIVER_ASSIGNED', driver_id: 'own-driver' };
-  assert.equal(c.canRejectOrder(assigned), false);
+  assert.equal(c.canRejectOrder(assigned), true);
+  assert.equal(c.canRejectOrder({...assigned, confirmed_at:"processed"}), false);
+  assert.equal(c.canRejectOrder({...assigned, driver_id:"another-driver"}), false);
   for(const patch of [{driver_id:'other-driver'},{confirmed_at:'now'},{payment_status:'Lunas'},
     {cancelled_at:'now'},{customer_order_status:'DELIVERING'},{status:'Diproses'},{payment_provider:'qris'}])
     assert.equal(c.canRejectOrder({...order,...patch}),false,JSON.stringify(patch));
@@ -62,5 +64,5 @@ test('server conflict keeps order and reason available for review',async()=>{
   assert.equal(order.customer_order_status,'SEARCHING_DRIVER');
   assert.equal(c.state.rejectOrderId,order.id);
   assert.equal(c.state.rejectReason,'Ban bocor');
-  assert.match(c.state.rejectError,/sudah diambil/);
+  assert.match(c.state.rejectError,/sudah diproses/);
 });

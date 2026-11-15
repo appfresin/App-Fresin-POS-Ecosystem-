@@ -38,7 +38,7 @@ function renderKitchenTakeawayNotice(order) {
   const customer = customerDisplayName(order.customer) || "-";
   return `<article class="card kitchen-order-card kitchen-takeaway-notice" role="status" aria-label="Pemberitahuan takeaway menunggu kasir">
     <div class="kitchen-order-head">
-      <div class="kitchen-order-titleline"><div><div class="order-title-row"><span class="kitchen-service-chip">Takeaway Online</span><strong>${escapeHtml(customer)}</strong></div></div></div>
+      <div class="kitchen-order-titleline"><div><div class="order-title-row"><span class="kitchen-service-chip">${String(order.customerOrderType || order.orderMode || order.customer_order_type || order.type || "").toUpperCase() === "DELIVERY" ? "Delivery" : "Takeaway Online"}</span><strong>${escapeHtml(customer)}</strong></div></div></div>
       <span class="pill kitchen-notice-status">Menunggu diterima kasir</span>
     </div>
     <div class="kitchen-order-meta"><span class="kitchen-order-time">${dateTime(order.createdAt)}</span><span class="pill">${escapeHtml(displayOrderNumber(order.number))}</span><span class="pill">Pemberitahuan takeaway</span></div>
@@ -64,7 +64,7 @@ function renderKitchen() {
   const kitchenStatuses = ["Pesanan Baru", "Sedang Disiapkan", "Selesai"];
   const pendingTakeawayNotices = typeof orderNeedsTakeawayCashier === "function"
     ? state.orders.filter(orderNeedsTakeawayCashier).sort(kitchenOrderStableSort) : [];
-  const takeawayNotices = ["Semua", "Pemberitahuan Takeaway"].includes(kitchenFilter) ? pendingTakeawayNotices : [];
+  const takeawayNotices = ["Semua", "Pesanan Baru", "Pemberitahuan Takeaway"].includes(kitchenFilter) ? pendingTakeawayNotices : [];
   const orders = state.orders
     .filter(order => {
       const isToday = todayKey(new Date(order.cancelledAt || order.createdAt || Date.now())) === today;

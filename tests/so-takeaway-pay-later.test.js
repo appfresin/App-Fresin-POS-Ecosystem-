@@ -121,6 +121,15 @@ test("Take Away checkout asks for a valid WhatsApp number before submitting", as
   assert.match(env.ctx.selfOrderSubmitError, /nomor WhatsApp yang valid/);
 });
 
+test('SO takeaway cannot submit an already-open checkout after online ordering closes', async () => {
+  const env = setup({ mode: true });
+  env.ctx.window.FresinOnlineHours = { check: async () => false };
+  await env.ctx.selfOrderCreateOrder();
+  assert.equal(env.writes.length, 0);
+  assert.equal(env.ctx.selfOrderCart.length, 1);
+  assert.equal(env.ctx.selfOrderSubmitting, false);
+});
+
 test("app pickup shows a phone chip and separate confirmation and blank chat on both card layouts", () => {
   const env = setup({ order: {
     number: "P012", customer: "Rina", customerPhone: "0812-3456-7890", pickupTime: "14:00",

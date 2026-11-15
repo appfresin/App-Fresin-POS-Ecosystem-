@@ -1374,6 +1374,8 @@
 
   async function homeCreateWaitingPayment() {
     if (selfOrderSubmitting) return;
+    if (await window.FresinOnlineHours?.check() === false) return;
+    if (selfOrderSubmitting) return;
     if (!state.cashSession.open) return toast("Kas belum dibuka. Minta bantuan staff.");
     if (!selfOrderCart.length) return toast("Keranjang masih kosong.");
     CustomerOrder.captureCheckout();
