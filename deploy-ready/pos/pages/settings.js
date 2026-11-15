@@ -64,9 +64,13 @@ function renderNotificationSettingsTab() {
         <div class="notification-category-card">
           <div>
             <strong>Dapur hanya bunyi untuk kategori</strong>
-            <span>${selectedKitchenCategories.length ? `${selectedKitchenCategories.length} kategori dipilih di perangkat ini` : "Kosongkan untuk bunyi semua kategori"}</span>
+            <span>${selectedKitchenCategories.length ? `${selectedKitchenCategories.length} pilihan aktif di perangkat ini` : "Semua kategori produk; Konfirmasi dipilih terpisah"}</span>
           </div>
           <div class="notification-category-grid">
+            <label title="Bunyi untuk pesanan yang menunggu diterima kasir">
+              <input type="checkbox" name="orderKitchenNotificationCategories" value="__confirmation__" ${selectedKitchenKeys.has("__confirmation__") ? "checked" : ""} />
+              <span>Konfirmasi</span>
+            </label>
             ${categories.map(category => {
               const checked = selectedKitchenKeys.has(String(category || "").toLowerCase());
               return `

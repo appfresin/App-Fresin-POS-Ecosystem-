@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { notifyDriverOrder } from "./driver-push.mjs";
+import { CONFIRMATION_CATEGORY, orderNeedsCashierConfirmation, tokenMatchesOrderCategories } from "./cashier-confirmation.mjs";
 
 const ORDER_CATEGORY_LOOKUP_ATTEMPTS = 16;
 const ORDER_CATEGORY_LOOKUP_DELAY_MS = 200;
@@ -67,9 +68,11 @@ Deno.serve(async (request) => {
     return json(result, result.status || 200);
   }
   const eventType = normalizeEventType(payload.eventType);
-  const targets = targetList(payload.target);
   const scopeKey = normalizeScopeKey(payload.scopeKey);
   const admin = createClient(supabaseUrl, serviceRoleKey);
+  const orderCategories = await resolveOrderCategories(admin, payload);
+  const confirmation = orderCategories.includes(CONFIRMATION_CATEGORY);
+  const targets = targetList(confirmation ? "all" : payload.target);
   const { data: tokens, error: tokenError } = await admin
     .from("device_push_tokens")
     .select("id,fcm_token,target,kitchen_categories")
@@ -81,7 +84,6 @@ Deno.serve(async (request) => {
     return json({ error: "Failed to load device tokens" }, 500);
   }
 
-  const orderCategories = await resolveOrderCategories(admin, payload);
   const dedupedTokens = [...new Map((tokens || [])
     .filter((row) => tokenMatchesOrderCategories(row, orderCategories))
     .map((row) => [row.fcm_token, row])).values()];
@@ -94,7 +96,7 @@ Deno.serve(async (request) => {
   const projectId = Deno.env.get("FIREBASE_PROJECT_ID") || serviceAccount().project_id;
   if (!projectId) return json({ error: "Firebase project not configured" }, 500);
 
-  const title = payload.title || (eventType === "additional_order" ? "Pesanan tambahan masuk" : "Pesanan baru masuk");
+  const title = payload.title || (confirmation ? "Pesanan menunggu konfirmasi kasir" : eventType === "additional_order" ? "Pesanan tambahan masuk" : "Pesanan baru masuk");
   const body = payload.body || buildBody(payload, eventType);
   const reminderIntervalSeconds = await resolveReminderIntervalSeconds(admin, payload);
   let sent = 0;
@@ -170,18 +172,17 @@ function normalizeCategoryList(value: unknown) {
     .slice(0, 80);
 }
 
-function tokenMatchesOrderCategories(row: { target?: string; kitchen_categories?: unknown }, orderCategories: string[]) {
-  const filters = normalizeCategoryList(row.kitchen_categories);
-  if (!filters.length) return true;
-  if (!orderCategories.length) return false;
-  const orderKeys = new Set(orderCategories.map((category) => category.toLowerCase()));
-  return filters.some((category) => orderKeys.has(category.toLowerCase()));
-}
-
 async function resolveOrderCategories(admin: ReturnType<typeof createClient>, payload: NotifyPayload) {
-  const direct = normalizeCategoryList(payload.orderCategories);
-  if (direct.length) return direct;
   const orderId = String(payload.orderId || "").trim();
+  if (orderId) {
+    const { data: order, error } = await admin.from("orders")
+      .select("status,source,type,customer_order_type,customer_order_status,payment_provider,payment_status,driver_id,confirmed_at,cancelled_at,prepared_at,ready_at")
+      .eq("id", orderId).maybeSingle();
+    if (error) { console.error("order confirmation lookup failed", error); return []; }
+    if (order && orderNeedsCashierConfirmation(order)) return [CONFIRMATION_CATEGORY];
+  }
+  const direct = normalizeCategoryList(payload.orderCategories).filter(category => category !== CONFIRMATION_CATEGORY);
+  if (direct.length) return direct;
   if (!orderId) return [];
   for (let attempt = 0; attempt < ORDER_CATEGORY_LOOKUP_ATTEMPTS; attempt += 1) {
     const { data, error } = await admin

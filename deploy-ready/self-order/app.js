@@ -2083,7 +2083,7 @@ function orderNotificationItemRevision(order) {
 function orderNotificationKey(order) {
   const base = String(order?.supabaseId || order?.number || order?.id || "").trim();
   if (!base) return "";
-  return [base, String(order?.status || ""), orderNotificationItemRevision(order)].join("|");
+  return [base, String(order?.status || ""), orderNotificationItemRevision(order), orderNeedsCashierConfirmation(order) ? "confirmation" : "production"].join("|");
 }
 
 function orderNotificationDeliveryKey(order) {
@@ -2091,7 +2091,7 @@ function orderNotificationDeliveryKey(order) {
   if (!base) return "";
   const items = Array.isArray(order?.items) ? order.items : [];
   const maxBatch = items.reduce((max, item) => Math.max(max, orderItemBatch(item)), 1);
-  return [base, String(order?.status || ""), `batch:${maxBatch}`].join("|");
+  return [base, String(order?.status || ""), `batch:${maxBatch}`, orderNeedsCashierConfirmation(order) ? "confirmation" : "production"].join("|");
 }
 
 function claimOrderNotificationDelivery(order, reason = "") {
@@ -2331,8 +2331,29 @@ function orderPushNotificationCategories(order = {}) {
   return newestCategories.length ? newestCategories : orderKitchenNotificationCategories(order);
 }
 
+function orderNeedsCashierConfirmation(order = {}) {
+  const status = String(order.status || "").trim().toLowerCase();
+  const mode = String(order.customerOrderType || order.orderMode || order.customer_order_type || "").toUpperCase();
+  const type = String(order.type || "").trim().toLowerCase();
+  const source = String(order.source || "").trim().toLowerCase();
+  const progress = String(order.customerOrderStatus || order.customer_order_status || "").toUpperCase();
+  if (status !== "pesanan baru" || order.confirmedAt || order.confirmed_at || order.cancelledAt || order.cancelled_at
+    || order.preparedAt || order.prepared_at || order.readyAt || order.ready_at
+    || ["SCHEDULED", "SEARCHING_DRIVER", "NO_DRIVER_AVAILABLE", "CANCELLED", "COMPLETED"].includes(progress)) return false;
+  if (mode === "DELIVERY" || type === "delivery") {
+    return Boolean(order.driverId || order.driver_id)
+      && ["WAITING_ACCEPTANCE", "WAITING_CASHIER", "WAITING_CONFIRMATION"].includes(progress);
+  }
+  const provider = String(order.paymentProvider || order.payment_provider || "");
+  const paid = String(order.paymentStatus || order.payment_status || "").toLowerCase() === "lunas";
+  if (mode === "PICKUP_PREORDER" && provider && provider !== "cash_at_outlet" && !paid) return false;
+  return ["PICKUP_PREORDER", "TAKEAWAY"].includes(mode) || (type === "take away" && source === "self order");
+}
+
+
 function orderMatchesKitchenNotificationCategories(order = {}) {
   const selected = deviceKitchenNotificationCategories();
+  if (orderNeedsCashierConfirmation(order)) return selected.some(category => category.toLowerCase() === "__confirmation__");
   if (!selected.length) return true;
   const selectedKeys = new Set(selected.map(category => category.toLowerCase()));
   return orderKitchenNotificationCategories(order).some(category => selectedKeys.has(category.toLowerCase()));

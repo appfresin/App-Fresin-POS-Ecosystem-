@@ -358,6 +358,7 @@
     sessionStorage.removeItem("self_order_last_order");
     sessionStorage.removeItem("self_order_checkout_note");
     sessionStorage.removeItem("self_order_payment");
+    if (window.FresinGateway?.restart) return window.FresinGateway.restart();
     sessionStorage.setItem("self_order_step", "menu");
     if (typeof pushSelfOrderHistory === "function") pushSelfOrderHistory("menu");
     selfOrderCart = [];
@@ -965,13 +966,15 @@
 
     const baseOrderPushNotificationCategories = orderPushNotificationCategories;
     orderPushNotificationCategories = function (order = {}) {
-      if (soTakeawayIsOrder(order) && !soTakeawayIsReleasedToKitchen(order)) return [];
+      if (soTakeawayIsOrder(order) && !soTakeawayIsReleasedToKitchen(order)
+        && !(typeof orderNeedsCashierConfirmation === "function" && orderNeedsCashierConfirmation(order))) return [];
       return baseOrderPushNotificationCategories(order);
     };
 
     const baseNotifyNativePushForOrder = notifyNativePushForOrder;
     notifyNativePushForOrder = async function (order, options = {}) {
-      if (soTakeawayIsOrder(order) && !soTakeawayIsReleasedToKitchen(order)) return false;
+      if (soTakeawayIsOrder(order) && !soTakeawayIsReleasedToKitchen(order)
+        && !(typeof orderNeedsCashierConfirmation === "function" && orderNeedsCashierConfirmation(order))) return false;
       return baseNotifyNativePushForOrder(order, options);
     };
 
@@ -979,7 +982,8 @@
       const baseDetectNewIncomingOrders = detectNewIncomingOrders;
       detectNewIncomingOrders = function (orders = [], previousKeys = orderNotificationKnownKeys) {
         return baseDetectNewIncomingOrders(orders, previousKeys)
-          .filter(order => view !== "kitchen" || !soTakeawayIsOrder(order) || soTakeawayIsReleasedToKitchen(order));
+          .filter(order => view !== "kitchen" || !soTakeawayIsOrder(order) || soTakeawayIsReleasedToKitchen(order)
+            || (typeof orderNeedsCashierConfirmation === "function" && orderNeedsCashierConfirmation(order)));
       };
     }
 

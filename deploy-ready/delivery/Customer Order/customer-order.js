@@ -2179,6 +2179,7 @@
   function homeStartNewOrder() {
     sessionStorage.removeItem("customer_home_last_token");
     sessionStorage.removeItem(HOME_CHECKOUT_KEY);
+    if (window.FresinGateway?.restart) return window.FresinGateway.restart();
     sessionStorage.setItem("self_order_step", "menu");
     selfOrderCart = [];
     saveSelfOrderCart();

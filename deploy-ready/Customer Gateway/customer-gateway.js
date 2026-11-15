@@ -316,6 +316,22 @@
     render();
   }
 
+  function restart() {
+    if (!enabled() || selfOrderSubmitting) return;
+    for (const key of [HANDOFF_KEY, DRAFTS_KEY, DRAFT_CONTEXT_KEY, "customer_home_checkout",
+      "customer_home_last_token", "self_order_checkout_note", "self_order_payment", "self_order_product_id"]) {
+      sessionStorage.removeItem(key);
+    }
+    selfOrderCart = [];
+    saveSelfOrderCart();
+    const url = new URL(homeMode() ? "/pesan/" : "/order/", location.href);
+    if (new URL(location.href).searchParams.get("origin") === "outlet") url.searchParams.set("origin", "outlet");
+    sessionStorage.setItem("self_order_step", "gateway");
+    history.pushState({ ...(history.state || {}), selfOrderStep: "gateway", fresinService: null }, "", url.href);
+    render();
+    window.scrollTo?.({ top: 0, behavior: "smooth" });
+  }
+
   function showOrders() {
     if (homeMode()) return window.CustomerOrder.showOrders();
     try {
@@ -369,7 +385,7 @@
     return result;
   };
 
-  window.FresinGateway = { choose, open, showOrders, showSupport, hideSupport, isOpen, categoryVisual, menuVisualsEnabled: enabled, serviceStrip };
+  window.FresinGateway = { choose, open, restart, showOrders, showSupport, hideSupport, isOpen, categoryVisual, menuVisualsEnabled: enabled, serviceStrip };
 
   function finishBoot() {
     window.FRESIN_GATEWAY_BOOT_PENDING = false;
