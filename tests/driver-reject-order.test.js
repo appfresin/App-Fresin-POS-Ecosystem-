@@ -13,7 +13,7 @@ function extract(name) {
 }
 function fixture() {
   const order = {id:'order-1',customer_order_type:'DELIVERY',payment_provider:'courier_cash',
-    customer_order_status:'DRIVER_ASSIGNED',driver_id:'own-driver',status:'Pesanan Baru',payment_status:'Belum dibayar'};
+    customer_order_status:'SEARCHING_DRIVER',driver_id:null,status:'Pesanan Baru',payment_status:'Belum dibayar'};
   const calls=[];
   const context=vm.createContext({state:{profile:{id:'own-driver'},orders:[order],rejectOrderId:order.id,actionLoading:''},
     hasProfile:()=>true,isCourierCash:o=>o.payment_provider==='courier_cash',isPaidOrder:o=>o.payment_status==='Lunas',
@@ -24,9 +24,11 @@ function fixture() {
   vm.runInContext(extract('canRejectOrder')+'\n'+extract('rejectOrder'),context);
   return {context,order,calls};
 }
-test('only an unprocessed, unpaid offer or own assignment can be rejected',()=>{
+test('only an unassigned, unpaid offer can be rejected',()=>{
   const {context:c,order}=fixture();
   assert.equal(c.canRejectOrder(order),true);
+  const assigned = { ...order, customer_order_status: 'DRIVER_ASSIGNED', driver_id: 'own-driver' };
+  assert.equal(c.canRejectOrder(assigned), false);
   for(const patch of [{driver_id:'other-driver'},{confirmed_at:'now'},{payment_status:'Lunas'},
     {cancelled_at:'now'},{customer_order_status:'DELIVERING'},{status:'Diproses'},{payment_provider:'qris'}])
     assert.equal(c.canRejectOrder({...order,...patch}),false,JSON.stringify(patch));
@@ -57,7 +59,7 @@ test('server conflict keeps order and reason available for review',async()=>{
   const {context:c,order}=fixture();
   c.window.DriverSupabase.ready=async()=>({rpc:async()=>({error:{code:'55000'}})});
   await c.rejectOrder('Ban bocor');
-  assert.equal(order.customer_order_status,'DRIVER_ASSIGNED');
+  assert.equal(order.customer_order_status,'SEARCHING_DRIVER');
   assert.equal(c.state.rejectOrderId,order.id);
   assert.equal(c.state.rejectReason,'Ban bocor');
   assert.match(c.state.rejectError,/sudah diambil/);

@@ -167,28 +167,6 @@ button { transition: background-color .16s ease, box-shadow .16s ease, transform
 .driver-login-form input { min-height: 49px; border-color: #e5ecde; border-radius: 14px; background: #f7f9f4; }
 .driver-login-form input:focus { border-color: #95b77c; box-shadow: 0 0 0 3px #e8f3df; }
 
-.driver-bank-panel { overflow: hidden; padding: 16px; border-radius: 23px; background: #fff; box-shadow: var(--driver-shadow-soft); }
-.driver-bank-panel summary { display: grid; grid-template-columns: 34px minmax(0,1fr) 18px; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; list-style: none; }
-.driver-bank-panel summary::-webkit-details-marker { display: none; }
-.driver-bank-panel summary > span:nth-child(2) { display: grid; gap: 4px; min-width: 0; }
-.driver-bank-panel summary strong { color: var(--driver-ink); font-size: 13px; font-weight: 650; }
-.driver-bank-panel summary small { color: var(--driver-muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
-.driver-bank-icon { display: grid; place-items: center; width: 34px; height: 38px; border-radius: 12px; background: #edf5e6; color: #4a7c33; }
-.driver-bank-icon svg { width: 18px; height: 18px; }
-.driver-bank-chevron { color: #8b9b7f; transform: rotate(-90deg); }
-.driver-bank-chevron svg { width: 17px; height: 17px; }
-.driver-bank-panel[open] .driver-bank-chevron { transform: rotate(90deg); }
-.driver-bank-panel summary:focus-visible { outline: 3px solid #6b9e4f; outline-offset: 3px; border-radius: 12px; }
-.driver-bank-form { display: grid; gap: 13px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #edf1e8; }
-.driver-bank-form > p { margin: 0; color: var(--driver-muted); font-size: 11px; line-height: 1.6; }
-.driver-bank-form label { display: grid; gap: 6px; min-width: 0; }
-.driver-bank-form label span { color: #78866e; font-size: 11px; font-weight: 500; }
-.driver-bank-form input { width: 100%; min-width: 0; min-height: 45px; padding: 10px 12px; border: 1px solid #e1e9d9; border-radius: 13px; background: #f7f9f4; color: var(--driver-ink); font-size: 13px; }
-.driver-bank-form input:focus { border-color: #95b77c; background: #fff; }
-.driver-bank-form button { min-height: 44px; font-size: 12px; }
-.driver-bank-form .driver-bank-message { color: #458b2e; }
-.driver-bank-form .driver-bank-message.error { color: #b25736; }
-.driver-bank-message:empty { display: none; }
 .driver-outlet-payment-head { display: flex; align-items: center; gap: 10px; }
 .driver-outlet-payment-head > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: #edf5e6; color: #4a7c33; }
 .driver-outlet-payment-head small { display: block; margin-bottom: 4px; color: var(--driver-muted); font-size: 10px; }
@@ -230,13 +208,6 @@ button { transition: background-color .16s ease, box-shadow .16s ease, transform
 .driver-process-actions > .driver-card-action:disabled { opacity: .65; cursor: wait; }
 .driver-process-note { padding: 8px; color: #7d8d72; font-size: 11px; line-height: 1.5; text-align: center; }
 
-.driver-map-action { display: grid; grid-template-columns: minmax(0,1fr) 52px; align-items: stretch; overflow: hidden; border: 1px solid #e4eddb; border-radius: 17px; background: #edf5e6; color: #4c7c36; }
-.driver-map-action > .driver-secondary { min-width: 0; margin: 0; border: 0; border-radius: 0; background: transparent; }
-.driver-share-location { display: grid; place-items: center; align-self: center; min-height: 44px; margin: 6px 0; padding: 8px; border: 0; border-left: 1px solid #d2e1c6; border-radius: 0; background: transparent; color: inherit; cursor: pointer; }
-.driver-share-location svg { width: 21px; height: 21px; }
-.driver-map-action button:disabled { opacity: .45; cursor: default; }
-.driver-map-action button:focus-visible { outline: 2px solid #568b3d; outline-offset: -4px; }
-.driver-map-action button:hover:not(:disabled) { background: #e1eed7; }
 .driver-items-panel .driver-item-row { display: grid; grid-template-columns: max-content minmax(0,1fr) max-content; gap: 9px; align-items: start; padding-block: 12px; }
 .driver-item-qty { color: #87947b; font-size: 12px; line-height: 1.5; white-space: nowrap; }
 .driver-item-copy { overflow-wrap: anywhere; line-height: 1.5; }
@@ -259,12 +230,6 @@ button { transition: background-color .16s ease, box-shadow .16s ease, transform
 .driver-share-order > svg { width: 16px; height: 16px; }
 .driver-share-order:hover:not(:disabled) { background: #ffffff38; }
 .driver-share-order:disabled { opacity: .5; cursor: wait; }
-.driver-summary-grid .driver-phone-value { display: flex; align-items: center; justify-content: flex-end; gap: 9px; }
-.driver-phone-value > em { min-width: 0; font-style: normal; overflow-wrap: anywhere; }
-.driver-share-phone { display: grid; flex: 0 0 auto; place-items: center; width: 36px; height: 36px; padding: 8px; border: 1px solid #dfebd6; border-radius: 11px; background: #edf5e6; color: #50823b; cursor: pointer; }
-.driver-share-phone svg { width: 18px; height: 18px; }
-.driver-share-phone:hover:not(:disabled) { background: #dfedd5; }
-.driver-share-phone:disabled { opacity: .4; cursor: default; }
 .driver-share-dialog textarea { box-sizing: border-box; display: block; width: 100%; max-height: 36dvh; min-height: 76px; margin-bottom: 12px; padding: 12px; resize: vertical; border: 1px solid #dce8d3; border-radius: 12px; background: #fff; color: #3d5a30; font-family: inherit; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .driver-share-dialog textarea:focus-visible { outline: 2px solid #6b9e4f; outline-offset: 2px; }
 .driver-kitchen-notice { display: flex; align-items: flex-start; gap: 8px; padding: 12px 13px; border: 1px solid #dce7d4; border-radius: 16px; background: #f3f7ee; color: #78876d; font-size: 11px; font-weight: 500; line-height: 1.6; }

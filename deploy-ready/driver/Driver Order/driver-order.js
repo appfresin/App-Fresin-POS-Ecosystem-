@@ -8,7 +8,6 @@
   const WALLET_DATE_TO_KEY = "kasirin_driver_wallet_date_to_v1";
   const WALLET_MODE_KEY = "kasirin_driver_wallet_mode_v1";
   const WALLET_CLAIMS_KEY = "kasirin_driver_wallet_claims_v1";
-  const PAYMENT_ACCOUNTS_KEY = "kasirin_driver_payment_accounts_v1";
   const ACTIVE_STATUSES = ["SEARCHING_DRIVER", "DRIVER_ASSIGNED", "PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERING"];
   const HISTORY_STATUSES = ["COMPLETED"];
   const DRIVER_FETCH_RETRY_MS = 30000;
@@ -93,8 +92,6 @@
     menuOpen: false,
     claimLoading: false,
     claimError: "",
-    bankMessage: "",
-    bankError: "",
     claimValidator: null,
     walletMode: loadWalletMode(),
     walletDate: loadWalletDate(),
@@ -510,37 +507,6 @@
     return Math.max(0, orderTotal(order) - Number(order.delivery_fee || 0));
   }
 
-  function paymentAccount() {
-    try {
-      const accounts = JSON.parse(localStorage.getItem(PAYMENT_ACCOUNTS_KEY) || "{}");
-      const account = accounts?.[state.profile.id];
-      if (!account || typeof account !== "object") return null;
-      const bank = String(account.bank || "").trim();
-      const number = String(account.number || "").trim();
-      const holder = String(account.holder || "").trim();
-      return bank && /^[0-9]{6,34}$/.test(number) && holder ? { bank, number, holder } : null;
-    } catch {
-      return null;
-    }
-  }
-
-  function savePaymentAccount(data) {
-    if (!hasProfile()) throw new Error("Masuk sebagai driver terlebih dahulu.");
-    const account = {
-      bank: String(data.get("bank") || "").trim().slice(0, 60),
-      number: String(data.get("accountNumber") || "").trim(),
-      holder: String(data.get("accountHolder") || "").trim().slice(0, 100)
-    };
-    if (!account.bank || !account.holder || !/^[0-9]{6,34}$/.test(account.number)) {
-      throw new Error("Lengkapi bank, nomor rekening yang valid, dan nama pemilik rekening.");
-    }
-    let accounts;
-    try { accounts = JSON.parse(localStorage.getItem(PAYMENT_ACCOUNTS_KEY) || "{}"); } catch { accounts = {}; }
-    if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) accounts = {};
-    accounts[state.profile.id] = account;
-    localStorage.setItem(PAYMENT_ACCOUNTS_KEY, JSON.stringify(accounts));
-  }
-
   function isCourierCash(order) {
     return String(order?.payment_provider || "").toLowerCase() === "courier_cash";
   }
@@ -636,17 +602,6 @@
     } catch (_) { return null; }
   }
 
-  async function shareMapsLocation(orderId) {
-    const payload = shareLocationPayload(state.orders.find(order => order.id === orderId));
-    return shareContent(payload);
-  }
-
-  async function sharePhoneNumber(orderId) {
-    const order = state.orders.find(order => order.id === orderId);
-    if (!order || !cleanPhone(order.customer_phone)) return;
-    return shareContent({ title: "Nomor pelanggan", text: `Nama: ${order.customer_name || "Pelanggan"}\nWhatsApp: ${order.customer_phone}` });
-  }
-
   function deliveryLocationLines(order) {
     const meta = deliveryMeta(order);
     const location = shareLocationPayload(order);
@@ -735,14 +690,12 @@
     const payload = state.sharePayload;
     if (!payload) return "";
     const whatsapp = `https://wa.me/?text=${encodeURIComponent(sharedContentText(payload))}`;
-    const location = Boolean(payload.url);
-    const title = location ? "Bagikan lokasi" : payload.title === "Nomor pelanggan" ? "Bagikan nomor" : "Bagikan pesanan";
     return `<dialog class="driver-share-dialog" id="driverShareDialog" aria-labelledby="driverShareTitle">
-      <div class="driver-share-heading">${icon("send")}<h2 id="driverShareTitle">${escapeHtml(title)}</h2></div>
-      <p>Pilih aplikasi untuk ${location ? "mengirim titik pengantaran" : "membagikan informasi ini"}.</p>
-      ${location ? `<input aria-label="Tautan Google Maps" readonly value="${escapeHtml(payload.url)}">` : `<textarea aria-label="Isi pesan yang dibagikan" readonly rows="${payload.title === "Nomor pelanggan" ? 3 : 12}">${escapeHtml(payload.text)}</textarea>`}
+      <div class="driver-share-heading">${icon("send")}<h2 id="driverShareTitle">Bagikan pesanan</h2></div>
+      <p>Pilih aplikasi untuk membagikan informasi ini.</p>
+      <textarea aria-label="Isi pesan yang dibagikan" readonly rows="12">${escapeHtml(payload.text)}</textarea>
       <a class="driver-secondary" href="${escapeHtml(whatsapp)}" target="_blank" rel="noopener">${icon("chat")}<span>WhatsApp</span></a>
-      <button class="driver-secondary" type="button" data-action="copy-share">${location ? "Salin tautan" : "Salin teks"}</button>
+      <button class="driver-secondary" type="button" data-action="copy-share">Salin teks</button>
       <p role="status">${escapeHtml(state.shareMessage)}</p>
       <button class="driver-share-close" type="button" data-action="close-share">Tutup</button>
     </dialog>`;
@@ -779,7 +732,6 @@
   function whatsappUrl(order) {
     const phone = cleanPhone(order.customer_phone);
     if (!phone) return "";
-    const account = paymentAccount();
     const fee = Math.max(0, Number(order.delivery_fee || 0));
     const productAmount = orderSubtotal(order);
     const paidOnline = !isCourierCash(order) && isPaidOrder(order);
@@ -795,8 +747,6 @@
       "",
       paidOnline ? "Pembayaran pesanan sudah tercatat lunas." : !isCourierCash(order)
         ? "Silakan selesaikan pembayaran melalui halaman pesanan."
-        : account
-        ? `Jika ingin melakukan pembayaran online, boleh transfer ke:\n${account.bank}\nNomor rekening: ${account.number}\nAtas nama: ${account.holder}\nMohon konfirmasi setelah transfer.`
         : "",
       "", "apakah sudah benar kak ?"
     ];
@@ -1316,10 +1266,8 @@
   function canRejectOrder(order) {
     if (!hasProfile() || !isCourierCash(order) || isPaidOrder(order) || driverOrderCancelled(order)
       || order.customer_order_type !== "DELIVERY" || order.confirmed_at || order.status !== "Pesanan Baru") return false;
-    if (order.customer_order_status === "SEARCHING_DRIVER") {
-      return !order.driver_id && !order.driver_name && !order.driver_phone && !acceptanceExpired(order);
-    }
-    return order.customer_order_status === "DRIVER_ASSIGNED" && order.driver_id === state.profile.id;
+    return order.customer_order_status === "SEARCHING_DRIVER"
+      && !order.driver_id && !order.driver_name && !order.driver_phone && !acceptanceExpired(order);
   }
 
   function renderRejectButton(order) {
@@ -1328,7 +1276,7 @@
 
   function renderRejectDialog() {
     const order = state.orders.find(item => item.id === state.rejectOrderId);
-    if (!order) return "";
+    if (!order || !canRejectOrder(order)) return "";
     return `<dialog class="driver-share-dialog driver-reject-dialog" id="driverRejectDialog" aria-labelledby="driverRejectTitle">
       <form data-driver-form="reject">
         <div class="driver-share-heading">${icon("orders")}<h2 id="driverRejectTitle">Tolak pesanan</h2></div>
@@ -1578,25 +1526,7 @@
           <span>${historyCount} transaksi tercatat</span>
         </article>
         ${renderWalletHistory(historyOrders, historyClaims, showSkeleton)}
-        ${renderPaymentAccount()}
       </section>
-    `;
-  }
-
-  function renderPaymentAccount() {
-    const account = paymentAccount();
-    return `
-      <details class="driver-bank-panel" ${!account || state.bankError ? "open" : ""}>
-        <summary><span class="driver-bank-icon" aria-hidden="true">${icon("wallet")}</span><span><strong>Rekening pembayaran</strong><small>${account ? escapeHtml(`${account.bank} · ${account.holder}`) : "Atur rekening untuk konfirmasi ke customer"}</small></span><span class="driver-bank-chevron" aria-hidden="true">${icon("back")}</span></summary>
-        <form class="driver-bank-form" data-driver-form="bank">
-          <p>Rekening ini disertakan dalam pesan WhatsApp untuk pembayaran ke driver. Tersimpan khusus akun ini di perangkat ini.</p>
-          <label><span>Bank / e-wallet</span><input name="bank" autocomplete="off" maxlength="60" required placeholder="Contoh: BSI" value="${escapeHtml(account?.bank || "")}" /></label>
-          <label><span>Nomor rekening</span><input name="accountNumber" type="text" inputmode="numeric" autocomplete="off" pattern="[0-9]{6,34}" maxlength="34" required placeholder="Masukkan nomor rekening" value="${escapeHtml(account?.number || "")}" /></label>
-          <label><span>Atas nama</span><input name="accountHolder" autocomplete="name" maxlength="100" required placeholder="Nama pemilik rekening" value="${escapeHtml(account?.holder || "")}" /></label>
-          <button class="driver-primary" type="submit">${icon("check")}<span>Simpan rekening</span></button>
-          <p class="driver-bank-message ${state.bankError ? "error" : ""}" role="status">${escapeHtml(state.bankError || state.bankMessage)}</p>
-        </form>
-      </details>
     `;
   }
 
@@ -1757,7 +1687,8 @@
     const status = effectiveOrderStatus(order);
     const meta = deliveryMeta(order);
     const map = mapsTarget(order);
-    const wa = whatsappUrl(order);
+    const phone = cleanPhone(order.customer_phone);
+    const chatUrl = phone ? `https://wa.me/${phone}` : "";
     return `
       <section class="driver-content detail">
         <button class="driver-back" type="button" data-action="back">${icon("back")}<span>Kembali</span></button>
@@ -1777,7 +1708,7 @@
           <span><b>Pesanan</b><strong>${money(orderSubtotal(order))}</strong></span>
           <span><b>Ongkir</b><strong>${money(order.delivery_fee || 0)}</strong></span>
           <span><b>Jarak</b><strong>${distanceLabel(order)}</strong></span>
-          <span><b>WhatsApp</b><strong class="driver-phone-value"><em>${escapeHtml(order.customer_phone || "-")}</em><button class="driver-share-phone" type="button" data-action="share-phone" data-order="${escapeHtml(order.id)}" aria-label="Bagikan nomor WhatsApp" ${cleanPhone(order.customer_phone) ? "" : "disabled"}>${icon("send")}</button></strong></span>
+          <span><b>WhatsApp</b><strong>${escapeHtml(order.customer_phone || "-")}</strong></span>
         </section>
         <section class="driver-panel">
           <h2>Alamat pengantaran</h2>
@@ -1792,11 +1723,8 @@
             </div>
           </div>
           <div class="driver-action-row">
-            <div class="driver-map-action" role="group" aria-label="Lokasi pengantaran">
-              <button class="driver-secondary" type="button" data-action="open-maps" data-map-web="${escapeHtml(map.web || "")}" data-map-app="${escapeHtml(map.app || "")}" ${map.web ? "" : "disabled"}>${icon("map")}<span>Buka Maps</span></button>
-              <button class="driver-share-location" type="button" data-action="share-maps" data-order="${escapeHtml(order.id)}" aria-label="Bagikan lokasi pengantaran" title="Bagikan lokasi" ${shareLocationPayload(order) ? "" : "disabled"}>${icon("send")}</button>
-            </div>
-            <a class="driver-secondary ${wa ? "" : "disabled"}" href="${escapeHtml(wa || "#")}" target="_blank" rel="noopener">${icon("chat")}<span>Chat Customer</span></a>
+            <button class="driver-secondary" type="button" data-action="open-maps" data-map-web="${escapeHtml(map.web || "")}" data-map-app="${escapeHtml(map.app || "")}" ${map.web ? "" : "disabled"}>${icon("map")}<span>Buka Maps</span></button>
+            ${chatUrl ? `<a class="driver-secondary" href="${chatUrl}" target="_blank" rel="noopener">${icon("chat")}<span>Chat Customer</span></a>` : `<button class="driver-secondary" type="button" disabled>${icon("chat")}<span>Chat Customer</span></button>`}
           </div>
         </section>
         <section class="driver-panel driver-items-panel">
@@ -1937,23 +1865,6 @@
       await window.DriverNotifications?.authorize(state.profile.username, pin);
       return;
     }
-    const bankForm = event.target.closest("[data-driver-form='bank']");
-    if (bankForm) {
-      event.preventDefault();
-      state.bankError = "";
-      state.bankMessage = "";
-      try {
-        savePaymentAccount(new FormData(bankForm));
-        state.bankMessage = "Rekening tersimpan. Pesan WhatsApp akan memakai rekening ini.";
-        bankForm.querySelector(".driver-bank-message").textContent = state.bankMessage;
-        bankForm.querySelector(".driver-bank-message").classList.remove("error");
-      } catch (error) {
-        state.bankError = error?.message || "Rekening belum tersimpan. Coba lagi.";
-        bankForm.querySelector(".driver-bank-message").textContent = state.bankError;
-        bankForm.querySelector(".driver-bank-message").classList.add("error");
-      }
-      return;
-    }
     const form = event.target.closest("[data-driver-form='login']");
     if (!form) return;
     event.preventDefault();
@@ -2069,14 +1980,6 @@
     }
     if (action === "open-maps") {
       openMapsTarget(actionButton);
-      return;
-    }
-    if (action === "share-maps") {
-      shareMapsLocation(actionButton.dataset.order);
-      return;
-    }
-    if (action === "share-phone") {
-      sharePhoneNumber(actionButton.dataset.order);
       return;
     }
     if (action === "share-order") {
