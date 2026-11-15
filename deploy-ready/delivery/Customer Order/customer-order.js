@@ -1148,9 +1148,10 @@
   }
 
   function homeRenderTopbar() {
-    const appName = state.settings.selfOrderAppName || state.settings.receiptStoreName || "Kasirin Cafe";
-    const outletName = state.settings.selfOrderOutletName || state.outlet || "Outlet Utama";
-    const profileImage = String(state.settings.selfOrderProfileImageDataUrl || state.settings.receiptLogoDataUrl || "").trim();
+    const branding = selfOrderBranding();
+    const appName = branding.name;
+    const outletName = branding.outlet;
+    const profileImage = branding.image;
     const step = selfOrderStep();
     const showBack = step !== "menu" && step !== "success";
     return `
@@ -1158,8 +1159,8 @@
         ${showBack
           ? `<button type="button" class="self-order-icon-btn customer-home-topbar-back" onclick="CustomerOrder.goBack()" aria-label="Kembali">${navIcon("back")}</button>`
           : step === "success"
-            ? `<span class="self-order-icon-btn ${profileImage ? "has-photo" : ""}">${profileImage ? mediaImageTag(profileImage, "Logo usaha", "", 240) : navIcon("selforder")}</span>`
-            : `<button type="button" class="self-order-icon-btn ${profileImage ? "has-photo" : ""}" onclick="selfOrderShowMenu()" aria-label="Menu">${profileImage ? mediaImageTag(profileImage, "Foto profil self order", "", 240) : navIcon("selforder")}</button>`}
+            ? `<span class="self-order-icon-btn ${profileImage ? "has-photo" : ""}">${profileImage ? mediaImageTag(profileImage, "Logo usaha", "", 240, "eager", branding.fallbackImage) : navIcon("selforder")}</span>`
+            : `<button type="button" class="self-order-icon-btn ${profileImage ? "has-photo" : ""}" onclick="selfOrderShowMenu()" aria-label="Menu">${profileImage ? mediaImageTag(profileImage, "Foto profil self order", "", 240, "eager", branding.fallbackImage) : navIcon("selforder")}</button>`}
         <div>
           <strong>${homeEscape(appName)}</strong>
           <span>${homeEscape(outletName)}</span>

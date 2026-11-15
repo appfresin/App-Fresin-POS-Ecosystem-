@@ -241,9 +241,10 @@
     const support = renderSupport();
     const params = new URL(location.href).searchParams;
     const motionEnabled = params.get("motion") !== "off";
-    const profileImage = String(state.settings?.selfOrderProfileImageDataUrl || state.settings?.receiptLogoDataUrl || "").trim();
+    const branding = typeof selfOrderBranding === "function" ? selfOrderBranding() : null;
+    const profileImage = branding?.image || String(state.settings?.selfOrderProfileImageDataUrl || state.settings?.receiptLogoDataUrl || "").trim();
     const brandMark = profileImage && typeof mediaImageTag === "function"
-      ? mediaImageTag(profileImage, "Logo Fresin", "fresin-gateway-brand-image", 240)
+      ? mediaImageTag(profileImage, "Logo Fresin", "fresin-gateway-brand-image", 240, "eager", branding?.fallbackImage || "")
       : '<span class="fresin-gateway-brand-fallback">F</span>';
     return `
       <section class="self-order-app fresin-gateway${atTable ? " fresin-gateway-table" : ""}" data-motion="${motionEnabled ? "on" : "off"}">

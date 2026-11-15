@@ -1829,6 +1829,10 @@ function loadSupabaseLibraryAsync() {
   }
   return loadExternalScriptOnce("supabase-js-cdn", SUPABASE_JS_CDN, {
     onload: () => window.initSupabaseAfterLibraryLoad?.()
+  }).catch(error => {
+    supabaseStatus = "Library Supabase gagal dimuat.";
+    console.warn("Supabase library unavailable; REST reads remain available", error);
+    return null;
   });
 }
 
@@ -2862,6 +2866,7 @@ function shouldRenderAfterRealtimeLoad(kind) {
   if (view !== "selforder") return ["pos", "kitchen", "orders", "dashboard", "products", "stock", "stock-opname", "settings"].includes(view);
   const step = selfOrderStep();
   if (kind === "orders") return step === "success";
+  if (kind === "settings" && step === "gateway") return true;
   return step === "menu" || step === "success";
 }
 
@@ -5491,13 +5496,34 @@ async function selectStoreSettingsRow() {
   return result.data || null;
 }
 
+async function selectPublicSelfOrderSettingsRow() {
+  const fields = [
+    "id", "store_name", "store_address", "store_phone", "receipt_store_name", "receipt_footer",
+    "receipt_width", "receipt_show_table", "receipt_show_qr", "updated_at",
+    "app_name:self_order_settings->>appName", "outlet_name:self_order_settings->>outletName",
+    "profile_image:self_order_settings->>profileImage", "promo_image:self_order_settings->>promoImage",
+    "promo_target:self_order_settings->>promoTargetProductId", "promo_label:self_order_settings->>promoButtonLabel",
+    "promo_slides:self_order_settings->promoSlides", "upsell_ids:self_order_settings->upsellProductIds",
+    "receipt_logo:self_order_settings->receipt->>logoDataUrl"
+  ];
+  const rows = await supabaseRestSelect("store_settings", fields.join(","), { id: `eq.${STORE_SETTINGS_ROW_ID}`, limit: "1" });
+  const row = rows?.[0];
+  if (!row) return null;
+  return { ...row, self_order_settings: {
+    appName: row.app_name, outletName: row.outlet_name, profileImage: row.profile_image,
+    promoImage: row.promo_image, promoTargetProductId: row.promo_target,
+    promoButtonLabel: row.promo_label, promoSlides: row.promo_slides,
+    upsellProductIds: row.upsell_ids, receipt: { logoDataUrl: row.receipt_logo }
+  } };
+}
+
 async function loadStoreSettingsFromSupabase(options = {}) {
-  if (!supabaseReadable() || storeSettingsLoading || !localDbReady) return;
+  if ((!supabaseReadable() && !(IS_SELF_ORDER_APP && supabaseRestReadable())) || storeSettingsLoading || !localDbReady) return;
   const freshEnough = Date.now() - storeSettingsLoadedAt < 60000;
   if (!options.force && freshEnough) return;
   storeSettingsLoading = true;
   try {
-    const row = await selectStoreSettingsRow();
+    const row = supabaseReadable() ? await selectStoreSettingsRow() : await selectPublicSelfOrderSettingsRow();
     const settings = normalizeStoreSettingsRow(row);
     if (settings) {
       const { staffSync, masterDeletedProducts, masterDeletedCategories, masterDeletedAddons, ...storeSettings } = settings;
@@ -10552,16 +10578,32 @@ function renderSelfOrder() {
   `;
 }
 
+function selfOrderBranding() {
+  const settings = state.settings || {};
+  const configuredName = String(settings.selfOrderAppName || settings.receiptStoreName || "").trim();
+  const fallbackImage = "/Customer%20Gateway/assets/fresin-logo.png";
+  const configuredImage = String(settings.selfOrderProfileImageDataUrl || settings.receiptLogoDataUrl || "").trim();
+  // Serve the current Fresin mark locally instead of depending on Google Drive.
+  const bundledImage = !configuredImage || mediaDriveId(configuredImage) === "1HrP-iW9Gc_N3FAjAKNxlpcwm34a6f2AB";
+  return {
+    name: configuredName && !/^kasirin(?:!| cafe)?$/i.test(configuredName) ? configuredName : "Fresin Indonesia",
+    outlet: String(settings.selfOrderOutletName || state.outlet || "Outlet Utama").trim(),
+    image: bundledImage ? fallbackImage : configuredImage,
+    fallbackImage
+  };
+}
+
 function renderSelfOrderTopbar() {
   syncSelfOrderTableFromUrl();
   const table = sessionStorage.getItem("self_order_table") || "A-1";
-  const appName = state.settings.selfOrderAppName || state.settings.receiptStoreName || "Kasirin Cafe";
-  const outletName = state.settings.selfOrderOutletName || state.outlet || "Outlet Utama";
-  const profileImage = String(state.settings.selfOrderProfileImageDataUrl || state.settings.receiptLogoDataUrl || "").trim();
+  const branding = selfOrderBranding();
+  const appName = branding.name;
+  const outletName = branding.outlet;
+  const profileImage = branding.image;
   return `
     <header class="self-order-topbar">
       <button type="button" class="self-order-icon-btn ${profileImage ? "has-photo" : ""}" onclick="selfOrderShowMenu()" aria-label="Menu">
-        ${profileImage ? mediaImageTag(profileImage, "Foto profil self order", "", 240) : navIcon("selforder")}
+        ${profileImage ? mediaImageTag(profileImage, "Foto profil self order", "", 240, "eager", branding.fallbackImage) : navIcon("selforder")}
       </button>
       <div>
         <strong>${escapeHtml(appName)}</strong>
