@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const publishedFiles = {
   'app.js': 'deploy-ready/pos/app.js',
+  'SO Takeaway/so-takeaway.js': 'deploy-ready/pos/SO Takeaway/so-takeaway.js',
   'delivery/Customer Order/customer-order.js': 'deploy-ready/delivery/Customer Order/customer-order.js',
   'driver/Driver Order/driver-order.js': 'deploy-ready/driver/Driver Order/driver-order.js'
 };
@@ -58,6 +59,32 @@ function upsertEnv(current) {
   return { ctx, writes };
 }
 
+test('fresh takeaway devices reserve distinct T numbers from the server before creating orders', async () => {
+  let next = 1;
+  const calls = [];
+  const devices = Array.from({ length: 3 }, () => {
+    const ctx = vm.createContext({ state: { orders: [] }, supabaseClient: {
+      rpc: async (name, args) => {
+        calls.push([name, args.p_prefix]);
+        return { data: `T${String(++next).padStart(3, '0')}`, error: null };
+      }
+    } });
+    vm.runInContext(fn('SO Takeaway/so-takeaway.js', 'soTakeawayGenerateNumber', '  '), ctx);
+    return ctx;
+  });
+  assert.deepEqual(await Promise.all(devices.map(device => device.soTakeawayGenerateNumber())), ['T002','T003','T004']);
+  assert.deepEqual(calls, Array(3).fill(['allocate_customer_order_number','T']));
+});
+
+test('takeaway allocation rejects network failures and malformed numbers instead of reusing local T001', async () => {
+  const ctx = vm.createContext({ state: { orders: [] }, supabaseClient: {} });
+  vm.runInContext(fn('SO Takeaway/so-takeaway.js', 'soTakeawayGenerateNumber', '  '), ctx);
+  for (const result of [{data:null,error:{code:'network'}},{data:'P001'},{data:'T001<script>'}]) {
+    ctx.supabaseClient.rpc = async () => result;
+    await assert.rejects(Promise.resolve().then(()=>ctx.soTakeawayGenerateNumber()), error=>/nomor pesanan/.test(error.userMessage));
+  }
+});
+
 test('another customer with the same paid or unpaid number cannot overwrite the old order', async () => {
   for (const payment_status of ['Lunas', 'Belum dibayar']) {
     const env = upsertEnv({ id: 'old', payment_status, public_order_token: 'old-token' });
@@ -78,6 +105,25 @@ test('the same customer token can retry an incomplete creation, and existing pai
   assert.equal((await paid.ctx.upsertSupabaseOrderPayload({ order_number: 'D007', payment_status: 'Belum dibayar' },
     { supabaseId: 'paid' })).error.code, 'ORDER_ALREADY_PAID');
   assert.deepEqual(paid.writes, []);
+});
+
+test('a legacy takeaway without a token or server ID cannot overwrite another customer by T001 alone', async () => {
+  for (const payment_status of ['Lunas','Belum dibayar']) {
+    const env = upsertEnv({id:'original-customer',payment_status,public_order_token:null});
+    const result = await env.ctx.upsertSupabaseOrderPayload({order_number:'T001',payment_status:'Belum dibayar'},
+      {source:'Self Order',type:'Take Away',orderMode:'TAKEAWAY'});
+    assert.equal(result.error?.code,'ORDER_NUMBER_CONFLICT');
+    assert.deepEqual(env.writes,[]);
+  }
+});
+
+test('a takeaway with its matching server ID or creation token can retry without being mistaken for another customer', async () => {
+  for (const identity of [{supabaseId:'same-order'},{publicOrderToken:'same-token'}]) {
+    const env = upsertEnv({id:'same-order',payment_status:'Belum dibayar',public_order_token:'same-token'});
+    const result = await env.ctx.upsertSupabaseOrderPayload({order_number:'T002',payment_status:'Belum dibayar'},identity);
+    assert.equal(result.data.id,'same-order');
+    assert.equal(env.writes[0][0],'update');
+  }
 });
 
 test('completing a driver order stays in Order even when finishing from detail', async () => {

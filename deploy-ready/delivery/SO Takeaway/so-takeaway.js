@@ -166,12 +166,19 @@
     }
   }
 
-  function soTakeawayGenerateNumber(orders = state.orders || []) {
-    const max = orders
-      .map(order => String(order.takeawayNumber || order.number || "").trim().match(/^T(\d{1,6})$/i))
-      .filter(Boolean)
-      .reduce((highest, match) => Math.max(highest, Number(match[1] || 0)), 0);
-    return `T${String(max + 1).padStart(3, "0")}`;
+  async function soTakeawayGenerateNumber() {
+    let result;
+    try {
+      result = await supabaseClient.rpc("allocate_customer_order_number", { p_prefix: "T" });
+    } catch {
+      result = null;
+    }
+    if (result?.error || typeof result?.data !== "string" || !/^T\d{3,18}$/.test(result.data)) {
+      const failure = new Error("Gagal menyiapkan nomor pesanan Take Away.");
+      failure.userMessage = "Belum bisa menyiapkan nomor pesanan. Periksa koneksi lalu coba lagi.";
+      throw failure;
+    }
+    return result.data;
   }
 
   function soTakeawayActiveOrder() {
@@ -650,7 +657,8 @@
       const checkoutTotal = subtotal;
       const note = String(document.getElementById("selfOrderCheckoutNote")?.value || sessionStorage.getItem("self_order_checkout_note") || "").trim();
       const orderCreatedAt = await getSupabaseServerTimeIso();
-      const takeawayNumber = soTakeawayGenerateNumber();
+      const takeawayNumber = await soTakeawayGenerateNumber();
+      const publicOrderToken = Array.from(window.crypto.getRandomValues(new Uint8Array(18)), byte => byte.toString(16).padStart(2, "0")).join("");
       const orderItems = tagOrderBatchItems(selfOrderCart.map(item => ({ ...item })), 1, note, orderCreatedAt);
       const order = {
         id: uid(),
@@ -659,6 +667,7 @@
         type: "Take Away",
         orderMode: TAKEAWAY_MODE,
         takeawayNumber,
+        publicOrderToken,
         takeawayStatus: "WAITING_ACCEPTANCE",
         takeawayExpiresAt: "",
         customer,

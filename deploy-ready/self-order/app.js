@@ -4750,6 +4750,7 @@ async function syncOrderToSupabase(order, options = {}) {
       prepared_items: order.preparedItems || {}
     };
     if (!order.supabaseId && order.customerPhone) orderPayload.customer_phone = order.customerPhone;
+    if (!order.supabaseId && order.publicOrderToken) orderPayload.public_order_token = order.publicOrderToken;
     if (orderUsesOutletPayment(order) && !order.supabaseId) Object.assign(orderPayload, {
       customer_order_type: order.customerOrderType || order.orderMode,
       customer_order_status: order.customerOrderStatus || "WAITING_ACCEPTANCE",
@@ -4930,7 +4931,9 @@ async function upsertSupabaseOrderPayload(orderPayload, order = {}) {
   if (readError) return { data: null, error: readError };
   // A number alone must never identify a different customer's new order.
   if (current && ((order.supabaseId && current.id !== order.supabaseId)
-    || (!order.supabaseId && order.publicOrderToken && current.public_order_token !== order.publicOrderToken))) {
+    || (!order.supabaseId && (order.publicOrderToken
+      ? current.public_order_token !== order.publicOrderToken
+      : /^T\d{1,18}$/i.test(orderPayload.order_number))))) {
     return { data: null, error: { code: "ORDER_NUMBER_CONFLICT", message: "Nomor pesanan sudah digunakan. Silakan coba lagi." } };
   }
   if (current?.payment_status === "Lunas" && orderPayload.payment_status !== "Lunas") {

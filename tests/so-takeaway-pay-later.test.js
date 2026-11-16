@@ -34,7 +34,7 @@ function setup(options = {}) {
     sessionStorage: { getItem: key => storage.get(key) || null,
       setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key) },
     location: { search: options.mode ? "?mode=takeaway" : "", hash: "", pathname: "/self-order.html" },
-    window: { setTimeout: callback => { callback(); }, setInterval: () => 1, addEventListener: noop },
+    window: { crypto: require('node:crypto').webcrypto, setTimeout: callback => { callback(); }, setInterval: () => 1, addEventListener: noop },
     document: { addEventListener: noop, querySelectorAll: () => [], getElementById: () => null },
     IS_SELF_ORDER_APP: false, view: "orders", localDbReady: false,
     selfOrderSubmitting: false, selfOrderSubmitStartedAt: 0, selfOrderSubmitError: "",
@@ -51,7 +51,7 @@ function setup(options = {}) {
     canAttemptSupabaseSync: () => options.online !== false,
     orderHasPendingLocalSync: () => options.pending === true,
     acquireOrderSyncLock: async () => noop, ensureSupabaseProfile: async () => true,
-    supabaseClient: { from: table => {
+    supabaseClient: { rpc: async () => ({data:'T002',error:null}), from: table => {
       const write = { table, filters: [] };
       const query = {
         update(value) { write.value = value; writes.push(write); return query; },
@@ -109,7 +109,22 @@ test("new takeaway waits for cashier approval without a payment expiry", async (
   assert.equal(created.confirmedAt, null);
   assert.equal(created.takeawayStatus, "WAITING_ACCEPTANCE");
   assert.equal(created.takeawayExpiresAt, "");
+  assert.equal(created.number, 'T002');
+  assert.match(created.publicOrderToken, /^[a-f0-9]{36}$/);
   assert.equal(env.ctx.kitchenOrderIsVisible(created, "Semua", ["Pesanan Baru"]), false);
+});
+
+test('failed takeaway number allocation preserves the cart without reserving stock or submitting an order', async () => {
+  const env=setup({mode:true});
+  let reserved=0;
+  env.ctx.supabaseClient.rpc=async()=>({data:null,error:{code:'network'}});
+  env.ctx.commitLimitedStockReservations=async()=>{reserved++;return {accepted:true};};
+  await env.ctx.selfOrderCreateOrder();
+  assert.equal(reserved,0);
+  assert.equal(env.writes.length,0);
+  assert.equal(env.ctx.selfOrderCart.length,1);
+  assert.match(env.ctx.selfOrderSubmitError,/nomor pesanan/);
+  assert.equal(env.ctx.selfOrderSubmitting,false);
 });
 
 test("Take Away checkout asks for a valid WhatsApp number before submitting", async () => {
