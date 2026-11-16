@@ -13,8 +13,10 @@
   use Asia/Jakarta (WIB). An earlier closing time extends into the next day.
 - Gateway pickup/delivery choices display a themed closure toast outside the
   schedule. Submission checks the settings again, so an already-open checkout
-  cannot place a new order after closing. Table dine-in and existing-order status
-  remain available. The toast includes today's schedule and the next opening.
+  cannot place a new order after closing. QR-table dine-in is available from ten
+  minutes before opening until thirty minutes after closing. Existing-order
+  status remains available. The toast includes today's schedule and the next
+  permitted ordering time for the selected service.
 - Settings persist in the existing `store_settings.self_order_settings` JSON
   under `onlineOperatingHours`. Public customer settings select this field
   explicitly, without adding staff or notification preferences to the public

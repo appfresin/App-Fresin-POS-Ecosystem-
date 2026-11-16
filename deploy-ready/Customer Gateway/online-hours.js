@@ -20,7 +20,7 @@
     };
   }
 
-  function status(value, now = new Date()) {
+  function status(value, now = new Date(), service = "online") {
     const config = normalize(value);
     if (!config.enabled) return { open: true };
     const parts = new Intl.DateTimeFormat("en-US", {
@@ -29,29 +29,38 @@
     const part = type => parts.find(item => item.type === type)?.value;
     const index = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(part("weekday"));
     const current = Number(part("hour")) * 60 + Number(part("minute"));
-    const today = config.days[index], yesterday = config.days[(index + 6) % 7];
+    const today = config.days[index];
     const start = minutes(today.open), end = minutes(today.close);
-    const regularOpen = today.enabled && start !== end
-      && (start < end ? current >= start && current < end : current >= start);
-    const previousOpen = yesterday.enabled && minutes(yesterday.open) > minutes(yesterday.close)
-      && current < minutes(yesterday.close);
-    if (regularOpen || previousOpen) return { open: true };
+    const dineIn = service === "dinein";
+    const windows = [];
+    // Include yesterday's closing grace and tomorrow's pre-opening grace.
+    // Minutes relative to today also cover overnight operating windows.
+    for (let offset = -1; offset <= 7; offset++) {
+      const day = config.days[(index + offset + 7) % 7];
+      if (!day.enabled || day.open === day.close) continue;
+      const open = minutes(day.open), close = minutes(day.close);
+      windows.push({
+        start: offset * 1440 + open - (dineIn ? 10 : 0),
+        end: offset * 1440 + close + (open > close ? 1440 : 0) + (dineIn ? 30 : 0)
+      });
+    }
+    if (windows.some(window => current >= window.start && current < window.end)) return { open: true };
     const schedule = today.enabled
       ? `${days[index]} ${today.open}–${today.close} WIB${start > end ? " (hingga hari berikutnya)" : ""}`
       : `${days[index]}: tutup`;
     let nextLabel = "Silahkan kembali pada hari operasional berikutnya";
     let nextTime = "";
-    for (let offset = 0; offset <= 7; offset++) {
-      const candidate = config.days[(index + offset) % 7];
-      if (!candidate.enabled || candidate.open === candidate.close || (offset === 0 && current >= minutes(candidate.open))) continue;
+    const nextWindow = windows.find(window => window.start > current);
+    if (nextWindow) {
+      const offset = Math.floor(nextWindow.start / 1440);
       // Before 05.01, retain the outlet's requested late-night wording.
       const when = offset === 0 ? (current <= 300 ? "besok" : "nanti")
         : offset === 1 ? "besok" : `hari ${days[(index + offset) % 7]}`;
       nextLabel = `Silahkan kembali ${when}`;
-      nextTime = `jam ${candidate.open.replace(":", ".")} WIB`;
-      break;
+      const opening = nextWindow.start % 1440;
+      nextTime = `jam ${String(Math.floor(opening / 60)).padStart(2, "0")}.${String(opening % 60).padStart(2, "0")} WIB`;
     }
-    return { open: false, schedule, nextLabel, nextTime, next: [nextLabel, nextTime].filter(Boolean).join(" ") };
+    return { open: false, service, schedule, nextLabel, nextTime, next: [nextLabel, nextTime].filter(Boolean).join(" ") };
   }
 
   function showNotice(result) {
@@ -91,14 +100,17 @@
         </div>`;
       document.body.appendChild(dialog);
     }
+    dialog.querySelector("#onlineHoursNoticeDescription").textContent = result.service === "dinein"
+      ? "saat ini di luar jam pemesanan makan di sini."
+      : "saat ini di luar jam operasional outlet.";
     dialog.querySelector("#onlineHoursNoticeSchedule").textContent = result.schedule.replaceAll(":", ".");
     dialog.querySelector(".online-hours-next span").textContent = result.nextLabel;
     dialog.querySelector(".online-hours-next strong").textContent = result.nextTime;
     if (!dialog.open) dialog.showModal();
   }
 
-  function allow() {
-    const result = status(state.settings?.selfOrderOperatingHours);
+  function allow(service = "online") {
+    const result = status(state.settings?.selfOrderOperatingHours, new Date(), service);
     if (result.open) {
       const dialog = document.getElementById("onlineHoursNotice");
       if (dialog?.open) dialog.close();
@@ -108,17 +120,17 @@
     return false;
   }
 
-  async function check() {
+  async function check(service = "online") {
     if (typeof loadStoreSettingsFromSupabase === "function") {
       await loadStoreSettingsFromSupabase({ reason: "online-hours", silent: true, force: true });
     }
-    return allow();
+    return allow(service);
   }
 
   function renderSettings(value) {
     const config = normalize(value);
     return `<section class="online-hours-settings" aria-labelledby="onlineHoursHeading">
-      <header><span class="online-hours-clock" aria-hidden="true">◷</span><div><h4 id="onlineHoursHeading">Jam pemesanan online</h4><p>Berlaku untuk SO takeaway, ambil di outlet, dan delivery. Zona waktu WIB.</p></div></header>
+      <header><span class="online-hours-clock" aria-hidden="true">◷</span><div><h4 id="onlineHoursHeading">Jam pemesanan online</h4><p>Jadwal outlet dalam WIB. Take away, pickup, dan delivery mengikuti jam ini.</p></div></header>
       <label class="online-hours-enable"><input type="checkbox" name="onlineHoursEnabled" ${config.enabled ? "checked" : ""}> Batasi pemesanan sesuai jadwal</label>
       <div class="online-hours-table-head"><span>Hari</span><span>Buka</span><span>Tutup</span></div>
       ${[1, 2, 3, 4, 5, 6, 0].map(index => `<div class="online-hours-day">
@@ -126,7 +138,7 @@
         <input type="time" name="onlineHoursOpen_${index}" value="${config.days[index].open}" aria-label="Jam buka ${days[index]}">
         <input type="time" name="onlineHoursClose_${index}" value="${config.days[index].close}" aria-label="Jam tutup ${days[index]}">
       </div>`).join("")}
-      <small>Hilangkan centang hari untuk libur. Jam tutup sebelum jam buka berarti tutup pada hari berikutnya. Simpan dengan tombol Simpan Setting.</small>
+      <small>Makan di sini tersedia 10 menit sebelum buka sampai 30 menit setelah tutup. Hilangkan centang hari untuk libur. Jam tutup sebelum jam buka berarti tutup pada hari berikutnya. Simpan dengan tombol Simpan Setting.</small>
     </section>`;
   }
 

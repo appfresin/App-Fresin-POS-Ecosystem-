@@ -284,7 +284,7 @@
   }
 
   function markMenu(service, replace = false) {
-    if (service !== "dinein" && window.FresinOnlineHours?.allow() === false) {
+    if (window.FresinOnlineHours?.allow(service) === false) {
       sessionStorage.setItem("self_order_step", "gateway");
       history.replaceState({ ...(history.state || {}), selfOrderStep: "gateway", fresinService: null }, "", location.href);
       return;

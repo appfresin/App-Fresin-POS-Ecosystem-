@@ -106,6 +106,63 @@ test('settings have seven device-native time rows and reject invalid active wind
   assert.equal(api.readForm(form).days[1].enabled, false);
 });
 
+test('dine-in opens ten minutes early and closes thirty minutes late without extending online pickup or delivery', () => {
+  const {api}=setup(),config=schedule();
+  config.days.forEach(day=>{day.open='11:10';day.close='22:30';});
+  const at=time=>new Date(`2026-11-16T${time}:00+07:00`);
+  assert.equal(api.status(config,at('10:59'),'dinein').open,false);
+  assert.equal(api.status(config,at('11:00'),'dinein').open,true);
+  assert.equal(api.status(config,at('11:09'),'dinein').open,true);
+  assert.equal(api.status(config,at('22:30'),'dinein').open,true);
+  assert.equal(api.status(config,at('22:59'),'dinein').open,true);
+  assert.equal(api.status(config,at('23:00'),'dinein').open,false);
+  for(const mode of ['pickup','delivery','online']) {
+    assert.equal(api.status(config,at('11:00'),mode).open,false);
+    assert.equal(api.status(config,at('22:30'),mode).open,false);
+  }
+  const closed=api.status(config,at('10:59'),'dinein');
+  assert.equal(closed.next,'Silahkan kembali nanti jam 11.00 WIB');
+  assert.equal(closed.schedule,'Senin 11:10–22:30 WIB');
+  assert.equal(api.status({...config,enabled:false},at('10:59'),'dinein').open,true);
+});
+
+test('dine-in grace periods follow the scheduled day across midnight and closed days', () => {
+  const {api}=setup(),config=schedule();
+  config.days.forEach(day=>{day.enabled=false;});
+  config.days[1]={enabled:true,open:'20:00',close:'02:00'};
+  assert.equal(api.status(config,new Date('2026-11-16T19:49:00+07:00'),'dinein').open,false);
+  assert.equal(api.status(config,new Date('2026-11-16T19:50:00+07:00'),'dinein').open,true);
+  assert.equal(api.status(config,new Date('2026-11-17T02:29:00+07:00'),'dinein').open,true);
+  assert.equal(api.status(config,new Date('2026-11-17T02:30:00+07:00'),'dinein').open,false);
+  config.days[1].close='23:50';
+  assert.equal(api.status(config,new Date('2026-11-17T00:19:00+07:00'),'dinein').open,true);
+  assert.equal(api.status(config,new Date('2026-11-17T00:20:00+07:00'),'dinein').open,false);
+  config.days[1].enabled=false;
+  config.days[2]={enabled:true,open:'00:05',close:'10:00'};
+  const before=api.status(config,new Date('2026-11-16T23:54:00+07:00'),'dinein');
+  assert.equal(before.open,false);
+  assert.equal(before.next,'Silahkan kembali nanti jam 23.55 WIB');
+  assert.equal(api.status(config,new Date('2026-11-16T23:55:00+07:00'),'dinein').open,true);
+  config.days[2].enabled=false;
+  assert.equal(api.status(config,new Date('2026-11-16T23:55:00+07:00'),'dinein').open,false);
+});
+
+test('fresh schedule checks retain the requested service and show the correct return time', async () => {
+  const {api,context,fields}=setup(schedule());
+  let reads=0;
+  context.loadStoreSettingsFromSupabase=async options=>{reads++;assert.equal(options.force,true);};
+  let now='2026-11-16T08:50:00+07:00';
+  context.Date=class extends Date { constructor(...args){super(...(args.length?args:[now]));} };
+  assert.equal(await api.check('dinein'),true);
+  assert.equal(await api.check('pickup'),false);
+  assert.match(fields.get('#onlineHoursNoticeDescription').textContent,/operasional outlet/);
+  now='2026-11-16T08:49:00+07:00';
+  assert.equal(await api.check('dinein'),false);
+  assert.match(fields.get('#onlineHoursNoticeDescription').textContent,/makan di sini/);
+  assert.equal(fields.get('.online-hours-next strong').textContent,'jam 08.50 WIB');
+  assert.equal(reads,3);
+});
+
 test('schedule survives store settings serialization, normalization and restricted-browser settings reads', async () => {
   const { api, context } = setup(schedule());
   Object.assign(context, { normalizePersistedImageUrl: value => value || '',

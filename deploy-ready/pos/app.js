@@ -10550,6 +10550,8 @@ async function selfOrderCreateOrder() {
   if (selfOrderSubmitting) return;
   if (!state.cashSession.open) return toast("Kas belum dibuka. Minta bantuan staff.");
   if (!selfOrderCart.length) return toast("Keranjang masih kosong.");
+  if (await window.FresinOnlineHours?.check("dinein") === false) return;
+  if (selfOrderSubmitting) return;
   selfOrderSubmitError = "";
   const customerInput = document.getElementById("selfOrderCustomer");
   const customer = String(customerInput?.value || sessionStorage.getItem("self_order_customer") || "").trim();
