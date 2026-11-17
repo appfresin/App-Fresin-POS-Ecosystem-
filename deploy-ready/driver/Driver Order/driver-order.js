@@ -43,6 +43,7 @@
     "delivery_location",
     "delivery_latitude",
     "delivery_longitude",
+    "delivery_distance_meters",
     "driver_id",
     "driver_name",
     "driver_phone"
@@ -468,6 +469,9 @@
   }
 
   function distanceKm(order) {
+    if (Number.isFinite(order.delivery_distance_meters) && order.delivery_distance_meters >= 0) {
+      return order.delivery_distance_meters / 1000;
+    }
     const coordinates = firstCoordinates(
       order.delivery_latitude && order.delivery_longitude ? `${order.delivery_latitude},${order.delivery_longitude}` : "",
       order.delivery_location,
@@ -493,7 +497,7 @@
   function distanceLabel(order) {
     const distance = distanceKm(order);
     if (!Number.isFinite(distance)) return "Belum terukur";
-    return `± ${distance.toFixed(distance < 10 ? 1 : 0)} km`;
+    return `${distance.toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
   }
 
   function orderTotal(order) {
@@ -1708,7 +1712,7 @@
         <section class="driver-summary-grid">
           <span><b>Pesanan</b><strong>${money(orderSubtotal(order))}</strong></span>
           <span><b>Ongkir</b><strong>${money(order.delivery_fee || 0)}</strong></span>
-          <span><b>Jarak</b><strong>${distanceLabel(order)}</strong></span>
+          <span><b>${Number.isFinite(order.delivery_distance_meters) ? "Rute motor" : "Garis lurus"}</b><strong>${distanceLabel(order)}</strong></span>
           <span><b>WhatsApp</b><strong>${escapeHtml(order.customer_phone || "-")}</strong></span>
         </section>
         <section class="driver-panel">

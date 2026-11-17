@@ -21,12 +21,6 @@
   // Temporary QRIS integration test gate. Remove after Duitku QRIS is live.
   const HOME_TEMP_DUMMY_PAYMENT_MARKER = "TEST DRIVER";
   const HOME_CONFIG = {
-    defaultDeliveryFee: 10000,
-    storeLatitude: 5.3722219,
-    storeLongitude: 95.9585189,
-    baseDeliveryRadiusKm: 4,
-    baseDeliveryFee: 10000,
-    extraDeliveryFeePerKm: 2500,
     mapInitialZoom: 16,
     driverWhatsapp: "6281234567890",
     driverName: "Andi"
@@ -38,6 +32,7 @@
   let homeSupportVisible = false;
   let homeAutoLocationRequested = false;
   let homeDriverSearchTickTimer = null;
+  let homeDeliveryRoute = null;
   const homePaymentRequests = new Set();
 
   function homeParams() {
@@ -473,58 +468,61 @@
   }
 
   function homeCoordinate(value) {
+    if (value == null || value === "") return null;
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
   }
 
   function homeDeliveryConfig() {
     return {
-      storeLatitude: homeCoordinate(window.DELIVERY_STORE_LATITUDE) ?? HOME_CONFIG.storeLatitude,
-      storeLongitude: homeCoordinate(window.DELIVERY_STORE_LONGITUDE) ?? HOME_CONFIG.storeLongitude,
-      baseRadiusKm: Math.max(0, homeCoordinate(window.DELIVERY_BASE_RADIUS_KM) ?? HOME_CONFIG.baseDeliveryRadiusKm),
-      baseFee: Math.max(0, Number(window.DEFAULT_DELIVERY_FEE || HOME_CONFIG.baseDeliveryFee || HOME_CONFIG.defaultDeliveryFee || 0)),
-      extraFeePerKm: Math.max(0, Number(window.DELIVERY_EXTRA_FEE_PER_KM || HOME_CONFIG.extraDeliveryFeePerKm || 0)),
       mapInitialZoom: Math.max(3, homeCoordinate(window.DELIVERY_MAP_INITIAL_ZOOM) ?? HOME_CONFIG.mapInitialZoom)
     };
   }
 
-  function homeDistanceKm(fromLatitude, fromLongitude, toLatitude, toLongitude) {
-    const toRadians = degrees => degrees * Math.PI / 180;
-    const earthRadiusKm = 6371;
-    const deltaLatitude = toRadians(toLatitude - fromLatitude);
-    const deltaLongitude = toRadians(toLongitude - fromLongitude);
-    const startLatitude = toRadians(fromLatitude);
-    const endLatitude = toRadians(toLatitude);
-    const haversine = Math.sin(deltaLatitude / 2) ** 2
-      + Math.cos(startLatitude) * Math.cos(endLatitude) * Math.sin(deltaLongitude / 2) ** 2;
-    return 2 * earthRadiusKm * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+  function homeDeliveryRouteKey(checkout) {
+    if (checkout.method !== "DELIVERY" || checkout.locationStatus !== "ready") return null;
+    const latitude = homeCoordinate(checkout.latitude);
+    const longitude = homeCoordinate(checkout.longitude);
+    return latitude === null || longitude === null ? null : `${latitude},${longitude}`;
   }
 
   function homeDeliveryQuote(checkout = homeCheckout()) {
-    const latitude = homeCoordinate(checkout.latitude);
-    const longitude = homeCoordinate(checkout.longitude);
-    const config = homeDeliveryConfig();
-    if (latitude === null || longitude === null) return { distanceKm: null, fee: 0, extraKm: 0 };
-    const distanceKm = homeDistanceKm(config.storeLatitude, config.storeLongitude, latitude, longitude);
-    const extraKm = Math.max(0, Math.ceil(distanceKm - config.baseRadiusKm));
-    return {
-      distanceKm,
-      fee: config.baseFee + (extraKm * config.extraFeePerKm),
-      extraKm
-    };
+    const key = homeDeliveryRouteKey(checkout);
+    return key && homeDeliveryRoute?.key === key ? homeDeliveryRoute.quote : null;
   }
 
-  function homeCalculateDeliveryFee(checkout = homeCheckout()) {
-    const mode = String(window.DELIVERY_FEE_MODE || "radius").toLowerCase();
-    if (mode === "free") return 0;
-    if (mode === "fixed") return Number(window.DEFAULT_DELIVERY_FEE || HOME_CONFIG.defaultDeliveryFee || 0);
-    return homeDeliveryQuote(checkout).fee;
-  }
+  async function homeEnsureDeliveryRoute(retry = false) {
+    const checkout = homeCheckout();
+    const key = homeIsMode() && selfOrderStep() === "payment" ? homeDeliveryRouteKey(checkout) : null;
+    if (homeDeliveryRoute?.key === key && (!retry || homeDeliveryRoute.status !== "error")) return;
+    homeDeliveryRoute?.controller.abort();
+    homeDeliveryRoute = null;
+    if (!key) return;
 
-  function homeDeliveryDistanceLabel(checkout = homeCheckout()) {
-    const distanceKm = homeDeliveryQuote(checkout).distanceKm;
-    if (!Number.isFinite(distanceKm)) return "Pilih pin lokasi";
-    return `${distanceKm.toFixed(distanceKm < 10 ? 1 : 0)} km dari outlet`;
+    const route = { key, controller: new AbortController(), status: "loading", quote: null };
+    homeDeliveryRoute = route;
+    render();
+    const timeout = setTimeout(() => route.controller.abort(), 10000);
+    try {
+      const result = await fetch("/api/delivery-quote/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ latitude: homeCoordinate(checkout.latitude), longitude: homeCoordinate(checkout.longitude) }),
+        signal: route.controller.signal
+      });
+      if (!result.ok) throw new Error("Rute motor tidak tersedia.");
+      const { distanceMeters, fee } = await result.json();
+      if (!Number.isFinite(distanceMeters) || distanceMeters < 0 || !Number.isSafeInteger(fee) || fee < 0) {
+        throw new Error("Hasil rute tidak valid.");
+      }
+      route.status = "ready";
+      route.quote = { distanceKm: distanceMeters / 1000, fee };
+    } catch {
+      route.status = "error";
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (homeDeliveryRoute === route && homeDeliveryRouteKey(homeCheckout()) === key) render();
   }
 
   function homeHasPinnedLocation(checkout = homeCheckout()) {
@@ -747,11 +745,11 @@
       locationAccuracy: 0,
       locationPinnedAt: new Date().toISOString(),
       locationStatus: options.status || "adjusted",
-      locationSource: "pin",
-      deliveryDistanceKm: homeDeliveryQuote({ latitude, longitude }).distanceKm,
-      deliveryFee: homeCalculateDeliveryFee({ latitude, longitude })
+      locationSource: "pin"
     });
     homeRefreshLocationPinState();
+    homeEnsureDeliveryRoute();
+    render();
   }
 
   function homePinCurrentLocation(options = {}) {
@@ -774,9 +772,7 @@
         locationAccuracy: Number(position.coords.accuracy || 0),
         locationPinnedAt: new Date().toISOString(),
         locationStatus: "ready",
-        locationSource: "gps",
-        deliveryDistanceKm: homeDeliveryQuote({ latitude, longitude }).distanceKm,
-        deliveryFee: homeCalculateDeliveryFee({ latitude, longitude })
+        locationSource: "gps"
       });
       selfOrderSubmitError = "";
       if (homeMapLibreMap && homeMapLibreMarker) {
@@ -1273,9 +1269,11 @@
   function homeRenderCheckout() {
     const checkout = homeCheckout();
     const method = checkout.method || "PICKUP_PREORDER";
-    const fee = method === "DELIVERY" ? homeCalculateDeliveryFee(checkout) : 0;
+    const delivery = method === "DELIVERY";
+    const quote = delivery ? homeDeliveryQuote(checkout) : null;
+    const fee = delivery ? quote?.fee : 0;
     const subtotal = selfOrderSubtotal();
-    const total = subtotal + fee;
+    const total = fee == null ? null : subtotal + fee;
     const pickupTime = checkout.pickupTime || "Secepatnya";
     const pickupNow = checkout.pickupTiming !== "scheduled" && !/^\d{2}:\d{2}$/.test(pickupTime);
     const errors = homeCheckoutErrors || {};
@@ -1317,20 +1315,28 @@
             <label class="wide"><span class="sr-only">Catatan Pesanan</span><textarea id="customerHomeNote" placeholder="Catatan pesanan (opsional)" oninput="CustomerOrder.captureCheckout()">${homeInputValue("customerHomeNote", "note")}</textarea></label>
           </div>
         </section>
-        ${homeRenderReview({ method, subtotal, fee, total, pickupTime, checkout, compact: true })}
-        <button class="self-order-primary self-order-finish" type="button" onclick="CustomerOrder.createWaitingPayment()" ${selfOrderSubmitting ? `disabled aria-busy="true"` : ""}>${homeEscape(finishLabel)}</button>
+        ${homeRenderReview({ method, fee, total, checkout, quote })}
+        <button class="self-order-primary self-order-finish" type="button" onclick="CustomerOrder.createWaitingPayment()" ${selfOrderSubmitting ? `disabled aria-busy="true"` : delivery && !quote ? "disabled" : ""}>${homeEscape(finishLabel)}</button>
         ${selfOrderSubmitError ? `<p class="self-order-submit-error" role="alert">${homeEscape(selfOrderSubmitError)}</p>` : ""}
         ${homeRenderSupportContact()}
       </main>
     `;
   }
 
-  function homeRenderReview({ method, subtotal, fee, total, pickupTime, checkout }) {
+  function homeRenderReview({ method, fee, total, checkout, quote }) {
     const totalOnly = method !== "DELIVERY";
+    const routeKey = !totalOnly && homeDeliveryRouteKey(checkout);
+    const unavailable = routeKey && homeDeliveryRoute?.key === routeKey && homeDeliveryRoute.status === "error";
+    const distance = quote ? quote.distanceKm.toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "";
     return `
       <section class="customer-home-review ${totalOnly ? "is-total-only" : ""}">
-        ${method === "DELIVERY" ? `<div class="customer-home-review-row"><span>Biaya Pengantaran</span><strong>${homeMoney(fee)}</strong></div>` : ""}
-        <div class="customer-home-total-row"><span>Total Pesanan</span><strong>${homeMoney(total)}</strong></div>
+        ${totalOnly ? "" : `
+          <div class="customer-home-review-row"><span>Biaya Pengantaran</span><strong>${fee == null ? "—" : homeMoney(fee)}</strong></div>
+          ${quote ? `<p>Rute motor · ${distance} km · <a href="https://www.geoapify.com/" target="_blank" rel="noopener">Geoapify</a></p>`
+            : unavailable ? '<p role="status">Rute motor belum bisa dihitung.</p><button class="self-order-secondary" type="button" onclick="CustomerOrder.retryDeliveryRoute()">Coba lagi</button>'
+            : `<p role="status">${routeKey ? "Menghitung rute motor…" : "Tetapkan pin untuk menghitung ongkir."}</p>`}
+        `}
+        <div class="customer-home-total-row"><span>Total Pesanan</span><strong>${total == null ? "—" : homeMoney(total)}</strong></div>
       </section>
     `;
   }
@@ -1393,6 +1399,12 @@
       render();
       return;
     }
+    const deliveryQuote = checkout.method === "DELIVERY" ? homeDeliveryQuote(checkout) : null;
+    if (checkout.method === "DELIVERY" && !deliveryQuote) {
+      selfOrderSubmitError = "Tunggu sampai ongkir rute motor tersedia.";
+      render();
+      return;
+    }
     let renderedCompletion = false;
     homeResetCheckoutValidation();
     selfOrderSubmitError = "";
@@ -1402,8 +1414,7 @@
       render();
       await new Promise(resolve => window.setTimeout(resolve, 0));
       const subtotal = selfOrderSubtotal();
-      const deliveryFee = checkout.method === "DELIVERY" ? homeCalculateDeliveryFee(checkout) : 0;
-      const deliveryQuote = checkout.method === "DELIVERY" ? homeDeliveryQuote(checkout) : { distanceKm: null, fee: 0 };
+      const deliveryFee = deliveryQuote?.fee ?? 0;
       const total = subtotal + deliveryFee;
       const orderCreatedAt = await getSupabaseServerTimeIso();
       const prefix = checkout.method === "DELIVERY" ? "D" : "P";
@@ -1433,7 +1444,7 @@
         deliveryLocation: checkout.method === "DELIVERY" ? mapsUrl : "",
         deliveryLatitude: checkout.method === "DELIVERY" ? latitude : null,
         deliveryLongitude: checkout.method === "DELIVERY" ? longitude : null,
-        deliveryDistanceKm: checkout.method === "DELIVERY" ? deliveryQuote.distanceKm : null,
+        deliveryDistanceKm: deliveryQuote?.distanceKm ?? null,
         serviceInfo: checkout.method === "DELIVERY" ? "Delivery" : homeParams().search.get("origin") === "outlet" ? "Takeaway Outlet" : "Takeaway-Rumah",
         note: noteParts.join("\n"),
         status: "Pesanan Baru",
@@ -2245,6 +2256,7 @@
         window.setTimeout(() => {
           homeMaybeAutoPinCurrentLocation();
           homeInitMapLibreLocationMap();
+          homeEnsureDeliveryRoute();
         }, 0);
       }
       return result;
@@ -2415,12 +2427,15 @@
         homeSetCheckout({
           locationStatus: "ready",
           locationPinnedAt: new Date().toISOString(),
-          locationAccuracy: homeCoordinate(checkout.locationAccuracy) || 0,
-          deliveryDistanceKm: homeDeliveryQuote(checkout).distanceKm,
-          deliveryFee: homeCalculateDeliveryFee(checkout)
+          locationAccuracy: homeCoordinate(checkout.locationAccuracy) || 0
         });
+        homeClearCheckoutErrors(["Location"]);
         selfOrderSubmitError = "";
         render();
+      },
+      retryDeliveryRoute() {
+        selfOrderSubmitError = "";
+        return homeEnsureDeliveryRoute(true);
       },
       retryPayment() {
         const order = homeCurrentOrder();

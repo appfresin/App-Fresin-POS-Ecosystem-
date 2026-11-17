@@ -39,8 +39,8 @@ function setup(method = 'PICKUP_PREORDER', options = {}) {
     homeCheckout: () => checkout, homeHasPinnedLocation: () => true,
     homeParams: () => ({search:new URLSearchParams(options.origin ? `origin=${options.origin}` : '')}),
     canAttemptSupabaseSync: () => options.online !== false,
-    selfOrderSubtotal: () => 25000, homeCalculateDeliveryFee: () => 10000,
-    homeDeliveryQuote: () => ({ distanceKm: 2, fee: 10000 }),
+    selfOrderSubtotal: () => 25000,
+    homeDeliveryQuote: () => ({ distanceKm: 4.435, fee: 12500 }),
     getSupabaseServerTimeIso: async () => '2026-11-12T08:00:00Z',
     homeGenerateNumber: prefix => prefix + '999', homeGenerateToken: () => 'fixture-token',
     homeGoogleMapsUrl: () => 'fixture-pin', homeCoordinate: value => value,
@@ -92,8 +92,9 @@ for (const method of ['PICKUP_PREORDER', 'DELIVERY']) {
     assert.equal(order.paymentStatus, 'Belum dibayar');
     assert.equal(order.confirmedAt, null);
     assert.equal(order.subtotal, 25000);
-    assert.equal(order.deliveryFee, method === 'DELIVERY' ? 10000 : 0);
-    assert.equal(order.grandTotal, method === 'DELIVERY' ? 35000 : 25000);
+    assert.equal(order.deliveryFee, method === 'DELIVERY' ? 12500 : 0);
+    assert.equal(order.deliveryDistanceKm, method === 'DELIVERY' ? 4.435 : null);
+    assert.equal(order.grandTotal, method === 'DELIVERY' ? 37500 : 25000);
     assert.equal(order.paymentProvider, method === 'DELIVERY' ? 'courier_cash' : 'cash_at_outlet');
     assert.equal(order.customerOrderStatus, method === 'DELIVERY' ? 'SEARCHING_DRIVER' : 'WAITING_ACCEPTANCE');
     assert.equal(order.note, 'Tanpa gula', 'POS notes must contain only the original customer text');
@@ -257,4 +258,15 @@ test('a late driver search update uses a compare-and-set and refreshes a concurr
   assert.ok(calls.some(call => call[0] === 'or' && call[1] === 'driver_id.is.null,driver_id.eq.'));
   assert.equal(refreshed, true);
   assert.equal(Object.hasOwn(calls[0][1], 'driver_id'), false);
+});
+
+test('delivery without a route quote cannot reserve stock or create an order', async () => {
+  const env = setup('DELIVERY', { globals: {
+    homeDeliveryQuote: () => null,
+    commitLimitedStockReservations: async () => assert.fail('Unexpected stock reservation')
+  } });
+  await env.ctx.homeCreateWaitingPayment();
+  assert.equal(env.writes.length, 0);
+  assert.equal(env.ctx.selfOrderCart.length, 1);
+  assert.match(env.ctx.selfOrderSubmitError, /ongkir rute motor/);
 });
