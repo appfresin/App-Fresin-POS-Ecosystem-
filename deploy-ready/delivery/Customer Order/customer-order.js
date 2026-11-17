@@ -885,7 +885,7 @@
           dragRotate: false,
           pitchWithRotate: false
         });
-        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), element.closest?.(".customer-home-location-step") ? "bottom-left" : "top-left");
+        if (!element.closest?.(".customer-home-location-step")) map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
         const markerElement = document.createElement("div");
         markerElement.className = "customer-home-maplibre-pin";
         markerElement.hidden = true;
