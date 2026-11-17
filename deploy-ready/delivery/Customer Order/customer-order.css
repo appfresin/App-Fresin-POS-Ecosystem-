@@ -1927,3 +1927,46 @@
 .customer-home-driver-contact small { color: #70877a; font-size: 9px; line-height: 1.35; text-align: center; }
 .customer-home-driver-card .customer-home-driver-whatsapp { min-height: 30px; padding: 4px 7px; border-radius: 10px; background: #e2efe6; color: #386c4b; font-size: 11px; font-weight: 700; }
 .customer-home-driver-card .customer-home-driver-whatsapp:hover { background: #d5e8dc; color: #285539; }
+
+/* Dedicated delivery destination step. */
+.self-order-app:has(.customer-home-location-step) .self-order-bottom-nav { display:none; }
+.customer-home-location-step { display:flex; flex-direction:column; gap:0; padding:0 0 16px; margin:-8px -8px 0; background:#edf4fc; border-radius:24px; overflow:hidden; }
+.customer-home-location-map-area { position:relative; min-height:300px; background:#e8f1ff; }
+.customer-home-location-step .customer-home-maplibre-map { height:clamp(300px,calc(100dvh - 330px),600px); min-height:300px; border-radius:0; }
+.customer-home-location-step .customer-home-map-loading { min-height:0; }
+.customer-home-location-map-heading { position:absolute; top:14px; left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100% - 32px); z-index:3; padding:10px 17px; border-radius:999px; background:#2c5f99; box-shadow:0 5px 18px #1a4e7a22; pointer-events:none; }
+.customer-home-location-map-heading h2 { margin:0; color:#fff; font-size:14px; line-height:1.3; letter-spacing:-.25px; }
+.customer-home-location-step .maplibregl-ctrl-bottom-left { bottom:35px; left:22px; display:flex; flex-direction:column; align-items:center; gap:8px; }
+.customer-home-location-step .maplibregl-ctrl-bottom-left > .maplibregl-ctrl { margin:0; float:none; }
+.customer-home-location-step .maplibregl-ctrl-bottom-left > .maplibregl-ctrl-group { order:0; }
+.customer-home-location-step .maplibregl-ctrl-bottom-left > .customer-home-map-locate-control { order:1; }
+.customer-home-location-step .customer-home-map-locate-control button { width:54px; min-height:54px; padding:7px; border-radius:17px; }
+.customer-home-location-step .customer-home-locate-label { font-size:9px; }
+.customer-home-location-sheet { position:relative; z-index:4; display:grid; gap:9px; margin-top:-21px; padding:8px 14px 14px; border:1px solid #ffffff; border-radius:28px 28px 20px 20px; background:linear-gradient(150deg,#fff 60%,#f5f8ff); box-shadow:0 -8px 30px #2753830c; }
+.customer-home-location-sheet-handle { justify-self:center; width:32px; height:4px; margin:0 0 3px; border-radius:999px; background:#e3eaf3; }
+.customer-home-location-sheet-status { margin:0; text-align:center; white-space:pre-line; color:#8a99ac; font-size:11px; line-height:1.5; }
+.customer-home-location-step-actions { display:grid; grid-template-columns:1.2fr 1fr; gap:8px; }
+.customer-home-location-step-actions button { min-height:38px; padding:7px 9px; border:1px solid #d8e5f5; border-radius:14px; background:#f4f8ff; color:#416b99; font:inherit; font-size:11px; font-weight:650; line-height:1.35; cursor:pointer; }
+.customer-home-location-step-actions button:last-child { border-color:#9bb9e2; background:#eaf1fc; color:#315c92; }
+.customer-home-location-step-actions button.is-confirmed { border-color:#cfe3d9; background:#f0f8f3; color:#5a876e; }
+.customer-home-location-step-actions button:disabled { opacity:.7; cursor:default; }
+.customer-home-location-landmark { display:grid; gap:7px; }
+.customer-home-location-landmark > span { color:#687f99; font-size:11px; font-weight:650; }
+.customer-home-location-landmark textarea { width:100%; min-height:50px; padding:10px 12px; resize:vertical; border:1px solid #dfe7f1; border-radius:15px; background:#fafcff; color:#355779; font:inherit; font-size:12px; line-height:1.5; }
+.customer-home-location-landmark textarea::placeholder { color:#a2aec0; }
+.customer-home-location-landmark textarea:focus { outline:2px solid #b6cfee; outline-offset:2px; }
+.customer-home-location-next { display:flex; align-items:center; justify-content:center; gap:10px; margin:0; flex-shrink:0; }
+.customer-home-location-next-spinner { width:16px; height:16px; border:2px solid #ffffff50; border-top-color:#fff; border-radius:50%; animation:customerHomeMapLoadingSpin .8s linear infinite; }
+
+/* Fit the location step to the visible viewport; the map takes the remaining space. */
+html:has(.customer-home-location-step), body:has(.customer-home-location-step) { height:100%; overflow:hidden; }
+.app-shell.view-selforder:has(.customer-home-location-step),
+.app-shell.view-selforder .content:has(.customer-home-location-step),
+.view-selforder .page:has(.customer-home-location-step) { height:100dvh; min-height:0; overflow:hidden; }
+.self-order-app:has(.customer-home-location-step) { display:flex; flex-direction:column; height:100dvh; min-height:0; padding:0; overflow:hidden; }
+.self-order-app:has(.customer-home-location-step) > .self-order-topbar { flex-shrink:0; }
+.self-order-app > .customer-home-location-step { flex:1; min-height:0; margin:0; padding:0; border-radius:0; }
+.customer-home-location-step .customer-home-location-map-area { flex:1; min-height:0; }
+.customer-home-location-step .customer-home-maplibre-map { position:absolute; inset:0; width:100%; height:100%; min-height:0; }
+.customer-home-location-step .customer-home-location-sheet { flex-shrink:0; padding-bottom:max(14px,env(safe-area-inset-bottom)); }
+.customer-home-location-landmark textarea { height:58px; min-height:58px; resize:none; }

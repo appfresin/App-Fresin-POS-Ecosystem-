@@ -102,23 +102,23 @@ test('a quote in flight cannot price an adjusted pin and a failed quote can be r
   const functions = ['homeDeliveryRouteKey', 'homeDeliveryQuote', 'homeEnsureDeliveryRoute'];
   vm.runInContext('let homeDeliveryRoute = null;\n' + functions.map(name => extract(checkout, name)).join('\n'), context);
 
-  const oldRequest = context.homeEnsureDeliveryRoute();
-  await context.homeEnsureDeliveryRoute();
+  const oldRequest = context.homeEnsureDeliveryRoute(false, { confirmed: true });
+  await context.homeEnsureDeliveryRoute(false, { confirmed: true });
   assert.equal(requests.length, 1);
   current = {...current, longitude: 95.93, locationStatus: 'adjusted'};
-  await context.homeEnsureDeliveryRoute();
+  await context.homeEnsureDeliveryRoute(false, { confirmed: true });
   assert.ok(requests[0].options.signal.aborted);
   requests[0].resolve(Response.json({distanceMeters: 4435, fee: 11000}));
   await oldRequest;
   assert.equal(context.homeDeliveryQuote(), null);
 
   current.locationStatus = 'ready';
-  const failedRequest = context.homeEnsureDeliveryRoute();
+  const failedRequest = context.homeEnsureDeliveryRoute(false, { confirmed: true });
   requests[1].resolve(new Response(null, {status: 503}));
   await failedRequest;
-  await context.homeEnsureDeliveryRoute();
+  await context.homeEnsureDeliveryRoute(false, { confirmed: true });
   assert.equal(requests.length, 2);
-  const retry = context.homeEnsureDeliveryRoute(true);
+  const retry = context.homeEnsureDeliveryRoute(true, { confirmed: true });
   requests[2].resolve(Response.json({distanceMeters: 5120, fee: 13000}));
   await retry;
   assert.equal(context.homeDeliveryQuote().distanceKm, 5.12);

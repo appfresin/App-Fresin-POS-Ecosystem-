@@ -496,7 +496,7 @@ test('customer cart keeps the entry method and checkout data without another ser
       assert.doesNotMatch(html, /Pilih cara menerima pesanan|customer-home-cart-methods|CustomerOrder.setMethod/);
       assert.match(html, /Aren Latte/);
       assert.match(html, /20000/);
-      assert.match(html, /onclick="selfOrderShowPayment\(\)" >Checkout/);
+      assert.match(html, /onclick="selfOrderShowPayment\(\)" >Lanjut/);
       assert.equal(checkout.method, method);
       assert.equal(checkout.address, 'Saved delivery address');
     }

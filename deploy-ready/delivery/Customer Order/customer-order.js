@@ -36,6 +36,7 @@
   let homeAutoLocationRequested = false;
   let homeDriverSearchTickTimer = null;
   let homeDeliveryRoute = null;
+  let homeLocationNextLoading = false;
   const homePaymentRequests = new Set();
 
   function homeParams() {
@@ -508,16 +509,27 @@
     return key && homeDeliveryRoute?.key === key ? homeDeliveryRoute.quote : null;
   }
 
-  async function homeEnsureDeliveryRoute(retry = false) {
+  async function homeEnsureDeliveryRoute(retry = false, options = {}) {
     const checkout = homeCheckout();
-    const key = homeIsMode() && selfOrderStep() === "payment" ? homeDeliveryRouteKey(checkout) : null;
+    const key = homeIsMode() ? homeDeliveryRouteKey(checkout) : null;
     if (homeDeliveryRoute?.key === key && (!retry || homeDeliveryRoute.status !== "error")) return;
+    if (key && !options.confirmed) return;
     homeDeliveryRoute?.controller.abort();
     homeDeliveryRoute = null;
     if (!key) return;
 
     const route = { key, controller: new AbortController(), status: "loading", quote: null };
     homeDeliveryRoute = route;
+    try {
+      const cached = typeof sessionStorage !== "undefined" && JSON.parse(sessionStorage.getItem("customer_home_delivery_quote_v2") || "null");
+      if (cached?.key === key && Date.now() - cached.savedAt < 30 * 60 * 1000
+        && cached.savedAt <= Date.now() && Number.isFinite(cached.quote?.distanceKm)
+        && Number.isSafeInteger(cached.quote?.fee) && cached.quote.fee >= 0) {
+        route.status = "ready";
+        route.quote = cached.quote;
+        return;
+      }
+    } catch {}
     render();
     const timeout = setTimeout(() => route.controller.abort(), 10000);
     try {
@@ -534,6 +546,9 @@
       }
       route.status = "ready";
       route.quote = { distanceKm: distanceMeters / 1000, fee };
+      if (homeDeliveryRoute === route && homeDeliveryRouteKey(homeCheckout()) === key) {
+        try { sessionStorage.setItem("customer_home_delivery_quote_v2", JSON.stringify({ key, quote: route.quote, savedAt: Date.now() })); } catch {}
+      }
     } catch {
       route.status = "error";
     } finally {
@@ -737,18 +752,20 @@
     }
     if (title) title.textContent = ui.title;
     if (body) {
-      body.textContent = ui.body;
+      body.textContent = document.querySelector(".customer-home-location-step") && !ui.confirmed && !ui.loading
+        ? "Pilih lokasimu saat ini atau\ngeser pin ke tujuanmu dan pilih Tetapkan lokasi."
+        : ui.body;
       body.classList.toggle("warning", ui.adjusted);
     }
     if (button) {
-      button.hidden = ui.currentLocationSelected;
+      button.hidden = ui.currentLocationSelected && !document.querySelector(".customer-home-location-step");
       button.textContent = ui.button;
       button.disabled = ui.buttonDisabled;
       button.classList.toggle("is-confirmed", ui.confirmed);
       button.setAttribute("onclick", ui.buttonAction);
     }
     if (currentButton) {
-      currentButton.textContent = ui.currentButton;
+      currentButton.textContent = document.querySelector(".customer-home-location-step") && !ui.loading ? "Lokasi saat ini" : ui.currentButton;
       currentButton.disabled = ui.loading;
       currentButton.classList.toggle("is-confirmed", ui.currentLocationSelected);
     }
@@ -819,7 +836,7 @@
   }
 
   function homeMaybeAutoPinCurrentLocation() {
-    if (homeAutoLocationRequested || !homeIsMode() || selfOrderStep() !== "payment") return;
+    if (homeAutoLocationRequested || !homeIsMode() || selfOrderStep() !== "payment" || homeCheckout().deliveryStage !== "details") return;
     const checkout = homeCheckout();
     if ((checkout.method || "PICKUP_PREORDER") !== "DELIVERY") return;
     if (homeHasPinnedLocation(checkout)) return;
@@ -868,7 +885,7 @@
           dragRotate: false,
           pitchWithRotate: false
         });
-        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
+        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), element.closest?.(".customer-home-location-step") ? "bottom-left" : "top-left");
         const markerElement = document.createElement("div");
         markerElement.className = "customer-home-maplibre-pin";
         markerElement.hidden = true;
@@ -978,7 +995,7 @@
             this._container?.remove();
           }
         };
-        map.addControl(locateControl, "top-left");
+        map.addControl(locateControl, element.closest?.(".customer-home-location-step") ? "bottom-left" : "top-left");
         setTimeout(() => map.resize(), 0);
       })
       .catch(error => {
@@ -1263,7 +1280,7 @@
           <div class="total"><span>Total Pesanan</span><strong>${homeMoney(subtotal)}</strong></div>
         </section>
         ${typeof renderSelfOrderUpsellCard === "function" ? renderSelfOrderUpsellCard("cart") : ""}
-        <button class="self-order-primary self-order-cart-pay" type="button" onclick="selfOrderShowPayment()" ${selfOrderCart.length ? "" : "disabled"}>Checkout</button>
+        <button class="self-order-primary self-order-cart-pay" type="button" onclick="selfOrderShowPayment()" ${selfOrderCart.length ? "" : "disabled"}>Lanjut</button>
         ${homeRenderSupportContact()}
       </main>
     `;
@@ -1303,11 +1320,75 @@
     `;
   }
 
+  function homeRenderDeliveryLocationStep(checkout) {
+    if (!homeHasPinnedLocation(checkout)) {
+      homeSetCheckout({ latitude: 5.3722219, longitude: 95.9585189, locationStatus: "adjusted", locationSource: "pin" });
+      checkout = homeCheckout();
+    }
+    const ui = homeLocationUiState(checkout);
+    return `<main class="self-order-main payment customer-home-location-step">
+      <section class="customer-home-location-map-area" aria-label="Peta lokasi pengantaran">
+        <div class="customer-home-location-map-heading"><h2>Mau diantar ke mana?</h2></div>
+        <div id="customerHomeMapLibreMap" class="customer-home-maplibre-map">${homeRenderMapLoading()}</div>
+      </section>
+      <section class="customer-home-location-sheet">
+        <span class="customer-home-location-sheet-handle" aria-hidden="true"></span>
+        <div class="customer-home-location-step-actions">
+          <button id="customerHomeCurrentLocationButton" type="button" onclick="CustomerOrder.pinCurrentLocation()" ${ui.loading || homeLocationNextLoading ? "disabled" : ""}>${ui.loading ? "Mengambil lokasi…" : "Lokasi saat ini"}</button>
+          <button id="customerHomeLocationButton" type="button" class="${ui.confirmed ? "is-confirmed" : ""}" onclick="CustomerOrder.confirmPinnedLocation()" ${ui.loading || homeLocationNextLoading || ui.confirmed ? "disabled" : ""}>${ui.confirmed ? "Lokasi ditetapkan ✓" : "Tetapkan lokasi"}</button>
+        </div>
+        <p id="customerHomeLocationBody" class="customer-home-location-sheet-status">${ui.confirmed || ui.loading ? homeEscape(ui.body) : "Pilih lokasimu saat ini atau\ngeser pin ke tujuanmu dan pilih Tetapkan lokasi."}</p>
+        ${homeCheckoutFieldError("Location")}
+        <label class="customer-home-location-landmark"><span class="sr-only">Patokan alamat</span><textarea id="customerHomeAddressNote" required aria-required="true" rows="2" placeholder="Patokan alamat, contoh: rumah pagar hitam, depan apotek (wajib)" oninput="CustomerOrder.captureCheckout('AddressNote')" ${homeCheckoutInvalidAttrs("AddressNote")}>${homeEscape(checkout.addressNote || "")}</textarea></label>
+        ${homeCheckoutFieldError("AddressNote")}
+        <button class="self-order-primary self-order-cart-pay customer-home-location-next" type="button" onclick="CustomerOrder.continueDeliveryLocation()" ${homeLocationNextLoading ? 'disabled aria-busy="true"' : ""}>${homeLocationNextLoading ? '<span class="customer-home-location-next-spinner" aria-hidden="true"></span>Menghitung ongkir…' : 'Lanjut'}</button>
+        ${selfOrderSubmitError ? `<p class="self-order-submit-error" role="alert">${homeEscape(selfOrderSubmitError)}</p>` : ""}
+      </section>
+    </main>`;
+  }
+
+  async function homeContinueDeliveryLocation() {
+    if (homeLocationNextLoading) return;
+    CustomerOrder.captureCheckout('AddressNote');
+    const checkout = homeCheckout();
+    const errors = {};
+    if (!homeHasPinnedLocation(checkout) || checkout.locationStatus !== "ready") errors.Location = "Tetapkan lokasi pengantaran terlebih dahulu.";
+    if (!String(checkout.addressNote || "").trim()) errors.AddressNote = "Isi patokan agar driver mudah menemukan alamatmu.";
+    homeCheckoutErrors = errors;
+    homeCheckoutValidationAttempted = true;
+    selfOrderSubmitError = "";
+    if (Object.keys(errors).length) { render(); return; }
+    const key = homeDeliveryRouteKey(checkout);
+    homeLocationNextLoading = true;
+    render();
+    try {
+      await homeEnsureDeliveryRoute(homeDeliveryRoute?.status === "error", { confirmed: true });
+      if (selfOrderStep() !== "payment" || homeDeliveryRouteKey(homeCheckout()) !== key) return;
+      if (!homeDeliveryQuote()) { selfOrderSubmitError = "Ongkir belum bisa dihitung. Periksa koneksi, lalu tekan Lanjut lagi."; return; }
+      if (!String(homeCheckout().addressNote || "").trim()) { homeCheckoutErrors = { AddressNote: "Patokan pengantaran wajib diisi." }; return; }
+      homeSetCheckout({ deliveryStage: "details" });
+      history.pushState({ ...(history.state || {}), selfOrderStep: "payment", homeDeliveryStage: "details" }, "", location.href);
+    } finally {
+      homeLocationNextLoading = false;
+      render();
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
+  }
+
+  function homeEditDeliveryLocation() {
+    CustomerOrder.captureCheckout();
+    homeSetCheckout({ deliveryStage: "location" });
+    selfOrderSubmitError = "";
+    if (history.state?.homeDeliveryStage === "details") history.back();
+    else render();
+  }
+
   function homeRenderCheckout() {
     const checkout = homeCheckout();
     const method = checkout.method || "PICKUP_PREORDER";
     const delivery = method === "DELIVERY";
     const quote = delivery ? homeDeliveryQuote(checkout) : null;
+    if (delivery && (checkout.deliveryStage !== "details" || !quote)) return homeRenderDeliveryLocationStep(checkout);
     const fee = delivery ? quote?.fee : 0;
     const subtotal = selfOrderSubtotal();
     const total = fee == null ? null : subtotal + fee;
@@ -1345,10 +1426,6 @@
               </div>
               ${pickupNow ? '<small>Disiapkan secepatnya setelah diterima kasir.</small>' : `<label class="self-order-customer-field ${errors.PickupTime ? "invalid" : ""}"><span class="sr-only">Pilih jam pengambilan</span><input id="customerHomePickupTime" type="time" value="${/^\d{2}:\d{2}$/.test(pickupTime) ? homeEscape(pickupTime) : ""}" onclick="CustomerOrder.openPickupTimePicker()" oninput="CustomerOrder.captureCheckout('PickupTime')" ${homeCheckoutInvalidAttrs("PickupTime")} />${homeCheckoutFieldError("PickupTime")}</label>`}
             </section>` : ""}
-            ${method === "PICKUP_PREORDER" ? "" : `
-              ${homeRenderLocationPin(checkout)}
-              <label class="wide ${errors.AddressNote ? "invalid" : ""}"><span class="sr-only">Patokan alamat</span><textarea id="customerHomeAddressNote" required aria-required="true" placeholder="Patokan alamat, contoh: rumah pagar hitam, depan apotek (wajib)" oninput="CustomerOrder.captureCheckout('AddressNote')" ${homeCheckoutInvalidAttrs("AddressNote")}>${homeInputValue("customerHomeAddressNote", "addressNote")}</textarea>${homeCheckoutFieldError("AddressNote")}</label>
-            `}
             <label class="wide"><span class="sr-only">Catatan Pesanan</span><textarea id="customerHomeNote" placeholder="Catatan pesanan (opsional)" oninput="CustomerOrder.captureCheckout()">${homeInputValue("customerHomeNote", "note")}</textarea></label>
           </div>
         </section>
@@ -2320,6 +2397,7 @@
 
   function homeGoBack() {
     if (!homeIsMode()) return;
+    if (selfOrderStep() === "payment" && homeCheckout().method === "DELIVERY" && homeCheckout().deliveryStage === "details") return homeEditDeliveryLocation();
     const currentStep = selfOrderStep();
     if (history.state?.selfOrderStep === currentStep && history.length > 1) {
       history.back();
@@ -2367,7 +2445,6 @@
         window.setTimeout(() => {
           homeMaybeAutoPinCurrentLocation();
           homeInitMapLibreLocationMap();
-          homeEnsureDeliveryRoute();
         }, 0);
       }
       return result;
@@ -2416,6 +2493,7 @@
       if (!stockReady.ok) return toast(limitedStockFailureMessage(stockReady.product, stockReady.variantKey, stockReady));
       CustomerOrder.captureCheckout();
       homeAutoLocationRequested = false;
+      if (homeCheckout().method === "DELIVERY") homeSetCheckout({ deliveryStage: "location" });
       homeResetCheckoutValidation();
       homeReplaceSelfOrderHistoryStep("cart");
       sessionStorage.setItem("self_order_step", "payment");
@@ -2431,6 +2509,7 @@
     const baseRenderSelfOrderBottomNav = renderSelfOrderBottomNav;
     renderSelfOrderBottomNav = function (step) {
       if (!homeIsMode()) return baseRenderSelfOrderBottomNav(step);
+      if (step === "payment" && homeCheckout().method === "DELIVERY" && (homeCheckout().deliveryStage !== "details" || !homeDeliveryQuote())) return "";
       const navStep = step === "success" || step === "receipt" ? "orders" : step;
       const items = [
         ["menu", "Menu", "selfOrderShowMenu()"],
@@ -2521,7 +2600,7 @@
         const patch = {
           name: String(document.getElementById("customerHomeName")?.value || homeCheckout().name || "").trim(),
           phone: String(document.getElementById("customerHomePhone")?.value || homeCheckout().phone || "").trim(),
-          addressNote: String(document.getElementById("customerHomeAddressNote")?.value || homeCheckout().addressNote || "").trim(),
+          addressNote: String(document.getElementById("customerHomeAddressNote")?.value ?? homeCheckout().addressNote ?? "").trim(),
           note: String(document.getElementById("customerHomeNote")?.value ?? homeCheckout().note ?? "").trim(),
           pickupTime: String(document.getElementById("customerHomePickupTime")?.value ?? homeCheckout().pickupTime ?? "").trim()
         };
@@ -2546,8 +2625,10 @@
       },
       retryDeliveryRoute() {
         selfOrderSubmitError = "";
-        return homeEnsureDeliveryRoute(true);
+        return homeContinueDeliveryLocation();
       },
+      continueDeliveryLocation: homeContinueDeliveryLocation,
+      editDeliveryLocation: homeEditDeliveryLocation,
       retryPayment() {
         const order = homeCurrentOrder();
         if (!order) return;
@@ -2586,6 +2667,12 @@
     }
 
     if (!window.__customerHomeStatusRefreshTimer) {
+      window.addEventListener("popstate", event => {
+        if (homeIsMode() && homeCheckout().method === "DELIVERY" && event.state?.selfOrderStep === "payment") {
+          homeSetCheckout({ deliveryStage: event.state.homeDeliveryStage || "location" });
+          render();
+        }
+      });
       document.addEventListener("visibilitychange", homeResumeOrderStatus);
       window.addEventListener("pageshow", homeResumeOrderStatus);
       window.addEventListener("online", homeResumeOrderStatus);

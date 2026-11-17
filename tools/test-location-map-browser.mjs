@@ -91,6 +91,7 @@ try {
       };
       {${renderWrapper}}
       render();
+      homeEnsureDeliveryRoute(false, { confirmed: true });
       const map=document.querySelector('#customerHomeMapLibreMap');map.dataset.ready='1';map.innerHTML='<canvas aria-label="Isolated map canvas"></canvas>';
       window.retainedMap=map;window.retainedCanvas=map.firstChild;
     `);
@@ -114,11 +115,11 @@ try {
     assert.deepEqual(await evaluate('markerPoint'),[95.97,5.39]);
     assert.deepEqual(await evaluate('camera'),{center:[95.97,5.39],zoom:15});
     assert.equal(await evaluate('document.querySelector("#customerHomeMapLibreMap")===retainedMap'),true,'GPS selection discarded the map');
-    await evaluate(`quoteError=true;homeUpdateLocationFromLatLng({lat:5.40,lng:95.98});Object.assign(checkout,{locationStatus:'ready'});render()`);
+    await evaluate(`quoteError=true;homeUpdateLocationFromLatLng({lat:5.40,lng:95.98});Object.assign(checkout,{locationStatus:'ready'});render();homeEnsureDeliveryRoute(false, { confirmed: true })`);
     assert.equal(await evaluate('document.querySelector("#customerHomeLocationButton").hidden'),false,'Manual confirmation masqueraded as GPS selection');
     assert.equal(await evaluate('homeLocationMapZoom()'),16);
     await waitFor(()=>evaluate('document.querySelector(".customer-home-review").textContent.includes("Coba lagi")'),'Route failure did not offer a retry');
-    await evaluate('quoteError=false;homeEnsureDeliveryRoute(true)');
+    await evaluate('quoteError=false;homeEnsureDeliveryRoute(true, { confirmed: true })');
     assert.match(await evaluate('document.querySelector(".customer-home-review").textContent'),/Rp11\.000/);
     assert.equal(await evaluate('document.documentElement.scrollWidth>innerWidth'),false);
     await evaluate('fixtureCheckoutVisible=false;render()');
