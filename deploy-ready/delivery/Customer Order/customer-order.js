@@ -479,6 +479,11 @@
     };
   }
 
+  function homeLocationMapZoom(checkout = homeCheckout()) {
+    const { mapInitialZoom } = homeDeliveryConfig();
+    return checkout.locationSource === "gps" ? mapInitialZoom - 1 : mapInitialZoom;
+  }
+
   function homeDeliveryRouteKey(checkout) {
     if (checkout.method !== "DELIVERY" || checkout.locationStatus !== "ready") return null;
     const latitude = homeCoordinate(checkout.latitude);
@@ -586,7 +591,6 @@
   function homeGeoapifyStaticMapUrl(latitude, longitude) {
     const key = homeGeoapifyApiKey();
     if (!key) return "";
-    const config = homeDeliveryConfig();
     const style = String(window.GEOAPIFY_STATIC_MAP_STYLE || window.GEOAPIFY_MAP_STYLE || "osm-bright").trim() || "osm-bright";
     const params = new URLSearchParams({
       style,
@@ -595,7 +599,7 @@
       scaleFactor: "2",
       format: "png",
       center: `lonlat:${longitude},${latitude}`,
-      zoom: String(config.mapInitialZoom),
+      zoom: String(homeLocationMapZoom()),
       marker: `lonlat:${longitude},${latitude};type:material;color:#2f5592;size:large;icon:map-marker-alt;icontype:awesome;whitecircle:no`,
       apiKey: key
     });
@@ -628,7 +632,10 @@
     homeMapLibreMarker = null;
     element.dataset.ready = "";
     element.dataset.mapError = "1";
-    element.innerHTML = homeRenderStaticLocationMap(latitude, longitude);
+    const pin = homeCheckout();
+    element.innerHTML = homeRenderStaticLocationMap(
+      homeCoordinate(pin.latitude) ?? latitude, homeCoordinate(pin.longitude) ?? longitude
+    );
   }
 
   function homeEnsureMapLibreStylesheet(asset) {
@@ -777,7 +784,10 @@
       selfOrderSubmitError = "";
       if (homeMapLibreMap && homeMapLibreMarker) {
         homeMapLibreMarker.setLngLat([longitude, latitude]);
-        homeMapLibreMap.jumpTo({ center: [longitude, latitude] });
+        homeMapLibreMap.jumpTo({ center: [longitude, latitude], zoom: homeLocationMapZoom() });
+      } else {
+        const mapElement = document.getElementById("customerHomeMapLibreMap");
+        if (mapElement?.dataset.mapError === "1") mapElement.innerHTML = homeRenderStaticLocationMap(latitude, longitude);
       }
       render();
     }, error => {
@@ -833,13 +843,13 @@
     homeLoadMapLibre()
       .then(maplibregl => {
         if (!document.body.contains(element)) return;
-        const config = homeDeliveryConfig();
-        const center = [longitude, latitude];
+        const currentPin = homeCheckout();
+        const center = [homeCoordinate(currentPin.longitude) ?? longitude, homeCoordinate(currentPin.latitude) ?? latitude];
         const map = new maplibregl.Map({
           container: element,
           style: styleUrl,
           center,
-          zoom: config.mapInitialZoom,
+          zoom: homeLocationMapZoom(currentPin),
           attributionControl: { compact: true },
           cooperativeGestures: false,
           dragRotate: false,

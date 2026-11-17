@@ -27,7 +27,7 @@ function setup(walletMode = "history", options = {}) {
   const document = { getElementById: id => id === "app" ? app : null, querySelectorAll: () => timers, addEventListener() {}, hidden: false };
   class FormData { constructor(form) { this.fields = form.fields; } get(key) { return this.fields[key]; } }
   const ctx = vm.createContext({ window, document, localStorage, FormData, console, URL, URLSearchParams, navigator: { userAgent: "test", ...options.navigator } });
-  vm.runInContext(source.replace('window.DriverOrder = {', 'window.DriverOrder = { renderCardActions, effectiveOrderStatus, shareOrderSummary, orderShareText, deliveryMeta, renderItem, copySharedContent, renderDetail, driverAcceptanceTime, renderCustomerWait, runAction, missedOrdersToday, selectOrders, renderStatusAction,'), ctx);
+  vm.runInContext(source.replace('window.DriverOrder = {', 'window.DriverOrder = { renderOrderCard, renderCardActions, effectiveOrderStatus, shareOrderSummary, orderShareText, deliveryMeta, renderItem, copySharedContent, renderDetail, driverAcceptanceTime, renderCustomerWait, runAction, missedOrdersToday, selectOrders, renderStatusAction,'), ctx);
   const api = window.DriverOrder;
   api.state.profile = { id: "driver-a", name: "Rifqi", phone: "6282100000000" };
   const order = { id: "test-order", order_number: "D100", customer_name: "Andi", customer_phone: "6282100000001", customer_order_type: "DELIVERY", customer_order_status: "DRIVER_ASSIGNED", payment_provider: "courier_cash", payment_status: "Belum dibayar", status: "Pesanan Baru", subtotal: 5000, delivery_fee: 10000, grand_total: 15000, driver_id: "driver-a", delivery_address: "Jalan Melati 10", delivery_note: "Pagar hijau", created_at: new Date().toISOString() };
@@ -77,6 +77,46 @@ test("the card shows products only; free products stay zero instead of including
   env.order.subtotal = null;
   env.api.setView("tasks");
   assert.match(env.app.innerHTML, /<small>Pesanan<\/small><em>Rp5\.000<\/em>/);
+});
+
+test("the order card tracks cashier time and each recorded milestone in WIB", () => {
+  const env = setup();
+  const createdAt = "2026-11-17T12:04:00Z";
+  const acceptedAt = "2026-11-17T12:06:00Z";
+  const readyAt = "2026-11-17T12:20:00Z";
+  const paidAt = "2026-11-17T12:24:00Z";
+  const completedAt = "2026-11-17T17:02:00Z";
+  Object.assign(env.order, {
+    created_at: createdAt, updated_at: createdAt, driver_id: null,
+    customer_order_status: "SEARCHING_DRIVER"
+  });
+  env.api.state.orders = [env.order];
+  const timeline = () => env.app.innerHTML.match(/class="driver-card-timeline"[\s\S]*?<\/section>/)?.[0] || "";
+
+  env.setNow(Date.parse(createdAt) + 30_000);
+  env.api.setView("tasks");
+  assert.match(timeline(), /Pesanan masuk[\s\S]*?19:04/);
+  assert.equal([...timeline().matchAll(/<time /g)].length, 1);
+
+  Object.assign(env.order, { driver_id: "driver-a", customer_order_status: "DRIVER_ASSIGNED", updated_at: acceptedAt });
+  env.api.setView("active");
+  assert.doesNotMatch(timeline(), /19:06/, "An order update must not stand in for its acceptance time");
+  Object.assign(env.order, {
+    driver_accepted_at: acceptedAt, ready_at: readyAt, cashier_paid_at: paidAt,
+    customer_order_status: "READY_FOR_PICKUP", payment_status: "Lunas"
+  });
+  env.api.setView("active");
+  assert.doesNotMatch(timeline(), /19:24/, "Paying at the cashier does not start delivery");
+  env.order.customer_order_status = "DELIVERING";
+  env.api.setView("active");
+  assert.match(timeline(), /Pesanan diterima[\s\S]*?19:06[\s\S]*?Selesai di dapur[\s\S]*?19:20/);
+  assert.match(timeline(), /Pesanan diantar[\s\S]*?title="Jam pembayaran di kasir">19:24/);
+
+  Object.assign(env.order, { customer_order_status: "COMPLETED", status: "Selesai", completed_at: completedAt });
+  assert.match(env.api.renderOrderCard(env.order), /Transaksi selesai[\s\S]*?18 Nov 2026 · 00:02/);
+  env.order.completed_at = new Date().toISOString();
+  env.api.setView("history");
+  assert.ok(timeline().includes(`datetime="${env.order.completed_at}"`));
 });
 
 test("an assigned cash delivery offers WhatsApp confirmation and kitchen processing without marking paid", () => {

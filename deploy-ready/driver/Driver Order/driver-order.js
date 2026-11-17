@@ -33,6 +33,7 @@
     "grand_total",
     "created_at",
     "updated_at",
+    "driver_accepted_at",
     "confirmed_at",
     "cancelled_at",
     "cancel_reason",
@@ -125,10 +126,10 @@
     return utils.shortDateTime ? utils.shortDateTime(value) : "-";
   }
 
-  function shortTime(value) {
+  function shortTime(value, timeZone) {
     const date = new Date(value || "");
     if (Number.isNaN(date.getTime())) return "-";
-    return date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }).replace(/\./g, ":");
+    return date.toLocaleTimeString("id-ID", { timeZone, hour: "2-digit", minute: "2-digit" }).replace(/\./g, ":");
   }
 
   function localDateKey(value = new Date()) {
@@ -1589,10 +1590,48 @@
     `;
   }
 
+  function renderOrderTimeline(order, status) {
+    const rank = statusRank(status);
+    const completed = status === "COMPLETED";
+    const dispatched = status === "DELIVERING" || completed;
+    const milestones = [
+      ["Pesanan masuk", order.created_at, true],
+      ["Pesanan diterima", order.driver_accepted_at, Boolean(order.driver_id || order.confirmed_at || rank >= 2)],
+      ["Selesai di dapur", order.ready_at, rank >= 4],
+      ["Pesanan diantar", dispatched ? order.cashier_paid_at : null, dispatched],
+      ["Transaksi selesai", order.completed_at, completed]
+    ];
+    const timeZone = "Asia/Jakarta";
+    const dayFormat = new Intl.DateTimeFormat("id-ID", { timeZone, day: "numeric", month: "short", year: "numeric" });
+    const createdDay = order.created_at && Number.isFinite(Date.parse(order.created_at))
+      ? dayFormat.format(new Date(order.created_at)) : "";
+    return `
+      <section class="driver-card-timeline" aria-label="Riwayat pesanan">
+        <header>
+          <strong>${escapeHtml(order.order_number || "-")}</strong>
+          <span>WIB</span>
+        </header>
+        <ol>
+          ${milestones.map(([label, timestamp, reached], index) => {
+            const time = shortTime(timestamp, timeZone);
+            const recorded = time !== "-";
+            const day = recorded ? dayFormat.format(new Date(timestamp)) : "";
+            const timeLabel = day && day !== createdDay ? `${day} · ${time}` : time;
+            const timeTitle = index === 3 ? ' title="Jam pembayaran di kasir"' : "";
+            return `<li class="${recorded || reached ? "is-reached" : ""}">
+              <span>${label}</span>
+              ${recorded ? `<time datetime="${escapeHtml(timestamp)}"${timeTitle}>${escapeHtml(timeLabel)}</time>`
+                : '<span class="driver-timeline-missing">—</span>'}
+            </li>`;
+          }).join("")}
+        </ol>
+      </section>
+    `;
+  }
+
   function renderOrderCard(order) {
     const rawStatus = order.customer_order_status;
     const status = effectiveOrderStatus(order);
-    const orderTime = shortTime(order.created_at || order.updated_at);
     return `
       <article class="driver-order-card ${status === "CANCELLED" ? "is-cancelled" : status === "NO_DRIVER_AVAILABLE" ? "is-missed" : ""}" data-order-id="${escapeHtml(order.id)}">
         <div class="driver-card-top">
@@ -1610,11 +1649,6 @@
           <span class="driver-card-chevron" aria-hidden="true">${icon("back")}</span>
         </button>
         <div class="driver-route-lines">
-          <span class="driver-route-order">
-            <i class="order-dot" aria-hidden="true"></i>
-            <b>Order masuk</b>
-            <strong>${escapeHtml(order.order_number || "-")} - ${escapeHtml(orderTime)}</strong>
-          </span>
           <span class="driver-route-status">
             <i class="status-dot" aria-hidden="true"></i>
             <b>Status order</b>
@@ -1626,6 +1660,7 @@
             <strong>Outlet Fresin</strong>
           </span>
         </div>
+        ${renderOrderTimeline(order, status)}
         ${renderCustomerWait(order)}
         ${renderCardActions(order, rawStatus, status)}
         ${renderRejectButton(order)}
