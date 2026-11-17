@@ -51,7 +51,7 @@ function setup(native = false) {
       testDriverNotification: () => calls.push(["test"]),
     };
   vm.runInNewContext(
-    fs.readFileSync("deploy-ready/driver/Driver Order/driver-notifications.js", "utf8"),
+    fs.readFileSync(fs.existsSync("driver/Driver Order/driver-notifications.js") ? "driver/Driver Order/driver-notifications.js" : "deploy-ready/driver/Driver Order/driver-notifications.js", "utf8"),
     ctx,
   );
   return {
@@ -107,6 +107,9 @@ test("ready alerts use independent preferences and do not repeat after payment o
   await s.tick(60000);
   assert.equal(s.played,1);
   assert.match(s.api.render(),/siap dijemput/);
+  assert.match(s.api.render(),/<button class="driver-alert-open"[^>]*data-open-order="ready-one"/);
+  assert.doesNotMatch(s.api.render(),/>Lihat<|driver-alert-actions/);
+  assert.doesNotMatch(s.api.render(),/Siap di outlet|driver-alert-eyebrow/);
   s.api.update([], {id:'driver'}, []);
   assert.doesNotMatch(s.api.render(),/siap dijemput/);
   s.api.configure({readyEnabled:false});

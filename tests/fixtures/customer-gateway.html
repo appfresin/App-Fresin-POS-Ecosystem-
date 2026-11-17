@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gateway isolated UI fixture</title>
+  <link rel="stylesheet" href="../../deploy-ready/delivery/styles/01-foundation-layout.css">
+  <link rel="stylesheet" href="../../deploy-ready/delivery/styles/05-orders-modals.css">
+  <link rel="stylesheet" href="../../deploy-ready/delivery/styles/08-orders-overrides.css">
+  <link rel="stylesheet" href="../../deploy-ready/delivery/styles/09-self-order.css">
+  <link rel="stylesheet" href="../../deploy-ready/delivery/SO Takeaway/so-takeaway.css">
+  <link rel="stylesheet" href="../../deploy-ready/delivery/Customer Order/customer-order.css">
+  <link rel="stylesheet" href="../../deploy-ready/Customer Gateway/customer-gateway.css">
+  <style>
+    html,body{margin:0;font-family:Arial,sans-serif;background:#f8f9ff;color:#1e3043}
+    button{font-family:inherit}.fixture-brand{font:bold italic 30px Georgia}
+    .fixture-menu{padding:20px}.fixture-menu h2{font-size:22px}
+    #app:empty::before{content:"Memuat Fresin App...";display:grid;min-height:100vh;place-items:center;font:600 16px system-ui;color:#334155;background:#f8fafc}
+  </style>
+</head>
+<body>
+  <div class="app-shell view-selforder"><main class="content"><section class="page" id="app"></section></main></div>
+  <script>
+    // Known local fixture only: no network, customer records, auth or real order creation.
+    const IS_SELF_ORDER_APP=true;
+    window.FRESIN_GATEWAY_BOOT_PENDING=true;
+    window.fixturePaints=[];
+    let view='selforder';
+    let selfOrderSubmitting=false;
+    const fixtureReload=performance.getEntriesByType('navigation')[0]?.type==='reload';
+    let selfOrderCart=[{name:'Fixture item',qty:1,price:20000}];
+    if(fixtureReload){try{selfOrderCart=JSON.parse(sessionStorage.getItem('omnipos_self_order_cart')||'[]')}catch{selfOrderCart=[]}}
+    if(!fixtureReload){sessionStorage.removeItem('fresin_gateway_service_drafts_v1');sessionStorage.removeItem('fresin_gateway_draft_context_v1');}
+    const fixtureLogo='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><circle cx="128" cy="128" r="128" fill="#075ab9"/><text x="122" y="184" fill="white" font-family="Georgia" font-size="176" font-style="italic" font-weight="bold" text-anchor="middle">F</text></svg>');
+    const state={settings:{selfOrderAppName:'Fresin Indonesia',selfOrderOutletName:'Outlet Utama',selfOrderProfileImageDataUrl:fixtureLogo},outlet:'Outlet Utama'};
+    if(!fixtureReload){sessionStorage.setItem('self_order_step','menu');sessionStorage.removeItem('fresin_gateway_handoff_v1');history.replaceState(null,'',location.href);}
+    function escapeHtml(value){return String(value||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+    function mediaImageTag(url,alt,className){return `<img class="${className||''}" src="${url}" alt="${alt}">`}
+    function selfOrderStep(){return sessionStorage.getItem('self_order_step')||'menu'}
+    function selfOrderTableCodeFromUrl(){return new URLSearchParams(location.search).get('table')||''}
+    function pushSelfOrderHistory(step){history.pushState({selfOrderStep:step},'',location.href)}
+    function saveSelfOrderCart(){sessionStorage.setItem('omnipos_self_order_cart',JSON.stringify(selfOrderCart))}
+    function toast(value){window.fixtureToast=value}
+    function selfOrderShowMenu(){sessionStorage.setItem('self_order_step','menu');pushSelfOrderHistory('menu');render()}
+    function renderSelfOrderTopbar(){return `<header class="self-order-topbar customer-home-topbar"><button class="self-order-icon-btn has-photo" type="button" onclick="selfOrderShowMenu()" aria-label="Menu"><img src="${fixtureLogo}" alt="Fixture brand"></button><div><strong>Fresin Indonesia</strong><span>Outlet Utama</span></div><button type="button" class="customer-home-support-chip" onclick="CustomerOrder.scrollToSupport()">Kontak Support</button></header>`}
+    function renderSelfOrder(){return `<section class="self-order-app">${renderSelfOrderTopbar()}${selfOrderStep()==='success'&&window.fixtureEmptyOrdersHtml?`<main class="self-order-main success"><section class="customer-home-tracking-card customer-home-orders-panel is-empty"><div class="customer-home-active-list">${window.fixtureEmptyOrdersHtml}</div></section></main>`:'<main class="self-order-main fixture-menu"><h2>Menu fixture</h2><p>Isolated test content.</p></main>'}</section>`}
+    function render(){if(IS_SELF_ORDER_APP&&window.FRESIN_GATEWAY_BOOT_PENDING===true)return;const html=renderSelfOrder();window.fixturePaints.push(html.includes('fresin-gateway-hero')?'gateway':selfOrderStep());document.getElementById('app').innerHTML=html}
+    addEventListener('popstate',event=>{sessionStorage.setItem('self_order_step',event.state?.selfOrderStep||'menu');render()});
+    window.CustomerOrder={
+      isMode:()=>!new URLSearchParams(location.search).has('table'),
+      setMethod(method){sessionStorage.setItem('customer_home_checkout',JSON.stringify({method}));render()},
+      showOrders(){sessionStorage.setItem('self_order_step','success');pushSelfOrderHistory('success');render()},
+      renderSupport:()=>'<section id="customerHomeSupport" class="customer-home-support" tabindex="-1"><div class="customer-home-support-head"><span class="customer-home-support-logo">F</span><div class="customer-home-support-copy"><strong>Kontak Support</strong><p>Hubungi kami jika ada kendala.</p></div></div><div class="customer-home-support-grid"><div class="customer-home-support-item"><span>Email</span><strong>support@example.test</strong></div><div class="customer-home-support-item address"><span>Alamat</span><strong>Alamat outlet fixture</strong></div></div></section>',
+      scrollToSupport(){}
+    };
+    render();
+    window.fixtureBootAttempted=true;
+  </script>
+  <script>
+    const gatewayScript=document.createElement('script');
+    gatewayScript.src='../../deploy-ready/Customer Gateway/customer-gateway.js';
+    if(new URLSearchParams(location.search).has('boot_delay'))setTimeout(()=>document.body.append(gatewayScript),800);
+    else document.body.append(gatewayScript);
+  </script>
+</body>
+</html>

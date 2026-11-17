@@ -519,7 +519,7 @@
       </section><button class="driver-settings-logout" type="button" data-action="logout">Keluar dari akun driver</button></section>`;
   }
   function render() {
-    return readyNotice ? `<aside class="driver-incoming-alert is-ready" role="alert"><div><strong>Pesanan ${escape(readyNotice.number)} siap dijemput</strong><small>Dapur sudah selesai menyiapkan pesananmu.</small></div><button type="button" data-open-order="${escape(readyNotice.orderId)}">Lihat</button><button type="button" data-action="dismiss-ready-alert" aria-label="Tutup pemberitahuan pesanan selesai">×</button></aside>` : "";
+    return readyNotice ? `<aside class="driver-incoming-alert is-ready" role="alert"><button class="driver-alert-open" type="button" data-open-order="${escape(readyNotice.orderId)}" aria-label="Buka pesanan ${escape(readyNotice.number)} siap dijemput"><span class="driver-alert-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 8h10l1 12H6L7 8ZM9 8a3 3 0 0 1 6 0"/><path d="m9 14 2 2 4-4"/></svg></span><span class="driver-alert-copy"><strong>Pesanan ${escape(readyNotice.number)} siap dijemput</strong><small>Segera jemput pesananmu.</small></span><span class="driver-alert-chevron" aria-hidden="true">›</span></button><button class="driver-alert-close" type="button" data-action="dismiss-ready-alert" aria-label="Tutup pemberitahuan pesanan selesai"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></aside>` : "";
   }
   configure(preferences);
   function deviceCredentials() {

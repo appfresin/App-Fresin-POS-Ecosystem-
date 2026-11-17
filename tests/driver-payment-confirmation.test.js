@@ -11,6 +11,7 @@ function setup(walletMode = "history", options = {}) {
   const listeners = {};
   const intervals = [];
   const timers = [];
+  const scheduled = [];
   const app = { innerHTML: "", addEventListener(type, handler) { listeners[type] = handler; } };
   let backendCalls = 0;
   const localStorage = {
@@ -21,17 +22,17 @@ function setup(walletMode = "history", options = {}) {
   const window = {
     DriverAppConfig: {}, DriverUtils: {},
     DriverSupabase: { async ready() { backendCalls++; if (options.client) return options.client; throw Error("No backend access in local tests"); } },
-    setInterval(callback, ms) { intervals.push({ callback, ms }); }, setTimeout() {}, clearTimeout() {}
+    setInterval(callback, ms) { intervals.push({ callback, ms }); }, setTimeout(callback) { scheduled.push(callback); }, clearTimeout() {}
   };
   if (options.notifications) window.DriverNotifications = { render:()=>'', update(){}, syncNative(){}, ...options.notifications };
   const document = { getElementById: id => id === "app" ? app : null, querySelectorAll: () => timers, addEventListener() {}, hidden: false };
   class FormData { constructor(form) { this.fields = form.fields; } get(key) { return this.fields[key]; } }
   const ctx = vm.createContext({ window, document, localStorage, FormData, console, URL, URLSearchParams, navigator: { userAgent: "test", ...options.navigator } });
-  vm.runInContext(source.replace('window.DriverOrder = {', 'window.DriverOrder = { renderOrderCard, renderCardActions, effectiveOrderStatus, shareOrderSummary, orderShareText, deliveryMeta, renderItem, copySharedContent, renderDetail, driverAcceptanceTime, renderCustomerWait, runAction, missedOrdersToday, selectOrders, renderStatusAction,'), ctx);
+  vm.runInContext(source.replace('window.DriverOrder = {', 'window.DriverOrder = { renderOrderCard, renderCardActions, effectiveOrderStatus, shareOrderSummary, orderShareText, deliveryMeta, renderItem, copySharedContent, renderDetail, driverAcceptanceTime, renderCustomerWait, runAction, missedOrdersToday, selectOrders, renderStatusAction, filteredOrders, completedFetchRange, setHistoryDate, applyPeriodPreset, openDatePicker, selectCalendarDay, applyCustomDateRange, localDateKey,'), ctx);
   const api = window.DriverOrder;
   api.state.profile = { id: "driver-a", name: "Rifqi", phone: "6282100000000" };
   const order = { id: "test-order", order_number: "D100", customer_name: "Andi", customer_phone: "6282100000001", customer_order_type: "DELIVERY", customer_order_status: "DRIVER_ASSIGNED", payment_provider: "courier_cash", payment_status: "Belum dibayar", status: "Pesanan Baru", subtotal: 5000, delivery_fee: 10000, grand_total: 15000, driver_id: "driver-a", delivery_address: "Jalan Melati 10", delivery_note: "Pagar hijau", created_at: new Date().toISOString() };
-  return { api, app, order, storage, listeners, intervals, timers, document,
+  return { api, app, order, storage, listeners, intervals, timers, scheduled, document,
     setNow: ms => vm.runInContext(`Date.now = () => ${Number(ms)}`, ctx),
     get backendCalls() { return backendCalls; } };
 }
@@ -47,6 +48,120 @@ test("WhatsApp confirmation separates totals, landmark and location without redu
   assert.doesNotMatch(message, /Nomor rekening:/);
   assert.ok(message.endsWith('apakah sudah benar kak ?'));
   assert.doesNotMatch(message,/Pembayaran bisa dilakukan kepada driver saat pesanan diterima|Mohon konfirmasi lokasi dan rincian pesanan/);
+});
+
+test('the day filter loads the selected history day while keeping active work available', async () => {
+  const calls = [];
+  const rows = [
+    { id:'yesterday', customer_order_status:'COMPLETED', payment_provider:'courier_cash', payment_status:'Lunas', completed_at:'2026-11-17T10:00:00Z', driver_id:'driver-a' },
+    { id:'another-driver', customer_order_status:'COMPLETED', completed_at:'2026-11-17T10:00:00Z', driver_id:'driver-b' },
+    { id:'today', customer_order_status:'COMPLETED', payment_provider:'courier_cash', payment_status:'Lunas', completed_at:'2026-11-18T10:00:00Z', driver_id:'driver-a' },
+    { id:'active', customer_order_status:'DRIVER_ASSIGNED', driver_id:'driver-a' }
+  ];
+  const client={rpc:async (name,params)=>{calls.push({name,params});return {data:rows,error:null}}};
+  const env=setup('history',{client,notifications:{deviceCredentials:()=>({id:'fixture-device',secret:'fixture-secret'})}});
+  await env.api.setHistoryDate('2026-11-17');
+  assert.equal(env.api.state.view,'history');
+  assert.equal(env.api.state.historyDate,'2026-11-17');
+  assert.deepEqual(Array.from(env.api.filteredOrders(),order=>order.id),['yesterday']);
+  assert.equal(calls[0].name,'driver_order_feed');
+  assert.equal(calls[0].params.p_from,new Date('2026-11-17T00:00:00').toISOString());
+  assert.equal(calls[0].params.p_to,new Date('2026-11-18T00:00:00').toISOString());
+  assert.match(env.app.innerHTML,/data-period-preset="custom"/);
+  assert.match(env.app.innerHTML,/data-view="history"[^>]*><b>1<\/b>/);
+  assert.ok(env.app.innerHTML.indexOf('driver-shift-card')<env.app.innerHTML.indexOf('driver-period-chips'));
+  assert.doesNotMatch(env.app.innerHTML,/class="driver-day-filter"/);
+  env.api.setView('active');
+  assert.deepEqual(Array.from(env.api.filteredOrders(),order=>order.id),['active']);
+});
+
+test('history dates reject impossible and future days before any backend request', async () => {
+  const env=setup();
+  const original=env.api.state.historyDate;
+  for(const date of ['2026-02-30','2026-13-01','not-a-date','2999-01-01','']) {
+    await env.api.setHistoryDate(date);
+    assert.equal(env.api.state.historyDate,original);
+  }
+  assert.equal(env.backendCalls,0);
+});
+
+test('week and month chips fetch inclusive ranges for both Order and Dompet', async () => {
+  const calls=[];
+  const client={rpc:async (_name,params)=>{calls.push(params);return {data:[],error:null}}};
+  const env=setup('history',{client,notifications:{deviceCredentials:()=>({id:'fixture-device',secret:'fixture-secret'})}});
+  const today=env.api.localDateKey();
+  const weekStart=new Date(`${today}T12:00:00`);weekStart.setDate(weekStart.getDate()-6);
+  const expectedStart=env.api.localDateKey(weekStart);
+  await env.api.applyPeriodPreset('week','orders');
+  assert.equal(env.api.state.view,'history');
+  assert.equal(calls.at(-1).p_from,new Date(`${expectedStart}T00:00:00`).toISOString());
+  const nextDay=new Date(`${today}T00:00:00`);nextDay.setDate(nextDay.getDate()+1);
+  assert.equal(calls.at(-1).p_to,nextDay.toISOString());
+  await env.api.applyPeriodPreset('month','wallet');
+  assert.equal(env.api.state.view,'earnings');
+  assert.equal(env.api.state.walletDate,`${today.slice(0,7)}-01`);
+  assert.equal(env.api.state.walletDateTo,today);
+  assert.match(env.app.innerHTML,/data-period-context="wallet"/);
+  assert.ok(env.app.innerHTML.indexOf('driver-earnings-hero')<env.app.innerHTML.indexOf('driver-period-chips'));
+});
+
+test('custom date selection stays in a small dialog until its range is applied', async () => {
+  const calls=[];
+  const client={rpc:async (_name,params)=>{calls.push(params);return {data:[],error:null}}};
+  const env=setup('history',{client,notifications:{deviceCredentials:()=>({id:'fixture-device',secret:'fixture-secret'})}});
+  env.api.openDatePicker('wallet');
+  assert.match(env.app.innerHTML,/<dialog id="driverDateRangeDialog"/);
+  assert.match(env.app.innerHTML,/data-calendar-day="/);
+  assert.equal(calls.length,0);
+  env.api.selectCalendarDay('2026-11-15');
+  env.api.selectCalendarDay('2026-11-17');
+  assert.match(env.app.innerHTML,/driver-date-range-chip[\s\S]*15 Nov - 17 Nov 2026/);
+  assert.doesNotMatch(env.app.innerHTML,/data-calendar-field|Sekarang pilih tanggal selesai|Pilih tanggal mulai dan selesai/);
+  assert.equal(calls.length,0);
+  await env.api.applyCustomDateRange();
+  assert.equal(env.api.state.walletDate,'2026-11-15');
+  assert.equal(env.api.state.walletDateTo,'2026-11-17');
+  assert.equal(env.api.state.datePickerContext,'');
+  assert.equal(calls.length,1);
+});
+
+test('wallet history keeps two completed orders on the same day as individual entries', () => {
+  const env=setup();
+  const today=env.api.localDateKey();
+  env.api.state.walletDate=today;env.api.state.walletDateTo=today;
+  env.api.state.orders=[
+    {...env.order,id:'one',order_number:'D201',customer_order_status:'COMPLETED',completed_at:`${today}T10:00:00`,delivery_fee:14000},
+    {...env.order,id:'two',order_number:'D202',customer_order_status:'COMPLETED',completed_at:`${today}T11:00:00`,delivery_fee:15500}
+  ];
+  env.api.setView('earnings');
+  assert.match(env.app.innerHTML,/data-open-order="one"/);
+  assert.match(env.app.innerHTML,/data-open-order="two"/);
+  assert.match(env.app.innerHTML,/D201/);assert.match(env.app.innerHTML,/D202/);
+  assert.match(env.app.innerHTML,/Rp29\.500/);
+  assert.doesNotMatch(env.app.innerHTML,/Ringkasan tanggal saja/);
+});
+
+test('changing the history date during a slow request ignores the old response', async () => {
+  let finishFirst;
+  const replies = [];
+  const client={rpc:async (_name,params)=>{
+    replies.push(params);
+    if(replies.length===1) return new Promise(resolve=>{finishFirst=resolve});
+    return {data:[{id:'new-day',customer_order_status:'COMPLETED',payment_provider:'courier_cash',driver_id:'driver-a',completed_at:'2026-11-16T10:00:00Z'}],error:null};
+  }};
+  const env=setup('history',{client,notifications:{deviceCredentials:()=>({id:'fixture-device',secret:'fixture-secret'})}});
+  const first=env.api.setHistoryDate('2026-11-17');
+  await new Promise(resolve=>setImmediate(resolve));
+  await env.api.setHistoryDate('2026-11-16');
+  finishFirst({data:[{id:'old-day',customer_order_status:'COMPLETED',driver_id:'driver-a',completed_at:'2026-11-17T10:00:00Z'}],error:null});
+  await first;
+  assert.equal(env.api.state.historyPendingDate,'2026-11-16');
+  assert.ok(!env.api.state.orders.some(order=>order.id==='old-day'));
+  assert.match(env.app.innerHTML,/skeleton/);
+  await env.scheduled.at(-1)();
+  assert.equal(env.api.state.historyPendingDate,'');
+  assert.deepEqual(Array.from(env.api.filteredOrders(),order=>order.id),['new-day']);
+  assert.equal(replies[1].p_from,new Date('2026-11-16T00:00:00').toISOString());
 });
 
 test("earnings and confirmation omit saved payment accounts while online payment guidance still works", () => {

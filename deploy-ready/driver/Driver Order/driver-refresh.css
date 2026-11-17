@@ -239,12 +239,58 @@ button { transition: background-color .16s ease, box-shadow .16s ease, transform
 .driver-kitchen-notice.is-ready span { font-weight: 700; }
 .driver-card-actions:has(.driver-kitchen-notice) { display: grid; grid-template-columns: minmax(0,1fr); gap: 10px; }
 .driver-card-action.driver-pickup-action { background: var(--driver-green); color: #fff; }
-.driver-incoming-alert { display: flex; align-items: center; gap: 9px; margin: 12px 14px 0; padding: 12px; border: 1px solid #dfb666; border-radius: 17px; background: #fff1d6; color: #70531e; box-shadow: 0 7px 18px #6c571519; }
-.driver-incoming-alert > div { flex: 1; min-width: 0; }
+.driver-incoming-alert { position: relative; margin: 0 0 16px; overflow: hidden; border: 1px solid #ddbf81; border-left: 4px solid #cd9a3d; border-radius: 19px; background: linear-gradient(115deg, #fff6df, #fffcf4 70%, #f6f8eb); color: #3d542c; box-shadow: 0 6px 18px #9b792014; }
+.driver-alert-open { position: relative; display: flex; align-items: center; gap: 11px; width: 100%; min-height: 72px; padding: 12px 44px 12px 12px; border: 0; border-radius: inherit; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.driver-alert-open:hover { background: #f8e8bc40; }
+.driver-alert-symbol { display: grid; place-items: center; flex: 0 0 38px; width: 38px; height: 38px; border: 1px solid #e6c78a; border-radius: 13px; background: #f6e4ba; color: #a47926; }
+.driver-alert-symbol svg { width: 21px; height: 21px; }
+.driver-alert-copy { flex: 1; min-width: 0; }
 .driver-incoming-alert strong, .driver-incoming-alert small { display: block; }
-.driver-incoming-alert strong { font-size: 13px; }
-.driver-incoming-alert small { margin-top: 4px; font-size: 11px; }
-.driver-incoming-alert button { padding: 7px 9px; border: 1px solid #ddbf85; border-radius: 10px; background: #fffaf1; color: #70531e; font: inherit; font-size: 12px; cursor: pointer; }
+.driver-incoming-alert strong { font-size: 12px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+.driver-incoming-alert small { margin-top: 3px; color: #8a856d; font-size: 10px; line-height: 1.4; }
+.driver-alert-chevron { position: absolute; top: 50%; right: 16px; display: grid; place-items: center; width: 22px; height: 30px; transform: translateY(-50%); color: #ab8a48; font-size: 32px; line-height: 1; }
+.driver-incoming-alert .driver-alert-close { position: absolute; top: 4px; right: 4px; display: grid; place-items: center; width: 32px; height: 32px; padding: 8px; border: 0; border-radius: 50%; background: transparent; color: #a18c63; cursor: pointer; }
+.driver-alert-close:hover { background: #f1e3c4; }
+.driver-alert-close svg { width: 14px; height: 14px; }
+
+.driver-period-chips { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding: 2px 0 5px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.driver-period-chips::-webkit-scrollbar { display: none; }
+.driver-period-chips button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; gap: 5px; min-height: 35px; padding: 8px 10px; border: 1px solid #dce6d2; border-radius: 999px; background: #fbfdf8; color: #7c8a6e; font: inherit; font-size: 10px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.driver-period-chips button[aria-pressed="true"] { border-color: #4b8137; background: #4b8137; color: #fff; box-shadow: 0 3px 8px #355e231a; }
+.driver-period-chips button:hover { border-color: #87aa6e; }
+.driver-period-chips svg { width: 13px; height: 13px; }
+.driver-period-chips button:focus-visible { outline-offset: -3px; }
+
+.driver-date-dialog { width: min(360px, calc(100vw - 32px)); max-height: min(80dvh, 520px); margin: auto; padding: 18px; overflow-y: auto; border: 1px solid #e0e7d8; border-radius: 26px; background: #fffefa; color: #3d5132; font: inherit; box-shadow: 0 22px 70px #1b352b33; }
+.driver-date-dialog::backdrop { background: #1e321f66; backdrop-filter: blur(3px); }
+.driver-date-dialog form { display: grid; gap: 10px; }
+.driver-date-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.driver-date-dialog-head small { color: #8f9b81; font-size: 10px; }
+.driver-date-dialog-head h2 { margin: 4px 0 0; color: #3a5130; font-size: 19px; letter-spacing: -.4px; font-weight: 700; }
+.driver-date-dialog-head > button { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: #f0f4e9; color: #82916f; font: inherit; font-size: 21px; cursor: pointer; }
+.driver-date-range-chip { display: inline-flex; align-items: center; justify-self: start; gap: 7px; min-height: 34px; max-width: 100%; margin-top: 3px; padding: 8px 12px; border: 1px solid #dce7d2; border-radius: 999px; background: #f1f6ea; color: #587445; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.driver-date-range-chip svg { flex: 0 0 14px; width: 14px; height: 14px; color: #7c9965; }
+.driver-calendar-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 3px; }
+.driver-calendar-heading strong { font-size: 12px; font-weight: 700; }
+.driver-calendar-heading button { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 50%; background: transparent; color: #789265; cursor: pointer; }
+.driver-calendar-heading svg { width: 16px; height: 16px; }
+.driver-calendar-weekdays, .driver-calendar-days { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 4px; }
+.driver-calendar-weekdays { margin-bottom: -7px; color: #9ba88d; font-size: 9px; text-align: center; }
+.driver-calendar-days button { height: 30px; min-height: 30px; padding: 0; border: 0; border-radius: 10px; background: transparent; color: #647458; font: inherit; font-size: 11px; cursor: pointer; }
+.driver-calendar-days button:hover:not(:disabled) { background: #f0f5e8; }
+.driver-calendar-days .is-in-range { background: #edf4e4; color: #548039; }
+.driver-calendar-days .is-endpoint, .driver-calendar-days .is-endpoint:hover:not(:disabled) { background: #4b8434; color: #fff; font-weight: 700; }
+.driver-calendar-days button:disabled { opacity: .3; cursor: default; }
+.driver-calendar-error { margin: 0; color: #a16b31; font-size: 10px; line-height: 1.4; text-align: center; }
+.driver-date-apply { width: 100%; min-height: 44px; padding: 11px; border: 0; border-radius: 14px; background: #4a8233; color: #fff; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.driver-date-apply:disabled { background: #dde8d2; color: #8ba276; opacity: 1; }
+.driver-wallet-archive-label { color: #8f9d81; font-size: 10px; }
+.driver-order-card.earning { padding: 14px; border-radius: 20px; }
+.driver-order-icon.earning-icon { border-radius: 12px; background: #eff5e7; color: #5f8a45; }
+.driver-earning-copy strong { font-size: 13px; font-weight: 650; }
+.driver-earning-copy small { color: #839575; font-size: 11px; font-weight: 400; }
+.driver-earning-total { min-width: 80px; padding: 9px 10px; border: 0; border-radius: 12px; background: #eff5e7; color: #4b7d33; font-size: 13px; font-weight: 650; }
+.driver-earning-copy time { display: block; margin-top: 3px; overflow: hidden; color: #929e87; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }
 .driver-notification-settings { display: flex; align-items: center; gap: 10px; margin: 10px 16px 0; color: #637e55; }
 .driver-notification-settings small { flex: 1; font-size: 10px; line-height: 1.4; }
 .driver-notification-settings button { padding: 6px 10px; border: 1px solid #ccdcbf; border-radius: 999px; background: #f5f9ef; color: #45852e; font: inherit; font-size: 11px; cursor: pointer; }

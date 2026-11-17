@@ -702,32 +702,67 @@
 .customer-home-map-loading {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 10;
   display: grid;
+  align-content: center;
   place-items: center;
-  gap: 10px;
+  gap: 22px;
   min-height: 360px;
   padding: 18px;
-  color: #4f617c;
-  font-size: 0.86rem;
-  font-weight: 800;
+  color: #48617c;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.015em;
   text-align: center;
-  background: linear-gradient(180deg, rgba(248, 251, 255, 0.96), rgba(232, 241, 255, 0.94));
+  background: radial-gradient(ellipse at center, #ffffff 0%, #f3f7fd 55%, #e8f1ff 100%);
+  cursor: progress;
+}
+
+.customer-home-maplibre-map[data-ready="loading"] > :not(.customer-home-map-loading),
+.customer-home-static-map:not([data-ready="1"]) > :not(.customer-home-map-loading) {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .customer-home-map-loading::before {
   content: "";
-  width: 24px;
-  height: 24px;
-  border: 3px solid rgba(79, 97, 124, 0.2);
+  width: 40px;
+  height: 40px;
+  border: 3px solid #dce6f2;
   border-top-color: #2f5592;
+  border-right-color: #dfbd7b;
   border-radius: 999px;
-  animation: customerHomeMapLoadingSpin 0.8s linear infinite;
+  box-shadow: 0 0 0 9px #ffffffb3, 0 5px 22px #315e8b12;
+  animation: customerHomeMapLoadingSpin 1s linear infinite;
 }
 
 .customer-home-map-loading span {
   display: block;
 }
+
+.customer-home-status-sync {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 40px 24px;
+  text-align: center;
+  background: radial-gradient(ellipse at top, #ffffff, #f0f5fd);
+}
+
+.customer-home-status-sync-spinner {
+  width: 38px;
+  height: 38px;
+  margin-bottom: 8px;
+  border: 3px solid #dce6f2;
+  border-top-color: #2f5592;
+  border-right-color: #dfbd7b;
+  border-radius: 50%;
+  animation: customerHomeMapLoadingSpin 1s linear infinite;
+}
+
+.customer-home-status-sync strong { color: #234d7a; font-size: 1rem; }
+.customer-home-status-sync p { margin: 0; max-width: 30ch; color: #52667f; line-height: 1.6; }
+.customer-home-status-sync small { color: #75859a; }
 
 @keyframes customerHomeMapLoadingSpin {
   to { transform: rotate(360deg); }

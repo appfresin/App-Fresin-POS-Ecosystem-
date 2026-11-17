@@ -40,7 +40,7 @@ function setup(method = 'PICKUP_PREORDER', options = {}) {
     homeParams: () => ({search:new URLSearchParams(options.origin ? `origin=${options.origin}` : '')}),
     canAttemptSupabaseSync: () => options.online !== false,
     selfOrderSubtotal: () => 25000,
-    homeDeliveryQuote: () => ({ distanceKm: 4.435, fee: 12500 }),
+    homeDeliveryQuote: () => ({ distanceKm: 4.435, fee: 11000 }),
     getSupabaseServerTimeIso: async () => '2026-11-12T08:00:00Z',
     homeGenerateNumber: prefix => prefix + '999', homeGenerateToken: () => 'fixture-token',
     homeGoogleMapsUrl: () => 'fixture-pin', homeCoordinate: value => value,
@@ -92,9 +92,9 @@ for (const method of ['PICKUP_PREORDER', 'DELIVERY']) {
     assert.equal(order.paymentStatus, 'Belum dibayar');
     assert.equal(order.confirmedAt, null);
     assert.equal(order.subtotal, 25000);
-    assert.equal(order.deliveryFee, method === 'DELIVERY' ? 12500 : 0);
+    assert.equal(order.deliveryFee, method === 'DELIVERY' ? 11000 : 0);
     assert.equal(order.deliveryDistanceKm, method === 'DELIVERY' ? 4.435 : null);
-    assert.equal(order.grandTotal, method === 'DELIVERY' ? 37500 : 25000);
+    assert.equal(order.grandTotal, method === 'DELIVERY' ? 36000 : 25000);
     assert.equal(order.paymentProvider, method === 'DELIVERY' ? 'courier_cash' : 'cash_at_outlet');
     assert.equal(order.customerOrderStatus, method === 'DELIVERY' ? 'SEARCHING_DRIVER' : 'WAITING_ACCEPTANCE');
     assert.equal(order.note, 'Tanpa gula', 'POS notes must contain only the original customer text');

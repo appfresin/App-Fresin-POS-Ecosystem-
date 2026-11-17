@@ -27,6 +27,9 @@
   };
   let homeStatusRefreshLoading = false;
   let homeStatusRefreshAt = 0;
+  let homeStatusNeedsRefresh = true;
+  let homeStatusRefreshFailed = false;
+  let homeStatusRefreshRevision = 0;
   let homeCheckoutErrors = {};
   let homeCheckoutValidationAttempted = false;
   let homeSupportVisible = false;
@@ -290,15 +293,22 @@
     }, 0);
   }
 
-  function homeExpireDriverSearchSession(order) {
-    if (!order || homeOrderKind(order) !== "DELIVERY" || homeIsPaid(order) || homeCustomerStatus(order) !== "SEARCHING_DRIVER") return false;
+  async function homeExpireDriverSearchSession(order) {
+    if (!order || homeOrderKind(order) !== "DELIVERY" || homeIsPaid(order) || order.driverId
+      || homeCustomerStatus(order) !== "SEARCHING_DRIVER" || homeLifecycleCustomerStatus(order)) return null;
     const now = new Date().toISOString();
-    order.customerOrderStatus = "NO_DRIVER_AVAILABLE";
-    order.driverSearchExpiredAt = now;
-    order.updatedAt = now;
-    saveState();
-    homeQueueDriverSearchSync(order);
-    return true;
+    // Confirm expiry on the server before showing failure. A concurrent driver
+    // acceptance or a restarted search must win over this customer's old timer.
+    let query = supabaseClient.from("orders")
+      .update({ customer_order_status: "NO_DRIVER_AVAILABLE", updated_at: now })
+      .eq("id", order.supabaseId)
+      .eq("customer_order_status", "SEARCHING_DRIVER")
+      .or("driver_id.is.null,driver_id.eq.");
+    if (order.updatedAt) query = query.eq("updated_at", order.updatedAt);
+    const { data, error } = await query.select("*").maybeSingle();
+    if (error) throw error;
+    if (data?.id) broadcastRealtimeEvent("orders");
+    return data;
   }
 
   function homeEnsureDriverSearchSession(order) {
@@ -308,7 +318,9 @@
       homeStartDriverSearchSession(order, startedMs);
       saveState();
     }
-    return homeDriverSearchRemainingMs(order) <= 0 ? homeExpireDriverSearchSession(order) : false;
+    // Rendering a cached order must never declare a driver search unsuccessful.
+    if (homeDriverSearchRemainingMs(order) <= 0) homeStatusNeedsRefresh = true;
+    return false;
   }
 
   function homeStatusRank(status) {
@@ -615,7 +627,8 @@
     if (!imageUrl) return homeRenderMapLoading("API key Geoapify belum diatur.");
     return `
       <div class="customer-home-static-map">
-        <img src="${homeEscape(imageUrl)}" alt="Peta lokasi pengantaran" loading="lazy" />
+        ${homeRenderMapLoading()}
+        <img src="${homeEscape(imageUrl)}" alt="Peta lokasi pengantaran" loading="eager" onload="if (this.naturalWidth > 0) { this.parentElement.dataset.ready = '1'; this.parentElement.querySelector('.customer-home-map-loading')?.remove(); }" />
         <button class="customer-home-static-map-action" type="button" onclick="CustomerOrder.pinCurrentLocation()">Lokasi terkini</button>
       </div>
     `;
@@ -858,6 +871,7 @@
         map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
         const markerElement = document.createElement("div");
         markerElement.className = "customer-home-maplibre-pin";
+        markerElement.hidden = true;
         const marker = new maplibregl.Marker({
           element: markerElement,
           draggable: true
@@ -872,6 +886,7 @@
         let mapReadyForUserInput = false;
         let userAdjustedMap = false;
         let interactiveMapSettled = false;
+        let mapResourceFailed = false;
         const fallBackToStaticMap = error => {
           if (interactiveMapSettled) return;
           interactiveMapSettled = true;
@@ -882,18 +897,30 @@
         const interactiveMapTimeout = window.setTimeout(() => {
           fallBackToStaticMap(new Error("MapLibre timeout."));
         }, 12000);
-        map.once("load", () => {
+        // Failed tiles also count as loaded in MapLibre. Keep the spinner until
+        // a complete frame is rendered without resource errors; otherwise use the fallback.
+        const showReadyMap = () => {
+          if (interactiveMapSettled || mapResourceFailed || !map.loaded() || !map.areTilesLoaded()) return;
+          if (homeMapLibreMap !== map || !document.body.contains(element)) return;
           interactiveMapSettled = true;
           window.clearTimeout(interactiveMapTimeout);
+          map.off("idle", showReadyMap);
           element.dataset.ready = "1";
           element.dataset.mapError = "";
+          markerElement.hidden = false;
           element.querySelector(".customer-home-map-loading")?.remove();
           const attribution = element.querySelector(".maplibregl-ctrl-attrib");
           attribution?.removeAttribute("open");
           attribution?.classList.remove("maplibregl-compact-show");
           window.setTimeout(() => { mapReadyForUserInput = true; }, 250);
+        };
+        map.on("idle", showReadyMap);
+        map.once("remove", () => {
+          interactiveMapSettled = true;
+          window.clearTimeout(interactiveMapTimeout);
         });
         map.on("error", event => {
+          if (!interactiveMapSettled) mapResourceFailed = true;
           console.warn("MapLibre runtime warning", event?.error || event);
         });
         const markUserAdjustedMap = event => {
@@ -1699,10 +1726,15 @@
       window.clearTimeout(homeDriverSearchTickTimer);
       homeDriverSearchTickTimer = null;
     }
-    if (!homeIsMode()) return;
+    if (!homeIsMode() || document.hidden) return;
     if (selfOrderStep() !== "success") return;
     const order = homeCurrentOrder();
-    if (!order || homeOrderKind(order) !== "DELIVERY" || homeIsPaid(order)) return;
+    if (!order || homeOrderKind(order) !== "DELIVERY") return;
+    if (homeStatusNeedsRefresh) {
+      homeRefreshActiveOrderFromSupabase();
+      return;
+    }
+    if (homeIsPaid(order)) return;
     homeEnsureDriverSearchSession(order);
     if (homeCustomerStatus(order) !== "SEARCHING_DRIVER") return;
     const remainingMs = homeDriverSearchRemainingMs(order);
@@ -2048,6 +2080,7 @@
     const order = homeCurrentOrder();
     if (!order) return homeRenderOrdersList();
     homeEnsureDriverSearchSession(order);
+    if (homeOrderKind(order) === "DELIVERY" && homeStatusNeedsRefresh) return homeRenderStatusSync(order);
     if (homeIsPayLaterOrder(order)) return homeRenderCashStatus(order);
     const paid = homeIsPaid(order);
     const kind = homeOrderKind(order);
@@ -2072,6 +2105,31 @@
         ${homeRenderSupportContact()}
       </main>
     `;
+  }
+
+  function homeRenderStatusSync(order) {
+    return `<main class="self-order-main success customer-home-status">
+      <section class="customer-home-tracking-card customer-home-status-sync" role="status" aria-live="polite">
+        <span class="customer-home-status-sync-spinner" aria-hidden="true"></span>
+        <strong>${homeStatusRefreshFailed ? "Status pesanan belum dapat diperbarui" : "Memperbarui status pesanan..."}</strong>
+        <p>${homeStatusRefreshFailed ? "Periksa koneksi internet. Kami akan mencoba memperbarui status lagi." : "Mohon tunggu sebentar, kami sedang memeriksa kabar terbaru pesananmu."}</p>
+        <small>Pesanan ${homeEscape(order.number)}</small>
+        ${homeStatusRefreshFailed ? '<button class="self-order-secondary" type="button" onclick="CustomerOrder.refreshStatus()">Coba perbarui status</button>' : ""}
+      </section>${homeRenderSupportContact()}</main>`;
+  }
+
+  function homeResumeOrderStatus() {
+    if (!homeIsMode()) return;
+    if (document.hidden || !homeStatusNeedsRefresh) homeStatusRefreshRevision += 1;
+    homeStatusNeedsRefresh = true;
+    homeStatusRefreshFailed = false;
+    if (homeDriverSearchTickTimer) {
+      window.clearTimeout(homeDriverSearchTickTimer);
+      homeDriverSearchTickTimer = null;
+    }
+    if (selfOrderStep() !== "success" || !homeCurrentOrder()) return;
+    render();
+    if (!document.hidden) homeRefreshActiveOrderFromSupabase({ force: true });
   }
 
   function homeRenderOrdersEmptyState() {
@@ -2127,13 +2185,14 @@
   }
 
   async function homeRefreshActiveOrderFromSupabase(options = {}) {
-    if (!homeIsMode() || homeStatusRefreshLoading || !supabaseReadable()) return false;
+    if (!homeIsMode() || document.hidden || homeStatusRefreshLoading || !supabaseReadable()) return false;
     const order = homeCurrentOrder();
     if (!order?.number) return false;
     const now = Date.now();
     if (!options.force && now - homeStatusRefreshAt < HOME_STATUS_REFRESH_MS) return false;
     homeStatusRefreshLoading = true;
     homeStatusRefreshAt = now;
+    const revision = homeStatusRefreshRevision;
     try {
       const { data: orderRows, error: orderError } = await supabaseClient
         .from("orders")
@@ -2141,14 +2200,47 @@
         .eq("order_number", order.number)
         .limit(1);
       if (orderError) throw orderError;
-      const orderRow = (orderRows || [])[0];
+      if (revision !== homeStatusRefreshRevision || document.hidden) return false;
+      let orderRow = (orderRows || [])[0];
       if (!orderRow?.id) return false;
+      let searchStartedAt = order.driverSearchStartedAt;
+      let searchExpiresAt = order.driverSearchExpiresAt;
+      if (orderRow.customer_order_status === "SEARCHING_DRIVER") {
+        // Match the driver's acceptance window, including retries from another device.
+        const startedMs = homeDriverSearchTimestamp(orderRow.updated_at) || homeDriverSearchTimestamp(orderRow.created_at);
+        if (startedMs) {
+          searchStartedAt = new Date(startedMs).toISOString();
+          searchExpiresAt = new Date(startedMs + HOME_DRIVER_SEARCH_DURATION_MS).toISOString();
+        }
+      }
+      if (homeOrderKind(order) === "DELIVERY" && homeDriverSearchTimestamp(searchExpiresAt) <= Date.now()
+        && orderRow.customer_order_status === "SEARCHING_DRIVER") {
+        const expiredRow = await homeExpireDriverSearchSession({
+          ...order,
+          supabaseId: orderRow.id,
+          customerOrderStatus: orderRow.customer_order_status,
+          status: orderRow.status,
+          paymentStatus: orderRow.payment_status,
+          driverId: orderRow.driver_id || "",
+          updatedAt: orderRow.updated_at
+        });
+        if (revision !== homeStatusRefreshRevision || document.hidden) return false;
+        if (expiredRow?.id) orderRow = expiredRow;
+        else {
+          // The driver may have accepted between our read and the conditional update.
+          const latest = await supabaseClient.from("orders").select("*").eq("id", orderRow.id).limit(1);
+          if (latest.error) throw latest.error;
+          orderRow = latest.data?.[0];
+          if (!orderRow?.id) return false;
+        }
+      }
       const [itemsResult, paymentsResult] = await Promise.all([
         supabaseClient.from("order_items").select("*").eq("order_id", orderRow.id).order("id", { ascending: true }),
         supabaseClient.from("payments").select("*").eq("order_id", orderRow.id).order("paid_at", { ascending: false }).limit(1)
       ]);
       if (itemsResult.error) throw itemsResult.error;
       if (paymentsResult.error) throw paymentsResult.error;
+      if (revision !== homeStatusRefreshRevision || document.hidden) return false;
       const liveOrder = normalizeSupabaseLiveOrder(orderRow, itemsResult.data || [], new Map(), (paymentsResult.data || [])[0] || null);
       const liveCustomerStatus = homePreferAdvancedCustomerStatus(
         orderRow.customer_order_status || liveOrder.customerOrderStatus || order.customerOrderStatus,
@@ -2170,8 +2262,8 @@
         deliveryLocation: order.deliveryLocation,
         deliveryLatitude: order.deliveryLatitude,
         deliveryLongitude: order.deliveryLongitude,
-        driverSearchStartedAt: order.driverSearchStartedAt,
-        driverSearchExpiresAt: order.driverSearchExpiresAt,
+        driverSearchStartedAt: searchStartedAt,
+        driverSearchExpiresAt: searchExpiresAt,
         driverSearchExpiredAt: order.driverSearchExpiredAt,
         driverSearchMatchedAt: order.driverSearchMatchedAt,
         driverId: orderRow.driver_id || liveOrder.driverId || order.driverId,
@@ -2188,13 +2280,23 @@
       });
       mergeSupabaseLiveOrders([liveOrder]);
       saveState();
-      render();
+      if (homeCurrentOrder()?.number === order.number) {
+        homeStatusNeedsRefresh = false;
+        homeStatusRefreshFailed = false;
+      }
       return true;
     } catch (error) {
+      if (revision === homeStatusRefreshRevision) homeStatusRefreshFailed = true;
       console.warn("Customer order status refresh failed", error);
       return false;
     } finally {
       homeStatusRefreshLoading = false;
+      if (!document.hidden) {
+        render();
+        if (revision !== homeStatusRefreshRevision && homeStatusNeedsRefresh) {
+          window.setTimeout(() => homeRefreshActiveOrderFromSupabase({ force: true }), 0);
+        }
+      }
     }
   }
 
@@ -2459,6 +2561,7 @@
       scrollToSupport: homeScrollToSupport,
       createWaitingPayment: homeCreateWaitingPayment,
       retryDriverSearch: homeRetryDriverSearch,
+      refreshStatus: homeResumeOrderStatus,
       mockPaymentSuccess: homeMarkPaid,
       dummyPaymentSuccess: homeMarkTemporaryDummyPaid,
       setStatus: homeSetStatus,
@@ -2483,6 +2586,9 @@
     }
 
     if (!window.__customerHomeStatusRefreshTimer) {
+      document.addEventListener("visibilitychange", homeResumeOrderStatus);
+      window.addEventListener("pageshow", homeResumeOrderStatus);
+      window.addEventListener("online", homeResumeOrderStatus);
       window.__customerHomeStatusRefreshTimer = window.setInterval(homeRefreshActiveOrderFromSupabase, HOME_STATUS_REFRESH_MS);
       window.setTimeout(() => homeRefreshActiveOrderFromSupabase({ force: true }), 1600);
     }

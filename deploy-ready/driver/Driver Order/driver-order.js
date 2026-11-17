@@ -99,6 +99,18 @@
     walletDate: loadWalletDate(),
     walletDateTo: loadWalletDateTo(),
     walletClaims: loadWalletClaims(),
+    historyDate: localDateKey(),
+    historyDateTo: localDateKey(),
+    historyPreset: "today",
+    walletPreset: "",
+    historyPendingDate: "",
+    datePickerContext: "",
+    datePickerMonth: "",
+    datePickerFrom: "",
+    datePickerTo: "",
+    datePickerChoosing: "from",
+    datePickerError: "",
+    calendarFocusDate: "",
     fetchFailCount: 0,
     lastFetchErrorAt: 0,
     nextFetchAt: 0,
@@ -870,14 +882,14 @@
   function filteredOrders() {
     if (state.view === "missed") return missedOrdersToday();
     if (state.view === "active") return state.orders.filter(canShowActive);
-    if (state.view === "history") return todayCompletedOrders();
+    if (state.view === "history") return completedOrdersForRange(historyDateRange());
     return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER" && !driverOrderCancelled(order) && !acceptanceExpired(order));
   }
 
   function ordersCount(view) {
     if (view === "missed") return missedOrdersToday().length;
     if (view === "active") return state.orders.filter(canShowActive).length;
-    if (view === "history") return todayCompletedOrders().length;
+    if (view === "history") return state.view === "history" ? completedOrdersForRange(historyDateRange()).length : todayCompletedOrders().length;
     if (view === "earnings") return completedDriverOrders().length;
     return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER" && !driverOrderCancelled(order) && !acceptanceExpired(order)).length;
   }
@@ -958,6 +970,10 @@
         end: new Date(new Date(`${range.to}T00:00:00`).getTime() + 86400000).toISOString()
       };
     }
+    if (state.view === "history") {
+      const range = historyDateRange();
+      return { start: dayRange(range.from).start, end: dayRange(range.to).end };
+    }
     return dayRange(localDateKey());
   }
 
@@ -1014,6 +1030,7 @@
     if (!hasProfile()) return;
     if (state.fetching) { if (options.force || options.realtime) state.refreshQueued = true; return; }
     const profileId = state.profile.id;
+    const rangeKey = JSON.stringify(completedFetchRange());
     const nowMs = Date.now();
     if (!options.force && state.nextFetchAt && nowMs < state.nextFetchAt) return;
     const backgroundRefresh = options.quiet && state.orders.length > 0;
@@ -1036,6 +1053,10 @@
       }
       if (result.error) throw result.error;
       if (state.profile.id !== profileId) return;
+      if (rangeKey !== JSON.stringify(completedFetchRange())) {
+        state.refreshQueued = true;
+        return;
+      }
       const orders = mergeOrderItems(result.data || []);
       state.orders = orders;
       state.syncWarning = result.warning || "";
@@ -1047,6 +1068,10 @@
       setupRealtime(client);
     } catch (error) {
       if (state.profile.id !== profileId) return;
+      if (rangeKey !== JSON.stringify(completedFetchRange())) {
+        state.refreshQueued = true;
+        return;
+      }
       const now = Date.now();
       if (!state.lastFetchErrorAt || now - state.lastFetchErrorAt > DRIVER_FETCH_RETRY_MS) {
         console.warn("Driver orders refresh failed", error);
@@ -1058,6 +1083,7 @@
     } finally {
       state.fetching = false;
       state.loading = false;
+      if (rangeKey === JSON.stringify(completedFetchRange())) state.historyPendingDate = "";
       render();
       if (state.refreshQueued && hasProfile()) {
         state.refreshQueued = false;
@@ -1424,12 +1450,19 @@
         ${state.actionLoading ? `<div class="driver-busy">${escapeHtml(state.actionLoading)}</div>` : ""}
         ${renderShareDialog()}
         ${renderRejectDialog()}
+        ${renderDateRangeDialog()}
       </main>
     `;
     const shareDialog = document.getElementById("driverShareDialog");
     if (shareDialog && !shareDialog.open) shareDialog.showModal();
     const rejectDialog = document.getElementById("driverRejectDialog");
     if (rejectDialog && !rejectDialog.open) rejectDialog.showModal();
+    const dateDialog = document.getElementById("driverDateRangeDialog");
+    if (dateDialog && !dateDialog.open) dateDialog.showModal();
+    if (dateDialog && state.calendarFocusDate) {
+      dateDialog.querySelector?.(`[data-calendar-day="${state.calendarFocusDate}"]`)?.focus?.({ preventScroll: true });
+      state.calendarFocusDate = "";
+    }
   }
 
   function renderTopbar() {
@@ -1468,7 +1501,7 @@
     const titles = {
       tasks: ["Tugas Baru", "Order delivery lunas yang siap diambil."],
       active: ["Tugas Aktif", "Order yang sedang kamu antar."],
-      history: ["Riwayat hari ini", "Order selesai hari ini."],
+      history: ["Riwayat transaksi", "Order selesai pada periode pilihanmu."],
       missed: ["Pesanan batal dan terlewat", "Pesanan dibatalkan atau batas penerimaannya berakhir hari ini."],
       earnings: ["Pendapatan", "Total ongkir untuk diambil di toko."]
     };
@@ -1477,10 +1510,11 @@
 
   function renderList() {
     const orders = filteredOrders();
-    const showSkeleton = state.loading && orders.length < 1;
+    const showSkeleton = (state.loading || (state.view === "history" && state.historyPendingDate === state.historyDate)) && orders.length < 1;
     return `
       <section class="driver-content">
         ${renderShiftCard()}
+        ${renderHistoryDayFilter()}
         ${state.error ? `<div class="driver-alert">${escapeHtml(state.error)}</div>` : ""}
         ${state.syncWarning ? `<div class="driver-sync-warning" role="status">${escapeHtml(state.syncWarning)}</div>` : ""}
         <div class="driver-list">
@@ -1493,7 +1527,7 @@
   function renderShiftCard() {
     const newCount = ordersCount("tasks");
     const activeCount = ordersCount("active");
-    const doneCount = todayCompletedOrders().length;
+    const doneCount = ordersCount("history");
     return `
       <section class="driver-shift-card" aria-label="Ringkasan tugas driver">
         <div class="driver-shift-copy">
@@ -1516,13 +1550,159 @@
     `;
   }
 
+  function historyDateRange() {
+    return { from: state.historyDate, to: state.historyDateTo || state.historyDate };
+  }
+
+  function periodPresetDates(preset) {
+    const today = localDateKey();
+    const from = new Date(`${today}T12:00:00`);
+    if (preset === "yesterday") from.setDate(from.getDate() - 1);
+    if (preset === "week") from.setDate(from.getDate() - 6);
+    if (preset === "month") from.setDate(1);
+    const key = localDateKey(from);
+    return { from: key, to: preset === "yesterday" ? key : today };
+  }
+
+  function renderHistoryDayFilter() {
+    return renderPeriodFilters("orders");
+  }
+
+  function renderPeriodFilters(context) {
+    const range = context === "wallet" ? walletDateRange() : historyDateRange();
+    let active = context === "wallet" ? state.walletPreset : state.view === "history" ? state.historyPreset : "today";
+    if (!active) active = ["today", "yesterday", "week", "month"].find(preset => {
+      const dates = periodPresetDates(preset);
+      return dates.from === range.from && dates.to === range.to;
+    }) || "custom";
+    const presets = [["today", "Hari ini"], ["yesterday", "Kemarin"], ["week", "Minggu ini"], ["month", "Bulan ini"], ["custom", "Custom"]];
+    return `<nav class="driver-period-chips" data-period-context="${context}" aria-label="Filter periode ${context === "wallet" ? "pendapatan" : "riwayat order"}">
+      ${presets.map(([preset, label]) => `<button type="button" data-period-preset="${preset}" data-period-context="${context}" aria-pressed="${active === preset}" ${preset === "week" ? 'aria-label="Minggu ini, 7 hari terakhir"' : ""}>${preset === "custom" ? icon("calendar") : ""}<span>${label}</span></button>`).join("")}
+    </nav>`;
+  }
+
+  function validDateKey(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return false;
+    const parsed = new Date(`${value}T00:00:00`);
+    return !Number.isNaN(parsed.getTime()) && localDateKey(parsed) === value;
+  }
+
+  function applyPeriodRange(context, from, to, preset = "custom") {
+    if (!["orders", "wallet"].includes(context) || !validDateKey(from) || !validDateKey(to) || from > to || to > localDateKey()) return;
+    if (Math.round((new Date(`${to}T12:00:00`) - new Date(`${from}T12:00:00`)) / 86400000) >= 366) {
+      state.datePickerError = "Pilih rentang maksimal 366 hari.";
+      render();
+      return;
+    }
+    state.datePickerContext = "";
+    state.datePickerError = "";
+    if (context === "wallet") {
+      state.walletDate = from;
+      state.walletDateTo = to;
+      state.walletPreset = preset;
+      localStorage.setItem(WALLET_DATE_KEY, from);
+      localStorage.setItem(WALLET_DATE_TO_KEY, to);
+      state.view = "earnings";
+    } else {
+      state.historyDate = from;
+      state.historyDateTo = to;
+      state.historyPreset = preset;
+      state.view = "history";
+    }
+    state.historyPendingDate = from;
+    state.selectedId = "";
+    state.menuOpen = false;
+    state.error = "";
+    localStorage.setItem(VIEW_KEY, state.view);
+    render();
+    return fetchOrders({ force: true, quiet: true });
+  }
+
+  function applyPeriodPreset(preset, context) {
+    if (preset === "custom") return openDatePicker(context);
+    if (!["today", "yesterday", "week", "month"].includes(preset)) return;
+    const range = periodPresetDates(preset);
+    return applyPeriodRange(context, range.from, range.to, preset);
+  }
+
+  function openDatePicker(context) {
+    if (!["orders", "wallet"].includes(context)) return;
+    const range = context === "wallet" ? walletDateRange() : state.view === "history" ? historyDateRange() : periodPresetDates("today");
+    state.datePickerContext = context;
+    state.datePickerFrom = range.from;
+    state.datePickerTo = range.to;
+    state.datePickerMonth = range.to.slice(0, 7);
+    state.datePickerChoosing = "from";
+    state.datePickerError = "";
+    render();
+  }
+
+  function selectCalendarDay(value) {
+    if (!state.datePickerContext || !validDateKey(value) || value > localDateKey()) return;
+    if (state.datePickerChoosing === "from" || !state.datePickerFrom) {
+      state.datePickerFrom = value;
+      state.datePickerTo = "";
+      state.datePickerChoosing = "to";
+    } else {
+      const first = state.datePickerFrom;
+      state.datePickerFrom = value < first ? value : first;
+      state.datePickerTo = value < first ? first : value;
+      state.datePickerChoosing = "from";
+    }
+    state.datePickerError = "";
+    state.calendarFocusDate = value;
+    render();
+  }
+
+  function applyCustomDateRange() {
+    if (!state.datePickerContext || !state.datePickerFrom || !state.datePickerTo) return;
+    return applyPeriodRange(state.datePickerContext, state.datePickerFrom, state.datePickerTo);
+  }
+
+  function dateRangeChipLabel(from, to) {
+    const start = new Date(`${from}T12:00:00`);
+    const full = { day: "numeric", month: "short", year: "numeric" };
+    if (!to) return `${start.toLocaleDateString("id-ID", full)} - …`;
+    const end = new Date(`${to}T12:00:00`);
+    if (from === to) return start.toLocaleDateString("id-ID", full);
+    const first = start.toLocaleDateString("id-ID", start.getFullYear() === end.getFullYear() ? { day: "numeric", month: "short" } : full);
+    return `${first} - ${end.toLocaleDateString("id-ID", full)}`;
+  }
+
+  function renderDateRangeDialog() {
+    if (!state.datePickerContext) return "";
+    const month = new Date(`${state.datePickerMonth}-01T12:00:00`);
+    const count = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+    const offset = (month.getDay() + 6) % 7;
+    const today = localDateKey();
+    const heading = month.toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+    const days = Array.from({ length: offset }, () => '<span aria-hidden="true"></span>').join("") + Array.from({ length: count }, (_, index) => {
+      const day = `${state.datePickerMonth}-${String(index + 1).padStart(2, "0")}`;
+      const start = day === state.datePickerFrom;
+      const end = day === state.datePickerTo;
+      const inside = state.datePickerFrom && state.datePickerTo && day > state.datePickerFrom && day < state.datePickerTo;
+      return `<button type="button" data-calendar-day="${day}" class="${start || end ? "is-endpoint" : inside ? "is-in-range" : ""}" aria-label="${escapeHtml(walletDateLabel(day))}" aria-pressed="${start || end}" ${day > today ? "disabled" : ""}>${index + 1}</button>`;
+    }).join("");
+    return `<dialog id="driverDateRangeDialog" class="driver-date-dialog" aria-labelledby="driverDateRangeTitle">
+      <form data-driver-form="date-range">
+        <header class="driver-date-dialog-head"><div><small>${state.datePickerContext === "wallet" ? "Riwayat Dompet" : "Riwayat order"}</small><h2 id="driverDateRangeTitle">Pilih tanggal</h2></div><button type="button" data-action="close-date-range" aria-label="Tutup pemilih tanggal">×</button></header>
+        <div class="driver-date-range-chip" role="status" aria-live="polite">${icon("calendar")}<span>${escapeHtml(dateRangeChipLabel(state.datePickerFrom, state.datePickerTo))}</span></div>
+        <div class="driver-calendar-heading"><button type="button" data-calendar-month="-1" aria-label="Bulan sebelumnya">${icon("back")}</button><strong>${escapeHtml(heading)}</strong><button type="button" data-calendar-month="1" aria-label="Bulan berikutnya" ${state.datePickerMonth >= today.slice(0, 7) ? "disabled" : ""}>${icon("start")}</button></div>
+        <div class="driver-calendar-weekdays" aria-hidden="true">${["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map(day => `<span>${day}</span>`).join("")}</div>
+        <div class="driver-calendar-days" role="group" aria-label="${escapeHtml(heading)}">${days}</div>
+        ${state.datePickerError ? `<p class="driver-calendar-error" role="alert">${escapeHtml(state.datePickerError)}</p>` : ""}
+        <button class="driver-date-apply" type="submit" ${!state.datePickerFrom || !state.datePickerTo ? "disabled" : ""}>Terapkan</button>
+      </form>
+    </dialog>`;
+  }
+
   function renderEarnings() {
     const range = walletDateRange();
     const historyOrders = completedOrdersForRange(range);
     const historyClaims = walletClaimsForRange(range);
     const historyTotal = earningsTotal(historyOrders) + historyClaims.reduce((total, item) => total + Number(item.total || 0), 0);
     const historyCount = historyOrders.length + historyClaims.reduce((total, item) => total + Number(item.count || 0), 0);
-    const showSkeleton = state.loading && historyOrders.length < 1 && historyClaims.length < 1;
+    const showSkeleton = (state.loading || state.historyPendingDate === state.walletDate) && historyOrders.length < 1 && historyClaims.length < 1;
     return `
       <section class="driver-content">
         ${state.error ? `<div class="driver-alert">${escapeHtml(state.error)}</div>` : ""}
@@ -1531,6 +1711,7 @@
           <strong>${money(historyTotal)}</strong>
           <span>${historyCount} transaksi tercatat</span>
         </article>
+        ${renderPeriodFilters("wallet")}
         ${renderWalletHistory(historyOrders, historyClaims, showSkeleton)}
       </section>
     `;
@@ -1552,26 +1733,21 @@
   }
 
   function renderWalletHistory(historyOrders, historyClaims, showSkeleton) {
-    const orderBars = summarizeOrdersByDate(historyOrders).map(item => ({
-      label: item.label,
-      meta: `${item.count} order selesai`,
-      total: item.total
-    }));
+    const orders = [...historyOrders].sort((left, right) => Date.parse(right.completed_at || right.updated_at) - Date.parse(left.completed_at || left.updated_at));
     const claimBars = historyClaims.map(claim => ({
       label: `Pendapatan ${claim.monthLabel || walletMonthLabel(claim.monthKey)}`,
       meta: `${Number(claim.count || 0).toLocaleString("id-ID")} order - ${escapeHtml(shortDateTime(claim.validatedAt))}`,
       total: Number(claim.total || 0)
     }));
-    const bars = [...claimBars, ...orderBars];
     return `
-      ${renderWalletRangeFilters()}
       <section class="driver-earning-history" aria-label="Riwayat pendapatan driver">
         <div class="driver-wallet-section-title compact">
           <strong>Riwayat pendapatan</strong>
-          <small>Ringkasan tanggal saja, tanpa membuka detail order.</small>
+          <small>${historyOrders.length} order selesai</small>
         </div>
         <div class="driver-wallet-bars">
-          ${showSkeleton ? skeletonCards() : bars.map(renderWalletBar).join("") || emptyState()}
+          ${showSkeleton ? skeletonCards() : orders.map(renderEarningCard).join("") || (claimBars.length ? "" : emptyState())}
+          ${claimBars.length ? '<small class="driver-wallet-archive-label">Arsip klaim sebelumnya</small>' + claimBars.map(renderWalletBar).join("") : ""}
         </div>
       </section>
     `;
@@ -1719,7 +1895,8 @@
           <span class="driver-order-icon earning-icon" aria-hidden="true">${icon("wallet")}</span>
           <span class="driver-earning-copy">
             <strong>${escapeHtml(order.order_number || "-")}</strong>
-            <small>${escapeHtml(order.customer_name || "Customer")} · selesai ${shortDateTime(order.completed_at || order.updated_at)}</small>
+            <small>${escapeHtml(order.customer_name || "Customer")}</small>
+            <time datetime="${escapeHtml(order.completed_at || order.updated_at || "")}">${escapeHtml(shortDateTime(order.completed_at || order.updated_at))}</time>
           </span>
           <span class="driver-earning-total"><b>${money(order.delivery_fee || 0)}</b></span>
         </button>
@@ -1820,7 +1997,7 @@
     const copy = {
       tasks: ["Belum ada tugas tersedia", "Order delivery yang mencari driver akan muncul di sini."],
       active: ["Belum ada tugas aktif", "Order yang kamu ambil akan tampil di sini."],
-      history: ["Riwayat hari ini kosong", "Order selesai hari ini akan masuk ke riwayat."],
+      history: ["Belum ada transaksi selesai", "Tidak ada transaksi selesai pada periode yang dipilih."],
       missed: ["Belum ada pesanan batal atau terlewat", "Pesanan dibatalkan atau batas penerimaannya berakhir hari ini akan tampil di sini."],
       earnings: ["Pendapatan kosong", "Order selesai akan dihitung sebagai riwayat pendapatan ongkir."]
     }[state.view] || [];
@@ -1843,6 +2020,7 @@
       bag: '<svg viewBox="0 0 24 24"><path d="M7 8h10l1 12H6L7 8ZM9 8a3 3 0 0 1 6 0"/></svg>',
       check: '<svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>',
       clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg>',
+      calendar: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="4"/><path d="M8 3v4M16 3v4M4 11h16M8 15h2M14 15h2"/></svg>',
       road: '<svg viewBox="0 0 24 24"><path d="M7 20 11 4h2l4 16M12 8v2M12 14v2"/></svg>',
       refresh: '<svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M18.5 9A7 7 0 0 0 6.4 6.8M5.5 15a7 7 0 0 0 12.1 2.2"/></svg>',
       plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -1888,14 +2066,33 @@
   }
 
   function setView(view) {
+    const previousRange = JSON.stringify(completedFetchRange());
     state.view = view;
+    if (view !== "history") {
+      state.historyDate = localDateKey();
+      state.historyDateTo = state.historyDate;
+      state.historyPreset = "today";
+    }
+    state.datePickerContext = "";
     state.selectedId = "";
     state.menuOpen = false;
     localStorage.setItem(VIEW_KEY, view);
     render();
+    if (previousRange !== JSON.stringify(completedFetchRange())) fetchOrders({ force: true, quiet: true });
+  }
+
+  function setHistoryDate(value) {
+    const dateKey = String(value || "").trim();
+    const preset = dateKey === localDateKey() ? "today" : dateKey === periodPresetDates("yesterday").from ? "yesterday" : "custom";
+    return applyPeriodRange("orders", dateKey, dateKey, preset);
   }
 
   app?.addEventListener("submit", async event => {
+    if (event.target.closest("[data-driver-form='date-range']")) {
+      event.preventDefault();
+      await applyCustomDateRange();
+      return;
+    }
     const rejectForm = event.target.closest("[data-driver-form='reject']");
     if (rejectForm) {
       event.preventDefault();
@@ -1952,6 +2149,8 @@
   });
 
   app?.addEventListener("change", event => {
+    const historyDate = event.target.closest("[data-driver-history-date]");
+    if (historyDate) { setHistoryDate(historyDate.value); return; }
     const notificationSetting = event.target.closest("[data-notification-setting]");
     if (notificationSetting) {
       const key = notificationSetting.dataset.notificationSetting;
@@ -1980,6 +2179,21 @@
 
   app?.addEventListener("click", event => {
     window.DriverNotifications?.prepareAudio();
+    const period = event.target.closest("[data-period-preset]");
+    if (period) { applyPeriodPreset(period.dataset.periodPreset, period.dataset.periodContext); return; }
+    const calendarDay = event.target.closest("[data-calendar-day]");
+    if (calendarDay) { selectCalendarDay(calendarDay.dataset.calendarDay); return; }
+    const calendarMonth = event.target.closest("[data-calendar-month]");
+    if (calendarMonth) {
+      const month = new Date(`${state.datePickerMonth}-01T12:00:00`);
+      month.setMonth(month.getMonth() + Number(calendarMonth.dataset.calendarMonth));
+      state.datePickerMonth = localDateKey(month).slice(0, 7);
+      render();
+      return;
+    }
+    if (event.target.id === "driverDateRangeDialog") { state.datePickerContext = ""; render(); return; }
+    const historyDay = event.target.closest("[data-history-day]");
+    if (historyDay) { setHistoryDate(historyDay.dataset.historyDay); return; }
     const viewButton = event.target.closest("[data-view]");
     if (viewButton) {
       setView(viewButton.dataset.view);
@@ -1997,6 +2211,7 @@
     const actionButton = event.target.closest("[data-action]");
     if (!actionButton) return;
     const action = actionButton.dataset.action;
+    if (action === "close-date-range") { state.datePickerContext = ""; render(); return; }
     if (action === "close-reject") {
       if (state.actionLoading) return;
       state.rejectOrderId = "";
@@ -2050,6 +2265,7 @@
   });
 
   app.addEventListener("cancel", event => {
+    if (event.target.id === "driverDateRangeDialog") state.datePickerContext = "";
     if (event.target.id === "driverShareDialog") state.sharePayload = null;
     if (event.target.id === "driverRejectDialog") {
       if (state.actionLoading) event.preventDefault();
