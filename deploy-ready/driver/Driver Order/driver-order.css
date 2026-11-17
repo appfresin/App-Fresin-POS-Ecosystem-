@@ -881,6 +881,10 @@ svg {
   font-weight: 700;
 }
 
+.driver-card-timeline.driver-panel header {
+  margin-bottom: 0;
+}
+
 .driver-card-timeline ol {
   display: grid;
   margin: 0;

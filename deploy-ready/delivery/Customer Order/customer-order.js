@@ -1337,14 +1337,13 @@
     const totalOnly = method !== "DELIVERY";
     const routeKey = !totalOnly && homeDeliveryRouteKey(checkout);
     const unavailable = routeKey && homeDeliveryRoute?.key === routeKey && homeDeliveryRoute.status === "error";
-    const distance = quote ? quote.distanceKm.toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "";
     return `
       <section class="customer-home-review ${totalOnly ? "is-total-only" : ""}">
         ${totalOnly ? "" : `
           <div class="customer-home-review-row"><span>Biaya Pengantaran</span><strong>${fee == null ? "—" : homeMoney(fee)}</strong></div>
-          ${quote ? `<p>Rute motor · ${distance} km · <a href="https://www.geoapify.com/" target="_blank" rel="noopener">Geoapify</a></p>`
-            : unavailable ? '<p role="status">Rute motor belum bisa dihitung.</p><button class="self-order-secondary" type="button" onclick="CustomerOrder.retryDeliveryRoute()">Coba lagi</button>'
-            : `<p role="status">${routeKey ? "Menghitung rute motor…" : "Tetapkan pin untuk menghitung ongkir."}</p>`}
+          ${quote ? ""
+            : unavailable ? '<p role="status">Biaya pengantaran belum bisa dihitung.</p><button class="self-order-secondary" type="button" onclick="CustomerOrder.retryDeliveryRoute()">Coba lagi</button>'
+            : `<p role="status">${routeKey ? "Menghitung biaya pengantaran…" : "Tetapkan pin untuk menghitung ongkir."}</p>`}
         `}
         <div class="customer-home-total-row"><span>Total Pesanan</span><strong>${total == null ? "—" : homeMoney(total)}</strong></div>
       </section>

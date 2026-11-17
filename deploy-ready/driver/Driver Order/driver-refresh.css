@@ -82,7 +82,8 @@ button { transition: background-color .16s ease, box-shadow .16s ease, transform
 .driver-route-lines { gap: 9px; margin: 0; padding: 13px 58px 13px 11px; border-radius: 16px; background: #f7f9f3; }
 .driver-route-lines span { grid-template-columns: 15px 71px minmax(0,1fr); gap: 5px; }
 .driver-route-lines b { color: #87947c; font-size: 10px; font-weight: 500; }
-.driver-route-lines strong { color: #44553b; font-size: 11px; font-weight: 600; overflow-wrap: anywhere; }
+.driver-route-lines strong, .driver-card-timeline li { font-size: 11px; }
+.driver-route-lines strong { color: #44553b; font-weight: 600; overflow-wrap: anywhere; }
 .driver-card-chevron { top: 99px; right: 26px; width: 36px; height: 36px; border: 0; background: #458b2e; box-shadow: 0 4px 12px rgba(69,139,46,.12); }
 .driver-card-chevron svg { width: 17px; height: 17px; stroke-width: 2; }
 .driver-primary, .driver-sticky-action, .driver-sticky-action.done { min-height: 48px; padding: 12px 16px; border-radius: 999px; background: linear-gradient(110deg, #3e8129, #4b8a33); font-size: 14px; font-weight: 600; box-shadow: 0 6px 14px rgba(58,111,35,.15); }
@@ -193,7 +194,7 @@ button { transition: background-color .16s ease, box-shadow .16s ease, transform
   .driver-route-lines { padding-right: 48px; }
   .driver-route-lines span { grid-template-columns: 12px 64px minmax(0,1fr); gap: 4px; }
   .driver-card-chevron { right: 21px; width: 31px; height: 31px; }
-  .driver-route-lines strong { font-size: 10px; }
+  .driver-route-lines strong, .driver-card-timeline li { font-size: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {
   button { transition: none; }

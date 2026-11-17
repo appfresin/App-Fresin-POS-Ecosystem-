@@ -1590,34 +1590,38 @@
     `;
   }
 
-  function renderOrderTimeline(order, status) {
+  function renderOrderTimeline(order, status, { compact = false } = {}) {
     const rank = statusRank(status);
     const completed = status === "COMPLETED";
+    if (compact && completed) return "";
     const dispatched = status === "DELIVERING" || completed;
     const milestones = [
       ["Pesanan masuk", order.created_at, true],
       ["Pesanan diterima", order.driver_accepted_at, Boolean(order.driver_id || order.confirmed_at || rank >= 2)],
       ["Selesai di dapur", order.ready_at, rank >= 4],
-      ["Pesanan diantar", dispatched ? order.cashier_paid_at : null, dispatched],
+      ["Pesanan diantar", dispatched ? order.cashier_paid_at : null, dispatched, "Jam pembayaran di kasir"],
       ["Transaksi selesai", order.completed_at, completed]
     ];
+    const visibleMilestones = compact
+      ? milestones.filter(([, timestamp, reached]) => reached || Number.isFinite(Date.parse(timestamp))).slice(-2)
+      : milestones;
     const timeZone = "Asia/Jakarta";
     const dayFormat = new Intl.DateTimeFormat("id-ID", { timeZone, day: "numeric", month: "short", year: "numeric" });
     const createdDay = order.created_at && Number.isFinite(Date.parse(order.created_at))
       ? dayFormat.format(new Date(order.created_at)) : "";
     return `
-      <section class="driver-card-timeline" aria-label="Riwayat pesanan">
+      <section class="driver-card-timeline${compact ? "" : " driver-panel"}" aria-label="Status pesanan">
         <header>
-          <strong>${escapeHtml(order.order_number || "-")}</strong>
+          ${compact ? `<strong>${escapeHtml(order.order_number || "-")}</strong>` : "<h2>Status pesanan</h2>"}
           <span>WIB</span>
         </header>
         <ol>
-          ${milestones.map(([label, timestamp, reached], index) => {
+          ${visibleMilestones.map(([label, timestamp, reached, timeHint]) => {
             const time = shortTime(timestamp, timeZone);
             const recorded = time !== "-";
             const day = recorded ? dayFormat.format(new Date(timestamp)) : "";
             const timeLabel = day && day !== createdDay ? `${day} · ${time}` : time;
-            const timeTitle = index === 3 ? ' title="Jam pembayaran di kasir"' : "";
+            const timeTitle = timeHint ? ` title="${escapeHtml(timeHint)}"` : "";
             return `<li class="${recorded || reached ? "is-reached" : ""}">
               <span>${label}</span>
               ${recorded ? `<time datetime="${escapeHtml(timestamp)}"${timeTitle}>${escapeHtml(timeLabel)}</time>`
@@ -1660,7 +1664,7 @@
             <strong>Outlet Fresin</strong>
           </span>
         </div>
-        ${renderOrderTimeline(order, status)}
+        ${renderOrderTimeline(order, status, { compact: true })}
         ${renderCustomerWait(order)}
         ${renderCardActions(order, rawStatus, status)}
         ${renderRejectButton(order)}
@@ -1773,6 +1777,7 @@
             ${state.itemLoadingId === order.id ? `<p class="driver-muted">Memuat item pesanan...</p>` : (order.items || []).map(renderItem).join("") || `<p class="driver-muted">Item belum termuat.</p>`}
           </div>
         </section>
+        ${renderOrderTimeline(order, status)}
         ${renderStatusAction(order)}
         ${renderRejectButton(order)}
       </section>

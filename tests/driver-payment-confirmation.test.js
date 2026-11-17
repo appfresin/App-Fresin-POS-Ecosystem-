@@ -91,7 +91,7 @@ test("the order card tracks cashier time and each recorded milestone in WIB", ()
     customer_order_status: "SEARCHING_DRIVER"
   });
   env.api.state.orders = [env.order];
-  const timeline = () => env.app.innerHTML.match(/class="driver-card-timeline"[\s\S]*?<\/section>/)?.[0] || "";
+  const timeline = (html = env.app.innerHTML) => html.match(/class="driver-card-timeline(?: driver-panel)?"[\s\S]*?<\/section>/)?.[0] || "";
 
   env.setNow(Date.parse(createdAt) + 30_000);
   env.api.setView("tasks");
@@ -109,14 +109,22 @@ test("the order card tracks cashier time and each recorded milestone in WIB", ()
   assert.doesNotMatch(timeline(), /19:24/, "Paying at the cashier does not start delivery");
   env.order.customer_order_status = "DELIVERING";
   env.api.setView("active");
-  assert.match(timeline(), /Pesanan diterima[\s\S]*?19:06[\s\S]*?Selesai di dapur[\s\S]*?19:20/);
+  assert.doesNotMatch(timeline(), /Pesanan masuk|Pesanan diterima|Transaksi selesai/);
+  assert.equal([...timeline().matchAll(/<time /g)].length, 2);
+  assert.match(timeline(), /Selesai di dapur[\s\S]*?19:20/);
   assert.match(timeline(), /Pesanan diantar[\s\S]*?title="Jam pembayaran di kasir">19:24/);
+  const activeDetail = env.api.renderDetail(env.order);
+  assert.match(timeline(activeDetail), /Pesanan masuk[\s\S]*?19:04[\s\S]*?Pesanan diterima[\s\S]*?19:06/);
+  assert.ok(activeDetail.indexOf("driver-items-panel") < activeDetail.indexOf("driver-card-timeline"));
 
   Object.assign(env.order, { customer_order_status: "COMPLETED", status: "Selesai", completed_at: completedAt });
-  assert.match(env.api.renderOrderCard(env.order), /Transaksi selesai[\s\S]*?18 Nov 2026 · 00:02/);
+  const detailTimeline = timeline(env.api.renderDetail(env.order));
+  assert.equal([...detailTimeline.matchAll(/<time /g)].length, 5);
+  assert.match(detailTimeline, /Transaksi selesai[\s\S]*?18 Nov 2026 · 00:02/);
   env.order.completed_at = new Date().toISOString();
   env.api.setView("history");
-  assert.ok(timeline().includes(`datetime="${env.order.completed_at}"`));
+  assert.match(env.app.innerHTML, /D100|Andi/);
+  assert.doesNotMatch(env.app.innerHTML, /driver-card-timeline/);
 });
 
 test("an assigned cash delivery offers WhatsApp confirmation and kitchen processing without marking paid", () => {
