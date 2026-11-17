@@ -1596,14 +1596,14 @@
     if (compact && completed) return "";
     const dispatched = status === "DELIVERING" || completed;
     const milestones = [
-      ["Pesanan masuk", order.created_at, true],
-      ["Pesanan diterima", order.driver_accepted_at, Boolean(order.driver_id || order.confirmed_at || rank >= 2)],
-      ["Selesai di dapur", order.ready_at, rank >= 4],
-      ["Pesanan diantar", dispatched ? order.cashier_paid_at : null, dispatched, "Jam pembayaran di kasir"],
-      ["Transaksi selesai", order.completed_at, completed]
+      ["placed", "Pesanan masuk", order.created_at, true],
+      ["accepted", "Pesanan diterima", order.driver_accepted_at, Boolean(order.driver_id || order.confirmed_at || rank >= 2)],
+      ["ready", "Selesai di dapur", order.ready_at, rank >= 4],
+      ["delivering", "Pesanan diantar", dispatched ? order.cashier_paid_at : null, dispatched, "Jam pembayaran di kasir"],
+      ["completed", "Transaksi selesai", order.completed_at, completed]
     ];
     const visibleMilestones = compact
-      ? milestones.filter(([, timestamp, reached]) => reached || Number.isFinite(Date.parse(timestamp))).slice(-2)
+      ? milestones.filter(([, , timestamp, reached]) => reached || Number.isFinite(Date.parse(timestamp))).slice(-2)
       : milestones;
     const timeZone = "Asia/Jakarta";
     const dayFormat = new Intl.DateTimeFormat("id-ID", { timeZone, day: "numeric", month: "short", year: "numeric" });
@@ -1616,13 +1616,13 @@
           <span>WIB</span>
         </header>
         <ol>
-          ${visibleMilestones.map(([label, timestamp, reached, timeHint]) => {
+          ${visibleMilestones.map(([stage, label, timestamp, reached, timeHint]) => {
             const time = shortTime(timestamp, timeZone);
             const recorded = time !== "-";
             const day = recorded ? dayFormat.format(new Date(timestamp)) : "";
             const timeLabel = day && day !== createdDay ? `${day} · ${time}` : time;
             const timeTitle = timeHint ? ` title="${escapeHtml(timeHint)}"` : "";
-            return `<li class="${recorded || reached ? "is-reached" : ""}">
+            return `<li class="${recorded || reached ? "is-reached" : ""}" data-stage="${stage}">
               <span>${label}</span>
               ${recorded ? `<time datetime="${escapeHtml(timestamp)}"${timeTitle}>${escapeHtml(timeLabel)}</time>`
                 : '<span class="driver-timeline-missing">—</span>'}

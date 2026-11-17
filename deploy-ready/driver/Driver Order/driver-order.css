@@ -902,6 +902,7 @@ svg {
   padding: 3px 0 3px 16px;
   color: #526479;
   font-size: 0.71rem;
+  font-weight: 400;
   line-height: 1.35;
 }
 
@@ -931,12 +932,17 @@ svg {
 
 .driver-card-timeline li.is-reached {
   color: var(--driver-ink);
-  font-weight: 650;
 }
 
+.driver-card-timeline [data-stage="placed"] { --driver-timeline-color: #3671ad; }
+.driver-card-timeline [data-stage="accepted"] { --driver-timeline-color: #7652a6; }
+.driver-card-timeline [data-stage="ready"] { --driver-timeline-color: #b46716; }
+.driver-card-timeline [data-stage="delivering"] { --driver-timeline-color: #157c83; }
+.driver-card-timeline [data-stage="completed"] { --driver-timeline-color: #418126; }
+
 .driver-card-timeline li.is-reached::before {
-  border-color: var(--driver-teal);
-  background: var(--driver-teal);
+  border-color: var(--driver-timeline-color);
+  background: var(--driver-timeline-color);
 }
 
 .driver-card-timeline time,
