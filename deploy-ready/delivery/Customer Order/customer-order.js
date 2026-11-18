@@ -1251,15 +1251,21 @@
     const checkout = homeCheckout();
     const method = checkout.method || "PICKUP_PREORDER";
     homeSetCheckout({ method });
+    const serviceStrip = typeof window !== "undefined" && window.FresinGateway?.serviceStrip
+      ? window.FresinGateway.serviceStrip(method === "DELIVERY" ? "delivery" : "pickup") : "";
     return `
       <main class="self-order-main cart customer-home-cart">
-        <div class="self-order-section-head self-order-cart-head">
+        ${serviceStrip || `<div class="self-order-section-head self-order-cart-head">
           <h3 class="self-order-cart-title">Pesanan <span class="self-order-cart-count">${selfOrderItemsTotal()} item</span></h3>
-        </div>
+        </div>`}
         <section class="self-order-cart-list">
-          ${selfOrderCart.map(item => `
-            <article class="self-order-cart-item">
-              <div>
+          ${selfOrderCart.map(item => {
+            const product = typeof state !== "undefined" ? state.products?.find(product => product.id === item.productId) : null;
+            const photo = typeof productImageOrToken === "function" ? productImageOrToken(product || item, "customer-home-cart-photo", 420) : `<span class="customer-home-cart-photo self-order-product-token">${homeEscape(String(item.name || "").slice(0, 2))}</span>`;
+            return `
+            <article class="self-order-cart-item has-photo">
+              <div class="customer-home-cart-visual">${photo}</div>
+              <div class="customer-home-cart-copy">
                 <strong>${homeEscape(item.name)}</strong>
                 ${(item.addons || []).length ? `<small>${item.addons.map(addon => `+ ${homeEscape(addon.name)} ${Number(addon.qty || 0)}x`).join(" ")}</small>` : ""}
                 ${orderItemNoteHtml(item, "self-order-cart-item-note")}
@@ -1274,7 +1280,7 @@
                 <button type="button" class="danger" onclick="selfOrderRemoveItem('${item.lineId}')" aria-label="Hapus"><svg class="self-order-remove-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
               </div>
             </article>
-          `).join("") || empty("Keranjang masih kosong.")}
+          `; }).join("") || empty("Keranjang masih kosong.")}
         </section>
         <section class="self-order-summary customer-home-summary-card">
           <div class="total"><span>Total Pesanan</span><strong>${homeMoney(subtotal)}</strong></div>
@@ -1396,8 +1402,9 @@
     const pickupNow = checkout.pickupTiming !== "scheduled" && !/^\d{2}:\d{2}$/.test(pickupTime);
     const errors = homeCheckoutErrors || {};
     const finishLabel = selfOrderSubmitting ? "Mengirim pesanan..." : "Buat Pesanan";
-    const serviceStrip = window.FresinGateway?.serviceStrip
-      ? window.FresinGateway.serviceStrip(method === "DELIVERY" ? "delivery" : "pickup", { change: false, checkout: true }) : "";
+    const serviceStrip = delivery
+      ? `<section class="customer-home-delivery-heading"><span class="customer-home-delivery-heading-icon" aria-hidden="true">${window.FresinGateway?.checkoutServiceArt?.("delivery") || homeDeliveryIconSvg()}</span><div><strong>Diantar (Delivery)</strong><small>Diantar oleh driver ke alamatmu</small></div></section>`
+      : window.FresinGateway?.serviceStrip ? window.FresinGateway.serviceStrip("pickup", { change: false, checkout: true }) : "";
     const pickupHeader = serviceStrip || `<div class="fresin-service-strip is-pickup is-checkout-header"><span><span class="fresin-service-strip-icon">${homeTakeawayIconSvg()}</span><span class="fresin-service-strip-copy">Ambil di Outlet <small>mengambil sendiri pesanan di outlet Fresin</small></span></span></div>`;
     return `
       <main class="self-order-main payment customer-home-checkout">
@@ -1429,7 +1436,8 @@
             <label class="wide"><span class="sr-only">Catatan Pesanan</span><textarea id="customerHomeNote" placeholder="Catatan pesanan (opsional)" oninput="CustomerOrder.captureCheckout()">${homeInputValue("customerHomeNote", "note")}</textarea></label>
           </div>
         </section>
-        ${homeRenderReview({ method, fee, total, checkout, quote })}
+        ${delivery ? homeRenderCheckoutItems() : ""}
+        ${homeRenderReview({ method, subtotal, fee, total, checkout, quote })}
         <button class="self-order-primary self-order-finish" type="button" onclick="CustomerOrder.createWaitingPayment()" ${selfOrderSubmitting ? `disabled aria-busy="true"` : delivery && !quote ? "disabled" : ""}>${homeEscape(finishLabel)}</button>
         ${selfOrderSubmitError ? `<p class="self-order-submit-error" role="alert">${homeEscape(selfOrderSubmitError)}</p>` : ""}
         ${homeRenderSupportContact()}
@@ -1437,19 +1445,33 @@
     `;
   }
 
-  function homeRenderReview({ method, fee, total, checkout, quote }) {
+  function homeRenderCheckoutItems() {
+    if (!Array.isArray(selfOrderCart) || !selfOrderCart.length) return "";
+    return `<section class="customer-home-checkout-items" aria-labelledby="customerHomeItemsHeading">
+      <header><div><h3 id="customerHomeItemsHeading">Pesananmu</h3></div><span>${selfOrderCart.reduce((sum, item) => sum + Number(item.qty || 0), 0)} item</span></header>
+      <div class="customer-home-checkout-items-list">${selfOrderCart.map(item => {
+        const product = typeof state !== "undefined" ? state.products?.find(product => product.id === item.productId) : null;
+        const photo = typeof productImageOrToken === "function" ? productImageOrToken(product || item, "customer-home-checkout-item-photo", 420) : `<span class="customer-home-checkout-item-photo self-order-product-token">${homeEscape(String(item.name || "").slice(0, 2))}</span>`;
+        const details = [item.variantLabel || item.variantName || item.variant, ...(item.addons || []).map(addon => `${addon.name}${Number(addon.qty) > 1 ? ` ×${Number(addon.qty)}` : ""}`)].filter(Boolean).join(" · ");
+        return `<article class="customer-home-checkout-item"><div class="customer-home-checkout-item-visual">${photo}<span>${Number(item.qty || 0)}×</span></div><div class="customer-home-checkout-item-copy"><strong>${homeEscape(item.name)}</strong>${details ? `<small>${homeEscape(details)}</small>` : ""}${item.note ? `<small>${homeEscape(item.note)}</small>` : ""}</div><b>${homeMoney(cartItemTotal(item))}</b></article>`;
+      }).join("")}</div>
+    </section>`;
+  }
+
+  function homeRenderReview({ method, subtotal, fee, total, checkout, quote }) {
     const totalOnly = method !== "DELIVERY";
     const routeKey = !totalOnly && homeDeliveryRouteKey(checkout);
     const unavailable = routeKey && homeDeliveryRoute?.key === routeKey && homeDeliveryRoute.status === "error";
     return `
       <section class="customer-home-review ${totalOnly ? "is-total-only" : ""}">
         ${totalOnly ? "" : `
+          <div class="customer-home-review-row"><span>Total Pesanan</span><strong>${homeMoney(subtotal)}</strong></div>
           <div class="customer-home-review-row"><span>Biaya Pengantaran</span><strong>${fee == null ? "—" : homeMoney(fee)}</strong></div>
           ${quote ? ""
             : unavailable ? '<p role="status">Biaya pengantaran belum bisa dihitung.</p><button class="self-order-secondary" type="button" onclick="CustomerOrder.retryDeliveryRoute()">Coba lagi</button>'
             : `<p role="status">${routeKey ? "Menghitung biaya pengantaran…" : "Tetapkan pin untuk menghitung ongkir."}</p>`}
         `}
-        <div class="customer-home-total-row"><span>Total Pesanan</span><strong>${total == null ? "—" : homeMoney(total)}</strong></div>
+        <div class="customer-home-total-row"><span>${totalOnly ? "Total Pesanan" : "Pembayaran"}</span><strong>${total == null ? "—" : homeMoney(total)}</strong></div>
       </section>
     `;
   }

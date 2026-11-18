@@ -443,3 +443,82 @@ html.fresin-gateway-open .view-selforder .page { min-height: 0; }
 .fresin-gateway[data-motion="off"] .fresin-utensil-knife { animation: none; transform: none; }
 .fresin-gateway[data-motion="off"] .fresin-service-art-frame.is-first { opacity: 1; }
 .fresin-gateway[data-motion="off"] .fresin-service-art-frame.is-second { opacity: 0; }
+
+/* Photo checkout shared by Self Order and Takeaway. */
+.customer-home-checkout-items { margin-top:16px; padding:16px; border:1px solid #e1e8f3; border-radius:22px; background:#fff; box-shadow:0 6px 20px #254d7b06; }
+.customer-home-checkout-items > header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:15px; }
+.customer-home-checkout-items header small { color:#8397ae; font-size:10px; }
+.customer-home-checkout-items h3 { margin:3px 0 0; color:#294e77; font-size:16px; }
+.customer-home-checkout-items header > span { padding:5px 9px; border-radius:999px; background:#f0f5fc; color:#6181a8; font-size:10px; }
+.customer-home-checkout-item { display:flex; align-items:center; gap:12px; padding:12px 0; }
+.customer-home-checkout-item + .customer-home-checkout-item { border-top:1px solid #edf1f7; }
+.customer-home-checkout-item:first-child { padding-top:0; }
+.customer-home-checkout-item:last-child { padding-bottom:0; }
+.customer-home-checkout-item-visual { position:relative; flex:0 0 60px; width:60px; height:60px; border-radius:16px; background:#f3f6fb; }
+.customer-home-checkout-item-photo { display:block; width:60px; height:60px; object-fit:cover; border-radius:16px; }
+.customer-home-checkout-item-visual > span:last-child { position:absolute; right:-4px; bottom:-4px; padding:3px 5px; border:2px solid #fff; border-radius:8px; background:#e6effd; color:#406894; font-size:10px; font-weight:700; }
+.customer-home-checkout-item-copy { flex:1; min-width:0; }
+.customer-home-checkout-item-copy strong { color:#264866; font-size:13px; overflow-wrap:anywhere; }
+.customer-home-checkout-item-copy small { display:block; margin-top:4px; color:#8294aa; font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+.customer-home-checkout-item > b { flex-shrink:0; color:#365e89; font-size:12px; }
+
+.customer-home-cart .self-order-cart-item.has-photo { grid-template-columns:44px minmax(0,1fr) auto; gap:9px; padding:9px; border-color:#e1e8f3; border-radius:16px; }
+.customer-home-cart-visual { width:44px; height:48px; border-radius:12px; background:#f4f7fc; overflow:hidden; }
+.customer-home-cart-photo { display:block; width:44px; height:48px; object-fit:cover; border-radius:12px; }
+.customer-home-cart-copy { min-width:0; overflow-wrap:anywhere; }
+.customer-home-cart .customer-home-cart-copy strong { color:#294766; font-size:12px; line-height:1.35; }
+.customer-home-cart .customer-home-cart-copy small { font-size:10px; line-height:1.4; font-weight:400; }
+.customer-home-cart .self-order-cart-item.has-photo .self-order-qty { gap:4px; }
+.customer-home-cart .self-order-cart-item.has-photo .self-order-qty-stepper { gap:2px; padding:3px; }
+.customer-home-cart .self-order-cart-item.has-photo .self-order-qty-stepper button { width:22px; height:24px; min-height:24px; padding:0; }
+.customer-home-cart .self-order-cart-item.has-photo .self-order-qty-stepper span { min-width:16px; font-size:12px; }
+.customer-home-cart .self-order-cart-item.has-photo .self-order-qty > .danger { width:20px; min-width:20px; padding:0; }
+
+
+.fresin-unified-checkout > .self-order-payment-shell,
+.fresin-unified-checkout > .customer-home-checkout-items,
+.fresin-unified-checkout > .customer-home-review { border:1px solid #e1e8f3; border-radius:22px; background:#fff; box-shadow:0 6px 20px #254d7b06; }
+.fresin-unified-checkout > .self-order-payment-shell { padding:0; }
+.fresin-unified-checkout .self-order-checkout { display:grid; grid-template-columns:1fr; gap:10px; padding:16px; }
+.fresin-unified-checkout .self-order-field-label { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.fresin-unified-checkout .self-order-checkout input,
+.fresin-unified-checkout .self-order-checkout textarea { border:1px solid #dfe6f0; border-radius:15px; background:#fafcff; color:#355779; font-size:12px; }
+.fresin-unified-checkout .self-order-checkout textarea { min-height:58px; }
+.fresin-checkout-service { display:flex; align-items:center; gap:11px; padding:13px 14px; border:1px solid #dce7f6; border-radius:17px; background:#f0f5fd; }
+.fresin-checkout-service-icon { display:grid; place-items:center; flex:0 0 38px; height:38px; border:1px solid #d9e6f8; border-radius:13px; background:#fff; color:#5276a2; }
+.fresin-checkout-service-icon svg { width:25px; height:25px; }
+.fresin-checkout-service strong { display:block; color:#294e77; font-size:14px; font-weight:750; }
+.fresin-checkout-service small { display:block; margin-top:3px; color:#8498b0; font-size:10px; }
+.fresin-unified-checkout > .customer-home-review { display:grid; gap:8px; margin-top:12px; padding:14px 16px; }
+.fresin-unified-checkout .customer-home-review-row,
+.fresin-unified-checkout .customer-home-total-row { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.fresin-unified-checkout .customer-home-review-row span { color:#667085; font-size:12px; }
+.fresin-unified-checkout .customer-home-review-row strong,
+.fresin-unified-checkout .customer-home-total-row strong { color:#365e89; font-family:inherit; font-size:12px; font-weight:700; }
+.fresin-unified-checkout .customer-home-total-row { margin-top:2px; padding-top:10px; border-top:1px dashed #d8e0ea; color:#667085; font-size:12px; font-weight:800; }
+.fresin-unified-checkout .customer-home-total-row strong { font-weight:800; }
+.fresin-unified-checkout .self-order-finish { margin-top:10px; }
+
+/* Reuse gateway SVG artwork and its existing transform/opacity keyframes. */
+.fresin-checkout-art { position:relative; display:block; flex:0 0 38px; width:38px; height:38px; overflow:hidden; border:1px solid #d9e6f8; border-radius:13px; background:#fff; color:#5276a2; }
+.fresin-checkout-art.is-delivery { border-color:#ead8b9; background:#fffaf2; color:#9b713c; }
+.fresin-checkout-art > .fresin-service-art { position:relative; display:block; width:100%; height:100%; }
+.fresin-checkout-art > .fresin-service-art.dinein { display:grid; place-items:center; }
+.fresin-checkout-art .fresin-service-art svg { width:66%; height:66%; }
+.fresin-service-strip .fresin-checkout-art { flex-basis:34px; width:34px; height:34px; border-radius:11px; }
+.customer-home-delivery-heading-icon:has(.fresin-checkout-art) { border:0; background:none; }
+.fresin-checkout-art[data-motion="off"] .fresin-service-art-frame,
+.fresin-checkout-art[data-motion="off"] .fresin-utensil-fork,
+.fresin-checkout-art[data-motion="off"] .fresin-utensil-knife { animation:none; transform:none; }
+.fresin-checkout-art[data-motion="off"] .fresin-service-art-frame.is-first { opacity:1; }
+.fresin-checkout-art[data-motion="off"] .fresin-service-art-frame.is-second { opacity:0; }
+@media (prefers-reduced-motion:reduce) {
+  .fresin-checkout-art .fresin-service-art-frame,
+  .fresin-checkout-art .fresin-utensil-fork,
+  .fresin-checkout-art .fresin-utensil-knife { animation:none; transform:none; }
+  .fresin-checkout-art .fresin-service-art-frame.is-first { opacity:1; }
+  .fresin-checkout-art .fresin-service-art-frame.is-second { opacity:0; }
+}
+
+.fresin-takeaway-support { padding-bottom:110px; }
+.fresin-takeaway-support > .fresin-gateway-support-button { margin-top:10px; }

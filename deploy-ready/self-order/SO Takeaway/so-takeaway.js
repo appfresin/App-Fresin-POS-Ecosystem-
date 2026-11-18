@@ -540,11 +540,12 @@
     const submitLabel = selfOrderSubmitting
       ? `<span class="self-order-btn-spinner" aria-hidden="true"></span><span>Mengirim pesanan</span>`
       : "Buat Pesanan";
+    const checkoutUi = typeof window !== "undefined" ? window.FresinGateway : null;
     return `
-      <main class="self-order-main payment so-takeaway-payment">
-        <div class="self-order-section-head">
+      <main class="self-order-main payment so-takeaway-payment ${checkoutUi?.checkoutItems ? "fresin-unified-checkout" : ""}">
+        ${checkoutUi?.checkoutItems ? "" : `<div class="self-order-section-head">
           <div><span>Takeaway</span><h3>Total ${soTakeawayMoney(selfOrderSubtotal())}</h3></div>
-        </div>
+        </div>`}
         ${activeOrder ? `
           <section class="so-takeaway-active-card">
             <div class="so-takeaway-active-copy">
@@ -556,6 +557,7 @@
         ` : ""}
         <section class="self-order-payment-shell">
           <div class="self-order-checkout">
+            ${checkoutUi?.checkoutServiceHeader?.() || ""}
             <label class="self-order-customer-field">
               <span class="self-order-field-label">Nama Pemesan</span>
               <input id="selfOrderCustomer" value="${soTakeawayEscape(customer)}" placeholder="Nama pemesan" required aria-required="true" aria-describedby="selfOrderCustomerError" oninput="sessionStorage.setItem('self_order_customer', this.value); selfOrderClearCustomerError(this)" />
@@ -568,7 +570,7 @@
             <label class="wide"><span class="self-order-field-label">Catatan</span><textarea id="selfOrderCheckoutNote" placeholder="Catatan pesanan (opsional)" rows="2" oninput="sessionStorage.setItem('self_order_checkout_note', this.value)">${soTakeawayEscape(note)}</textarea></label>
           </div>
         </section>
-        ${typeof renderSelfOrderUpsellCard === "function" ? renderSelfOrderUpsellCard("payment") : ""}
+        ${checkoutUi?.checkoutItems ? checkoutUi.checkoutItems() + checkoutUi.checkoutTotals() : typeof renderSelfOrderUpsellCard === "function" ? renderSelfOrderUpsellCard("payment") : ""}
         <button class="self-order-primary self-order-finish" type="button" onclick="selfOrderCreateOrder()" ${selfOrderSubmitting ? `disabled aria-busy="true"` : ""}>${submitLabel}</button>
         ${selfOrderSubmitError ? `<p class="self-order-submit-error" role="alert">${soTakeawayEscape(selfOrderSubmitError)}</p>` : ""}
       </main>
@@ -924,10 +926,7 @@
             <strong>${soTakeawayEscape(appName)}</strong>
             <span>${soTakeawayEscape(outletName)}</span>
           </div>
-          <label class="self-order-table">
-            <span>Mode</span>
-            <strong>Takeaway</strong>
-          </label>
+          <button type="button" class="fresin-gateway-support-button" onclick="FresinGateway.showSupport()">Kontak Support</button>
         </header>
       `;
     };

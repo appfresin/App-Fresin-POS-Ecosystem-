@@ -11147,6 +11147,7 @@ function selfOrderLabelCase(value) {
 }
 
 function renderSelfOrderCart() {
+  if (typeof window !== "undefined" && window.FresinGateway?.renderCart) return window.FresinGateway.renderCart();
   const subtotal = selfOrderSubtotal();
   return `
     <main class="self-order-main cart">
@@ -11223,18 +11224,20 @@ function renderSelfOrderPayment() {
   const submitLabel = selfOrderSubmitting
     ? `<span class="self-order-btn-spinner" aria-hidden="true"></span><span>Mengirim pesanan</span>`
     : "Selesaikan Pesanan";
+  const checkoutUi = typeof window !== "undefined" ? window.FresinGateway : null;
   return `
-    <main class="self-order-main payment self-order-table-payment">
-      <div class="self-order-section-head self-order-payment-head">
+    <main class="self-order-main payment self-order-table-payment ${checkoutUi?.checkoutItems ? "fresin-unified-checkout" : ""}">
+      ${checkoutUi?.checkoutItems ? "" : `<div class="self-order-section-head self-order-payment-head">
         <span>Pembayaran</span><h3>${money(selfOrderSubtotal())}</h3>
-      </div>
+      </div>`}
       <section class="self-order-payment-shell">
         <div class="self-order-checkout">
+          ${checkoutUi?.checkoutServiceHeader?.() || ""}
           <label class="self-order-customer-field ${isCustomerLocked ? "self-order-customer-lock-field" : ""}"><span class="self-order-field-label">Nama</span><input id="selfOrderCustomer" value="${escapeHtml(customer)}" placeholder="Nama pemesan" required aria-required="true" aria-describedby="selfOrderCustomerError" ${customerInputAttrs} /><small id="selfOrderCustomerError" class="self-order-customer-error" role="alert" hidden>Nama wajib diisi.</small></label>
           <label class="wide"><span class="self-order-field-label">Catatan</span><textarea id="selfOrderCheckoutNote" placeholder="Catatan pesanan (opsional)" rows="2" oninput="sessionStorage.setItem('self_order_checkout_note', this.value)">${escapeHtml(note)}</textarea></label>
         </div>
       </section>
-      ${renderSelfOrderUpsellCard("payment")}
+      ${checkoutUi?.checkoutItems ? checkoutUi.checkoutItems() + checkoutUi.checkoutTotals() : renderSelfOrderUpsellCard("payment")}
       <button class="self-order-primary self-order-finish" type="button" onclick="selfOrderCreateOrder()" ${selfOrderSubmitting ? `disabled aria-busy="true"` : ""}>${submitLabel}</button>
       ${selfOrderSubmitError ? `<p class="self-order-submit-error" role="alert">${escapeHtml(selfOrderSubmitError)}</p>` : ""}
     </main>

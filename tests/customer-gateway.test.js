@@ -485,7 +485,9 @@ test('customer cart keeps the entry method and checkout data without another ser
     const end = feature.indexOf('\n  function ', start + 3);
     for (const method of ['PICKUP_PREORDER','DELIVERY']) {
       const checkout = { method, address: 'Saved delivery address' };
+      let renderedService;
       const html = vm.runInNewContext(`(${feature.slice(start, end)})()`, {
+        window: { FresinGateway: { serviceStrip(service) { renderedService = service; return '<div class="fresin-service-strip">Ubah layanan</div>'; } } },
         selfOrderSubtotal: () => 20000, selfOrderItemsTotal: () => 1, homeCheckout: () => checkout,
         homeSetCheckout: patch => Object.assign(checkout, patch),
         selfOrderCart: [{ lineId: 'line-1', name: 'Aren Latte', qty: 1, price: 20000 }],
@@ -499,6 +501,9 @@ test('customer cart keeps the entry method and checkout data without another ser
       assert.match(html, /onclick="selfOrderShowPayment\(\)" >Lanjut/);
       assert.equal(checkout.method, method);
       assert.equal(checkout.address, 'Saved delivery address');
+      assert.equal(renderedService, method === 'DELIVERY' ? 'delivery' : 'pickup');
+      assert.match(html, /fresin-service-strip/);
+      assert.doesNotMatch(html, /self-order-cart-head/);
     }
   }
 });
@@ -570,5 +575,17 @@ test('Pesan Lagi resets service selection and returns pickup and delivery custom
    env.window.FresinGateway.choose('delivery');
    if(engine==='home')assert.equal(env.methods.at(-1),'DELIVERY');
    else assert.match(env.navigations.at(-1),/mode=delivery/);
+ }
+});
+
+
+test('Takeaway keeps support available on menu, cart, and checkout without losing the draft',()=>{
+ for(const step of ['menu','cart','payment']){
+  const env=setup({engine:'takeaway',url:'https://www.fresin.id/order/?mode=takeaway',step,history:{selfOrderStep:step,fresinService:'pickup'}});
+  const html=env.ctx.renderSelfOrder();
+  assert.match(html,/fresin-takeaway-support/);
+  assert.match(html,/id="fresinGatewaySupport"/);
+  assert.match(html,/Kontak Support/);
+  assert.equal(env.ctx.selfOrderCart.length,1);
  }
 });

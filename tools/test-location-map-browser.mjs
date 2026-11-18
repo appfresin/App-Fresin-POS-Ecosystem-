@@ -86,7 +86,7 @@ try {
       window.fixtureCheckoutVisible=true;
       render=function(){
         const quote=homeDeliveryQuote();
-        const review=homeRenderReview({method:checkout.method,fee:quote?.fee,total:quote?25000+quote.fee:null,checkout,quote});
+        const review=homeRenderReview({method:checkout.method,subtotal:25000,fee:quote?.fee,total:quote?25000+quote.fee:null,checkout,quote});
         document.querySelector('#app').innerHTML='<section class="self-order-app"><main class="self-order-main payment customer-home-checkout">'+(fixtureCheckoutVisible?homeRenderLocationPin()+review:'<p>Menu</p>')+'</main></section>';
       };
       {${renderWrapper}}
@@ -98,7 +98,7 @@ try {
     assert.equal(await evaluate('document.querySelector("#customerHomeCurrentLocationButton").textContent'),'Lokasi anda sudah dipilih');
     assert.equal(await evaluate('getComputedStyle(document.querySelector("#customerHomeLocationButton")).display'),'none');
     assert.equal(await evaluate('homeLocationMapZoom()'),15);
-    const feeRow = 'document.querySelector(".customer-home-review-row").textContent';
+    const feeRow = 'document.querySelectorAll(".customer-home-review-row")[1].textContent';
     await waitFor(()=>evaluate(`${feeRow}.includes("Rp11.000")`),'Delivery fee did not render');
     assert.match(await evaluate(feeRow),/Biaya PengantaranRp11\.000/);
     assert.doesNotMatch(await evaluate('document.querySelector(".customer-home-review").textContent'),/Rute motor|4,4 km|Geoapify/i);

@@ -167,15 +167,86 @@
   }
 
   function serviceArt(service) {
+    if (service === "dinein") return `<span class="fresin-service-art dinein" aria-hidden="true">${icon("dinein")}</span>`;
     const pickup = service === "pickup";
     return `<span class="fresin-gateway-choice-icon fresin-service-art" aria-hidden="true"><span class="fresin-service-art-frame is-first">${icon(pickup ? "shopping" : "delivery")}</span><span class="fresin-service-art-frame is-second">${icon(pickup ? "bag" : "shopping")}</span></span>`;
+  }
+
+  function checkoutServiceArt(service) {
+    const motion = new URL(location.href).searchParams.get("motion") === "off" ? "off" : "on";
+    return `<span class="fresin-checkout-art is-${service}" data-motion="${motion}" aria-hidden="true">${serviceArt(service)}</span>`;
   }
 
   function serviceStrip(service, options = {}) {
     const checkout = options.checkout === true && service === "pickup";
     const label = checkout ? 'Ambil di Outlet <small>mengambil sendiri pesanan di outlet Fresin</small>'
       : service === "dinein" ? `Makan di sini <small>Meja ${escapeHtml(tableCode())}</small>` : service === "delivery" ? "Diantar (Delivery)" : "Ambil di toko";
-    return `<div class="fresin-service-strip is-${service}${checkout ? " is-checkout-header" : ""}"><span><span class="fresin-service-strip-icon">${icon(service === "dinein" ? "dinein" : service === "delivery" ? "delivery" : "bag")}</span><span class="fresin-service-strip-copy">${label}</span></span>${options.change === false ? "" : `<button type="button" onclick="FresinGateway.open()">Ubah layanan ${icon("arrow")}</button>`}</div>`;
+    return `<div class="fresin-service-strip is-${service}${checkout ? " is-checkout-header" : ""}"><span>${checkoutServiceArt(service)}<span class="fresin-service-strip-copy">${label}</span></span>${options.change === false ? "" : `<button type="button" onclick="FresinGateway.open()">Ubah layanan ${icon("arrow")}</button>`}</div>`;
+  }
+
+  function renderCart() {
+    const subtotal = selfOrderSubtotal();
+    const strip = serviceStrip(tableMode() ? "dinein" : "pickup");
+    return `
+      <main class="self-order-main cart customer-home-cart">
+        ${strip || `<div class="self-order-section-head self-order-cart-head">
+          <h3 class="self-order-cart-title">Pesanan <span class="self-order-cart-count">${selfOrderItemsTotal()} item</span></h3>
+        </div>`}
+        <section class="self-order-cart-list">
+          ${selfOrderCart.map(item => {
+            const product = typeof state !== "undefined" ? state.products?.find(product => product.id === item.productId) : null;
+            const photo = typeof productImageOrToken === "function" ? productImageOrToken(product || item, "customer-home-cart-photo", 420) : `<span class="customer-home-cart-photo self-order-product-token">${escapeHtml(String(item.name || "").slice(0, 2))}</span>`;
+            return `
+            <article class="self-order-cart-item has-photo">
+              <div class="customer-home-cart-visual">${photo}</div>
+              <div class="customer-home-cart-copy">
+                <strong>${escapeHtml(item.name)}</strong>
+                ${(item.addons || []).length ? `<small>${item.addons.map(addon => `+ ${escapeHtml(addon.name)} ${Number(addon.qty || 0)}x`).join(" ")}</small>` : ""}
+                ${orderItemNoteHtml(item, "self-order-cart-item-note")}
+                <b>${money(cartItemTotal(item))}</b>
+              </div>
+              <div class="self-order-qty">
+                <div class="self-order-qty-stepper">
+                  <button type="button" onclick="selfOrderChangeQty('${item.lineId}', -1)">-</button>
+                  <span>${Number(item.qty || 0)}</span>
+                  <button type="button" onclick="selfOrderChangeQty('${item.lineId}', 1)">+</button>
+                </div>
+                <button type="button" class="danger" onclick="selfOrderRemoveItem('${item.lineId}')" aria-label="Hapus"><svg class="self-order-remove-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+              </div>
+            </article>
+          `; }).join("") || empty("Keranjang masih kosong.")}
+        </section>
+        <section class="self-order-summary customer-home-summary-card">
+          <div class="total"><span>Total Pesanan</span><strong>${money(subtotal)}</strong></div>
+        </section>
+        ${typeof renderSelfOrderUpsellCard === "function" ? renderSelfOrderUpsellCard("cart") : ""}
+        <button class="self-order-primary self-order-cart-pay" type="button" onclick="selfOrderShowPayment()" ${selfOrderCart.length ? "" : "disabled"}>Lanjut</button>
+
+      </main>
+    `;
+  }
+
+  function checkoutItems() {
+    if (!Array.isArray(selfOrderCart) || !selfOrderCart.length) return "";
+    return `<section class="customer-home-checkout-items" aria-labelledby="customerHomeItemsHeading">
+      <header><div><h3 id="customerHomeItemsHeading">Pesananmu</h3></div><span>${selfOrderCart.reduce((sum, item) => sum + Number(item.qty || 0), 0)} item</span></header>
+      <div class="customer-home-checkout-items-list">${selfOrderCart.map(item => {
+        const product = typeof state !== "undefined" ? state.products?.find(product => product.id === item.productId) : null;
+        const photo = typeof productImageOrToken === "function" ? productImageOrToken(product || item, "customer-home-checkout-item-photo", 420) : `<span class="customer-home-checkout-item-photo self-order-product-token">${escapeHtml(String(item.name || "").slice(0, 2))}</span>`;
+        const details = [item.variantLabel || item.variantName || item.variant, ...(item.addons || []).map(addon => `${addon.name}${Number(addon.qty) > 1 ? ` ×${Number(addon.qty)}` : ""}`)].filter(Boolean).join(" · ");
+        return `<article class="customer-home-checkout-item"><div class="customer-home-checkout-item-visual">${photo}<span>${Number(item.qty || 0)}×</span></div><div class="customer-home-checkout-item-copy"><strong>${escapeHtml(item.name)}</strong>${details ? `<small>${escapeHtml(details)}</small>` : ""}${item.note ? `<small>${escapeHtml(item.note)}</small>` : ""}</div><b>${money(cartItemTotal(item))}</b></article>`;
+      }).join("")}</div>
+    </section>`;
+  }
+
+  function checkoutTotals() {
+    const subtotal = selfOrderSubtotal();
+    return `<section class="customer-home-review"><div class="customer-home-review-row"><span>Total Pesanan</span><strong>${money(subtotal)}</strong></div><div class="customer-home-total-row"><span>Pembayaran</span><strong>${money(subtotal)}</strong></div></section>`;
+  }
+
+  function checkoutServiceHeader() {
+    const dinein = tableMode();
+    return `<section class="fresin-checkout-service">${checkoutServiceArt(dinein ? "dinein" : "pickup")}<div><strong>${dinein ? "Makan di sini (Dine in)" : "Ambil di toko (Takeaway)"}</strong><small>${dinein ? `Meja ${escapeHtml(tableCode())}` : "Disiapkan untuk dibawa pulang"}</small></div></section>`;
   }
 
   function categoryVisual(category, products) {
@@ -228,7 +299,6 @@
 
   function renderSupport() {
     if (window.CustomerOrder?.renderSupport) return window.CustomerOrder.renderSupport({ visible: true });
-    if (!tableMode()) return "";
     const settings = state.settings || {};
     const email = String(settings.customerSupportEmail || settings.supportEmail || settings.receiptEmail || "fresin.indonesia@gmail.com").trim();
     const phone = String(settings.customerSupportPhone || settings.supportPhone || settings.receiptPhone || "0822100069671").trim();
@@ -364,7 +434,7 @@
   function hideSupport() {
     const element = document.getElementById("fresinGatewaySupport");
     if (element) element.hidden = true;
-    document.querySelector?.(".fresin-gateway .customer-home-support-chip,.fresin-gateway .fresin-gateway-support-button")?.focus({ preventScroll: true });
+    document.querySelector?.(".fresin-gateway .customer-home-support-chip,.fresin-gateway .fresin-gateway-support-button,.so-takeaway-topbar .fresin-gateway-support-button")?.focus({ preventScroll: true });
   }
 
   const baseRenderSelfOrder = renderSelfOrder;
@@ -377,6 +447,7 @@
       content = content.replace('class="self-order-app"', 'class="self-order-app fresin-table-menu"');
       content = content.replace(/<label class="self-order-table">[\s\S]*?<\/label>/, "");
     }
+    if (takeawayMode()) content += `<div class="fresin-gateway-support fresin-takeaway-support" id="fresinGatewaySupport" role="region" tabindex="-1" aria-label="Kontak Support" onkeydown="if(event.key==='Escape'){FresinGateway.hideSupport();event.stopPropagation();}" hidden>${renderSupport()}<button type="button" class="fresin-gateway-support-button" onclick="FresinGateway.hideSupport()">Tutup</button></div>`;
     if (!enabled() || selfOrderStep() !== "menu" || !selectedService()) return content;
     const service = selectedService();
     const strip = serviceStrip(service);
@@ -391,7 +462,7 @@
     return result;
   };
 
-  window.FresinGateway = { choose, open, restart, showOrders, showSupport, hideSupport, isOpen, categoryVisual, menuVisualsEnabled: enabled, serviceStrip };
+  window.FresinGateway = { choose, open, restart, showOrders, showSupport, hideSupport, isOpen, categoryVisual, menuVisualsEnabled: enabled, serviceStrip, renderCart, checkoutItems, checkoutTotals, checkoutServiceHeader, checkoutServiceArt };
 
   function finishBoot() {
     window.FRESIN_GATEWAY_BOOT_PENDING = false;
