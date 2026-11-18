@@ -122,7 +122,7 @@ try {
     await evaluate("document.querySelector('.fresin-gateway-choice.pickup').click()");
     assert.equal(await evaluate("document.documentElement.classList.contains('fresin-gateway-open')"), false);
     assert.equal(await evaluate("JSON.parse(sessionStorage.getItem('customer_home_checkout')).method"), 'PICKUP_PREORDER');
-    assert.equal(await evaluate("document.querySelector('.fresin-service-strip>span').textContent.trim()"), 'Ambil di toko');
+    assert.equal(await evaluate("document.querySelector('.fresin-service-strip>span').textContent.trim()"), 'Ambil di Outlet');
     assert.equal(await evaluate('selfOrderCart.length'),0,'Selecting a service must not add an item');
     await evaluate("selfOrderCart=[{name:'Chosen fixture item',qty:1,price:20000}];saveSelfOrderCart()");
     await evaluate('history.back()');
@@ -269,7 +269,7 @@ try {
     const takeaway = fs.readFileSync(path.join(root,'SO Takeaway/so-takeaway.js'),'utf8');
     const functions = ['homeIsOrder','homeIsPayLaterOrder','homeKitchenBlocked','homeIsPaid','homeOrderKind','homeOrderTotal','homeDeliveryFee',
       'homeCustomerStatus','homeLifecycleCustomerStatus','homePreferAdvancedCustomerStatus','homeStatusRank','homeCashProgress',
-      'homeRenderCashStatus','homeRenderCheckout','homeRenderReview','homeCheckoutFieldError','homeCheckoutInvalidAttrs','homeSetPickupTiming','homeOpenPickupTimePicker']
+      'homeRenderCashStatus','homeRenderCheckout','homeRenderCheckoutItems','homeRenderReview','homeCheckoutFieldError','homeCheckoutInvalidAttrs','homeSetPickupTiming','homeOpenPickupTimePicker']
       .map(name=>extract(customerSource,name)).join('\n');
     const components = ['soTakeawayEscape','soTakeawayMoney','soTakeawayIsPaid','soTakeawayDetailHtml','soTakeawayResultHero','soTakeawayStatusBar','soTakeawaySuccessActions','soTakeawayRenderReceipt','soTakeawayDateTime']
       .map(name=>extract(takeaway,name)).join('\n');

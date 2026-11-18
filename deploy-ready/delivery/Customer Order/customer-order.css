@@ -2017,3 +2017,5 @@ html:has(.customer-home-location-step), body:has(.customer-home-location-step) {
 .customer-home-delivery-heading small { color:#9a8469; }
 
 .customer-home-checkout .customer-home-total-row strong { font-weight:800; }
+
+.customer-home-checkout .customer-home-review.is-total-only .customer-home-total-row { border-top:1px dashed #d8e0ea; padding-top:8px; margin-top:6px; }

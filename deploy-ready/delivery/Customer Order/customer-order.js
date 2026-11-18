@@ -1436,7 +1436,7 @@
             <label class="wide"><span class="sr-only">Catatan Pesanan</span><textarea id="customerHomeNote" placeholder="Catatan pesanan (opsional)" oninput="CustomerOrder.captureCheckout()">${homeInputValue("customerHomeNote", "note")}</textarea></label>
           </div>
         </section>
-        ${delivery ? homeRenderCheckoutItems() : ""}
+        ${homeRenderCheckoutItems()}
         ${homeRenderReview({ method, subtotal, fee, total, checkout, quote })}
         <button class="self-order-primary self-order-finish" type="button" onclick="CustomerOrder.createWaitingPayment()" ${selfOrderSubmitting ? `disabled aria-busy="true"` : delivery && !quote ? "disabled" : ""}>${homeEscape(finishLabel)}</button>
         ${selfOrderSubmitError ? `<p class="self-order-submit-error" role="alert">${homeEscape(selfOrderSubmitError)}</p>` : ""}
@@ -1464,6 +1464,7 @@
     const unavailable = routeKey && homeDeliveryRoute?.key === routeKey && homeDeliveryRoute.status === "error";
     return `
       <section class="customer-home-review ${totalOnly ? "is-total-only" : ""}">
+        ${totalOnly ? `<div class="customer-home-review-row"><span>Total Pesanan</span><strong>${homeMoney(subtotal)}</strong></div>` : ""}
         ${totalOnly ? "" : `
           <div class="customer-home-review-row"><span>Total Pesanan</span><strong>${homeMoney(subtotal)}</strong></div>
           <div class="customer-home-review-row"><span>Biaya Pengantaran</span><strong>${fee == null ? "—" : homeMoney(fee)}</strong></div>
@@ -1471,7 +1472,7 @@
             : unavailable ? '<p role="status">Biaya pengantaran belum bisa dihitung.</p><button class="self-order-secondary" type="button" onclick="CustomerOrder.retryDeliveryRoute()">Coba lagi</button>'
             : `<p role="status">${routeKey ? "Menghitung biaya pengantaran…" : "Tetapkan pin untuk menghitung ongkir."}</p>`}
         `}
-        <div class="customer-home-total-row"><span>${totalOnly ? "Total Pesanan" : "Pembayaran"}</span><strong>${total == null ? "—" : homeMoney(total)}</strong></div>
+        <div class="customer-home-total-row"><span>Pembayaran</span><strong>${total == null ? "—" : homeMoney(total)}</strong></div>
       </section>
     `;
   }

@@ -69,12 +69,12 @@ try {
     const match=source.match(new RegExp('^'+indent+'function '+name+'\\([\\s\\S]*?^'+indent+'}', 'm'));
     assert.ok(match,name);return match[0];
   }
-  for(const mode of ['so','takeaway']) for(const width of [343,430]) {
+  for(const mode of ['so','takeaway','home-pickup']) for(const width of [343,430]) {
     await send('Emulation.setDeviceMetricsOverride',{width,height:800,deviceScaleFactor:1,mobile:true});
     await send('Page.navigate',{url:fixture+(mode==='so'?'?table=A1':'?mode=takeaway')});
     await waitFor(()=>evaluate('!!window.FresinGateway'),'Fixture did not load');
     await evaluate(`
-      window.CustomerOrder.isMode=()=>false;window.SOTakeaway={isMode:()=>${mode==='takeaway'}};
+      window.CustomerOrder.isMode=()=>${mode==='home-pickup'};window.SOTakeaway={isMode:()=>${mode==='takeaway'}};
       window.selfOrderSubmitting=false;window.selfOrderSubmitError='';
       window.syncSelfOrderTableFromUrl=()=>{};window.selfOrderOpenTableOrder=()=>null;window.selfOrderOpenTableChoice=()=>'';
       window.soTakeawayActiveOrder=()=>null;window.soTakeawayEscape=escapeHtml;window.soTakeawayMoney=value=>money(value);
@@ -87,7 +87,13 @@ try {
       sessionStorage.setItem('self_order_customer','Pelanggan uji');sessionStorage.setItem('so_takeaway_customer_phone','08000000000');sessionStorage.setItem('self_order_checkout_note','Catatan uji checkout');
       ${sourceFunction(appSource,'renderSelfOrderPayment')}
       ${sourceFunction(takeawaySource,'soTakeawayRenderPayment','  ')}
-      window.paintPayment=()=>{document.querySelector('#app').innerHTML='<section class="self-order-app">'+renderSelfOrderTopbar()+(${mode==='so'}?renderSelfOrderPayment():soTakeawayRenderPayment())+'</section>'};
+      window.homeCheckout=()=>({method:'PICKUP_PREORDER',name:'Pelanggan uji',phone:'08000000000',pickupTiming:'now',pickupTime:'Secepatnya',note:'Catatan uji checkout'});
+      window.homeEscape=escapeHtml;window.homeMoney=money;window.homeCheckoutErrors={};window.homeDeliveryQuote=()=>null;
+      window.homeInputValue=(id,key)=>homeCheckout()[key]||'';window.homeCheckoutInvalidAttrs=()=>'';window.homeCheckoutFieldError=()=>'';window.homeRenderSupportContact=()=>'';
+      window.homeDeliveryRouteKey=()=>null;window.homeDeliveryRoute=null;
+      ${['homeRenderCheckout','homeRenderCheckoutItems','homeRenderReview'].map(extract).join('\n')}
+
+      window.paintPayment=()=>{document.querySelector('#app').innerHTML='<section class="self-order-app">'+renderSelfOrderTopbar()+(${mode==='home-pickup'}?homeRenderCheckout():${mode==='so'}?renderSelfOrderPayment():soTakeawayRenderPayment())+'</section>'};
       document.querySelector('#app').innerHTML='<section class="self-order-app">'+FresinGateway.renderCart()+'</section>';
     `);
     assert.equal(await evaluate('document.querySelectorAll(".customer-home-cart-visual img").length'),5);
@@ -99,7 +105,7 @@ try {
     assert.equal(await evaluate('document.querySelector(".customer-home-checkout-items").innerText.includes("Kurangi gula")'),true);
     assert.equal(await evaluate('document.querySelector(".customer-home-review").innerText.includes("200.000")'),true);
     assert.equal(await evaluate('document.querySelector(".customer-home-checkout-items").innerText.includes("11 item")'),true);
-    assert.equal(await evaluate('document.querySelector("#selfOrderCustomer").value'),'Pelanggan uji');
+    assert.equal(await evaluate('document.querySelector('+JSON.stringify(mode==='home-pickup'?'#customerHomeName':'#selfOrderCustomer')+').value'),'Pelanggan uji');
     assert.equal(await evaluate('!!document.querySelector("#soTakeawayCustomerPhone")'),mode==='takeaway');
     assert.equal(await evaluate('imageSizes.every(size=>size===420)'),true,'Photo sizes must reuse the menu source');
     assert.equal(await evaluate('document.documentElement.scrollWidth>innerWidth'),false,'Checkout overflow');

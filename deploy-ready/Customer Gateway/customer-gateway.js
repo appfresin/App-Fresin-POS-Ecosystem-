@@ -180,7 +180,7 @@
   function serviceStrip(service, options = {}) {
     const checkout = options.checkout === true && service === "pickup";
     const label = checkout ? 'Ambil di Outlet <small>mengambil sendiri pesanan di outlet Fresin</small>'
-      : service === "dinein" ? `Makan di sini <small>Meja ${escapeHtml(tableCode())}</small>` : service === "delivery" ? "Diantar (Delivery)" : "Ambil di toko";
+      : service === "dinein" ? `Makan di sini <small>Meja ${escapeHtml(tableCode())}</small>` : service === "delivery" ? "Diantar (Delivery)" : "Ambil di Outlet";
     return `<div class="fresin-service-strip is-${service}${checkout ? " is-checkout-header" : ""}"><span>${checkoutServiceArt(service)}<span class="fresin-service-strip-copy">${label}</span></span>${options.change === false ? "" : `<button type="button" onclick="FresinGateway.open()">Ubah layanan ${icon("arrow")}</button>`}</div>`;
   }
 
@@ -246,7 +246,7 @@
 
   function checkoutServiceHeader() {
     const dinein = tableMode();
-    return `<section class="fresin-checkout-service">${checkoutServiceArt(dinein ? "dinein" : "pickup")}<div><strong>${dinein ? "Makan di sini (Dine in)" : "Ambil di toko (Takeaway)"}</strong><small>${dinein ? `Meja ${escapeHtml(tableCode())}` : "Disiapkan untuk dibawa pulang"}</small></div></section>`;
+    return `<section class="fresin-checkout-service">${checkoutServiceArt(dinein ? "dinein" : "pickup")}<div><strong>${dinein ? "Makan di sini (Dine in)" : "Ambil di Outlet (Takeaway)"}</strong><small>${dinein ? `Meja ${escapeHtml(tableCode())}` : "Disiapkan untuk dibawa pulang"}</small></div></section>`;
   }
 
   function categoryVisual(category, products) {
@@ -291,7 +291,7 @@
         </button>
         <h2 class="fresin-gateway-secondary-heading" id="fresinGatewayOtherTitle">Kamu bisa juga</h2>
         <div class="fresin-gateway-secondary-choices" aria-labelledby="fresinGatewayOtherTitle">
-          <button class="fresin-gateway-choice fresin-gateway-small-choice pickup" type="button" onclick="FresinGateway.choose('pickup')"><span class="fresin-gateway-small-top">${serviceArt("pickup")}${icon("arrow")}</span><strong>Pesan dari rumah</strong><span>Ambil ke Outlet saat pesanan selesai</span></button>
+          <button class="fresin-gateway-choice fresin-gateway-small-choice pickup" type="button" onclick="FresinGateway.choose('pickup')"><span class="fresin-gateway-small-top">${serviceArt("pickup")}${icon("arrow")}</span><strong>Pesan dari rumah</strong><span>Ambil di Outlet saat pesanan selesai</span></button>
           <button class="fresin-gateway-choice fresin-gateway-small-choice delivery" type="button" onclick="FresinGateway.choose('delivery')"><span class="fresin-gateway-small-top">${serviceArt("delivery")}${icon("arrow")}</span><strong>Diantar (Delivery)</strong><span>Pesanan diantar ke rumahmu, (dikenakan ongkir)</span></button>
         </div>
       </div>`;
@@ -336,7 +336,7 @@
           ${atTable ? renderTableChoices() : `<div class="fresin-gateway-choices">
             <button class="fresin-gateway-choice pickup" type="button" onclick="FresinGateway.choose('pickup')">
               ${serviceArt("pickup")}
-              <span class="fresin-gateway-choice-copy"><strong>Ambil di toko</strong><span>Pesan dulu, ambil sendiri<br>di outlet Fresin.</span></span>
+              <span class="fresin-gateway-choice-copy"><strong>Ambil di Outlet</strong><span>Pesan dulu, ambil sendiri<br>di outlet Fresin.</span></span>
               <span class="fresin-gateway-choice-arrow">${icon("arrow")}</span>
             </button>
             <button class="fresin-gateway-choice delivery" type="button" onclick="FresinGateway.choose('delivery')">
@@ -408,7 +408,13 @@
     window.scrollTo?.({ top: 0, behavior: "smooth" });
   }
 
+  function checkoutInProgress() {
+    return enabled() && Array.isArray(selfOrderCart) && selfOrderCart.length > 0
+      && ["menu", "detail", "cart", "payment", "table-check", "table-decision"].includes(selfOrderStep());
+  }
+
   function showOrders() {
+    if (checkoutInProgress()) return toast("Selesaikan checkout pesanan baru terlebih dahulu.");
     if (homeMode()) return window.CustomerOrder.showOrders();
     try {
       const snapshot = JSON.parse(sessionStorage.getItem("self_order_last_order") || "null");
@@ -463,6 +469,39 @@
   };
 
   window.FresinGateway = { choose, open, restart, showOrders, showSupport, hideSupport, isOpen, categoryVisual, menuVisualsEnabled: enabled, serviceStrip, renderCart, checkoutItems, checkoutTotals, checkoutServiceHeader, checkoutServiceArt };
+
+  // Forward navigation must follow the current cart, never a previous order snapshot.
+  if (typeof selfOrderShowPayment === "function") {
+    const baseShowPayment = selfOrderShowPayment;
+    let enteringCheckout = false;
+    selfOrderShowPayment = async function () {
+      if (!enabled()) return baseShowPayment.apply(this, arguments);
+      if (selfOrderSubmitting || enteringCheckout || ["payment", "table-check", "table-decision"].includes(selfOrderStep())) return;
+      if (selfOrderStep() !== "cart") return toast("Periksa keranjang, lalu tekan Lanjut.");
+      enteringCheckout = true;
+      try { return await baseShowPayment.apply(this, arguments); }
+      finally { enteringCheckout = false; }
+    };
+  }
+  if (typeof renderSelfOrderBottomNav === "function") {
+    const baseBottomNav = renderSelfOrderBottomNav;
+    renderSelfOrderBottomNav = function () {
+      let html = baseBottomNav.apply(this, arguments);
+      if (!enabled()) return html;
+      if (selfOrderSubmitting || selfOrderStep() !== "cart" || !selfOrderCart.length) {
+        html = html.replace(/onclick="selfOrderShowPayment\(\)"/g, 'disabled aria-disabled="true"');
+      }
+      if (checkoutInProgress()) html = html.replace(/onclick="CustomerOrder.showOrders\(\)"/g, 'disabled aria-disabled="true"');
+      return html;
+    };
+  }
+  if (window.CustomerOrder?.showOrders) {
+    const baseShowOrders = window.CustomerOrder.showOrders;
+    window.CustomerOrder.showOrders = function () {
+      if (checkoutInProgress()) return toast("Selesaikan checkout pesanan baru terlebih dahulu.");
+      return baseShowOrders.apply(this, arguments);
+    };
+  }
 
   function finishBoot() {
     window.FRESIN_GATEWAY_BOOT_PENDING = false;

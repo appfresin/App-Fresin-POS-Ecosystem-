@@ -54,6 +54,8 @@ function setup(options = {}) {
     renderSupport: () => '<section id="customerHomeSupport">Support</section>'
   };
   else window.SOTakeaway = { isMode: () => !options.dineIn, showActiveOrder: () => storage.set('self_order_step', 'success') };
+  if(options.showPayment)ctx.selfOrderShowPayment=options.showPayment;
+  if(options.navRenderer)ctx.renderSelfOrderBottomNav=options.navRenderer;
   vm.runInContext(source, ctx, { filename: 'fresin-customer-gateway.js' });
   assert.ok(window.FresinGateway, 'Gateway module must be installed');
   return { ctx, window, storage, navigations, messages, methods, history, historyEntries, listeners, frames };
@@ -113,7 +115,7 @@ test('Take Away entry opens the approved gateway and reuses the existing header'
   assert.match(html.replace(/<[^>]*>/g, ''), /Fresin App/);
   assert.match(html, /Lebih mudah/);
   assert.match(html, /lebih cepat/);
-  assert.match(html, /Ambil di toko/);
+  assert.match(html, /Ambil di Outlet/);
   assert.match(html, /Diantar/);
   assert.equal(env.storage.get('self_order_step'), 'gateway');
   assert.doesNotMatch(html, /self-order-bottom-nav/);
@@ -433,8 +435,8 @@ test('pickup checkout exposes a sentence-case card header with its own descripti
   const html = env.window.FresinGateway.serviceStrip('pickup', { change: false, checkout: true });
   assert.match(html, /is-checkout-header/);
   assert.match(html, /Ambil di Outlet <small>mengambil sendiri pesanan di outlet Fresin<\/small>/);
-  assert.doesNotMatch(html, /Ubah layanan|Ambil di toko/);
-  assert.match(env.window.FresinGateway.serviceStrip('pickup'), /Ambil di toko/);
+  assert.doesNotMatch(html, /Ubah layanan/);
+  assert.match(env.window.FresinGateway.serviceStrip('pickup'), /Ambil di Outlet/);
 });
 
 test('all customer ordering routes share category photos and use a drink for Non-Kopi', () => {
@@ -569,7 +571,7 @@ test('Pesan Lagi resets service selection and returns pickup and delivery custom
    assert.equal(env.ctx.location.pathname,engine==='home'?'/pesan/':'/order/');
    const html=env.ctx.renderSelfOrder();
    assert.match(html,/Mau pesan bagaimana/);
-   assert.match(html,/Ambil di toko/);
+   assert.match(html,/Ambil di Outlet/);
    assert.match(html,/Diantar \(Delivery\)/);
    assert.doesNotMatch(html,/Makan di sini/);
    env.window.FresinGateway.choose('delivery');
@@ -588,4 +590,26 @@ test('Takeaway keeps support available on menu, cart, and checkout without losin
   assert.match(html,/Kontak Support/);
   assert.equal(env.ctx.selfOrderCart.length,1);
  }
+});
+
+
+test('payment navigation cannot skip the cart or reopen checkout with a stale previous order',async()=>{
+ for(const step of ['menu','detail','payment','table-check','table-decision']){
+  let entries=0;
+  const env=setup({engine:'takeaway',step,history:{selfOrderStep:step,fresinService:'pickup'},storage:{self_order_last_order:JSON.stringify({id:'old-order',orderMode:'TAKEAWAY'})},showPayment:async()=>{entries++;},navRenderer:()=>'<button onclick="selfOrderShowPayment()">Bayar</button>'});
+  await env.ctx.selfOrderShowPayment();assert.equal(entries,0,step);
+  assert.match(env.ctx.renderSelfOrderBottomNav(),/disabled/);
+  assert.equal(env.storage.get('self_order_step'),step);
+ }
+ let entries=0;
+ const cart=setup({engine:'takeaway',step:'cart',history:{selfOrderStep:'cart',fresinService:'pickup'},showPayment:async()=>{entries++;},navRenderer:()=>'<button onclick="selfOrderShowPayment()">Bayar</button>'});
+ assert.doesNotMatch(cart.ctx.renderSelfOrderBottomNav(),/disabled/);
+ await Promise.all([cart.ctx.selfOrderShowPayment(),cart.ctx.selfOrderShowPayment()]);
+ assert.equal(entries,1,'Double taps must enter checkout once');
+});
+
+test('a new home pickup draft cannot jump to an old order status',()=>{
+ const env=setup({engine:'home',step:'payment',url:'https://www.fresin.id/pesan/?mode=pickup',history:{selfOrderStep:'payment',fresinService:'pickup'}});
+ env.window.CustomerOrder.showOrders();assert.equal(env.storage.get('self_order_step'),'payment');
+ assert.match(env.messages.at(-1),/Selesaikan checkout/);
 });

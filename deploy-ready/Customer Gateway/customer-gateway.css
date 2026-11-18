@@ -522,3 +522,7 @@ html.fresin-gateway-open .view-selforder .page { min-height: 0; }
 
 .fresin-takeaway-support { padding-bottom:110px; }
 .fresin-takeaway-support > .fresin-gateway-support-button { margin-top:10px; }
+
+.customer-home-cart .customer-home-summary-card .total > span { color:#73849a; font-family:inherit; font-size:12px; font-weight:500; }
+.customer-home-cart .customer-home-summary-card .total > strong { color:#365e89; font-family:inherit; font-size:13px; font-weight:700; }
+.self-order-bottom-nav button:disabled { opacity:.5; cursor:default; }
