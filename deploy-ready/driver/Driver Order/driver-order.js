@@ -534,7 +534,7 @@
   }
 
   function claimableOrdersForMonth(monthKey = walletMonthKey()) {
-    return completedOrdersForMonth(monthKey).filter(order => !isCourierCash(order));
+    return completedOrdersForMonth(monthKey).filter(order => order.merchant !== "pizzain" && !isCourierCash(order));
   }
 
   function isPaidOrder(order) {
@@ -816,7 +816,7 @@
     return state.orders.filter(order => (
       !driverOrderCancelled(order) && order.customer_order_status === "COMPLETED"
       && (driverMatches(order) || !order.driver_id)
-      && (isCourierCash(order) || !walletClaimForMonth(orderCompletedKey(order).slice(0, 7)))
+      && (order.merchant === "pizzain" || isCourierCash(order) || !walletClaimForMonth(orderCompletedKey(order).slice(0, 7)))
     ));
   }
 
@@ -880,7 +880,7 @@
     };
     state.walletClaims = [claim, ...state.walletClaims.filter(item => !(item?.driverId === claim.driverId && item?.monthKey === claim.monthKey))];
     saveWalletClaims();
-    state.orders = state.orders.filter(order => !(!isCourierCash(order) && order.customer_order_status === "COMPLETED" && (driverMatches(order) || !order.driver_id) && orderCompletedKey(order).slice(0, 7) === monthKey));
+    state.orders = state.orders.filter(order => !(order.merchant !== "pizzain" && !isCourierCash(order) && order.customer_order_status === "COMPLETED" && (driverMatches(order) || !order.driver_id) && orderCompletedKey(order).slice(0, 7) === monthKey));
     return claim;
   }
 
@@ -895,7 +895,7 @@
     if (view === "missed") return missedOrdersToday().length;
     if (view === "active") return state.orders.filter(canShowActive).length;
     if (view === "history") return state.view === "history" ? completedOrdersForRange(historyDateRange()).length : todayCompletedOrders().length;
-    if (view === "earnings") return completedDriverOrders().length;
+    if (view === "earnings") return completedDriverOrders().filter(order => order.merchant !== "pizzain").length;
     return state.orders.filter(order => order.customer_order_status === "SEARCHING_DRIVER" && !driverOrderCancelled(order) && !acceptanceExpired(order)).length;
   }
 
@@ -1032,6 +1032,7 @@
   }
 
   let pizzainFeed = { device: "", revision: "", orders: [], checkedAt: 0 };
+  let orderActionRevision = 0;
 
   function pizzainDevice() {
     return config.pizzainPilot === true ? window.DriverNotifications?.deviceCredentials?.() : null;
@@ -1052,9 +1053,10 @@
     const feed = pizzainFeed;
     if (!device || document.hidden || (!options.force && Date.now() - feed.checkedAt < (options.realtime ? 30000 : 60000))) return "";
     feed.checkedAt = Date.now();
+    const actionRevision = orderActionRevision;
     try {
       const result = await requestPizzain(client, device, "feed", { revision: feed.revision });
-      if (state.profile?.id + ":" + pizzainDevice()?.id !== deviceKey) return "";
+      if (actionRevision !== orderActionRevision || state.profile?.id + ":" + pizzainDevice()?.id !== deviceKey) return "";
       if (!result?.revision || (result.revision !== feed.revision && !Array.isArray(result.orders))) {
         throw new Error("Invalid Pizzain feed");
       }
@@ -1076,6 +1078,7 @@
     if (state.fetching) { if (options.force || options.realtime) state.refreshQueued = true; return; }
     const profileId = state.profile.id;
     const rangeKey = JSON.stringify(completedFetchRange());
+    const actionRevision = orderActionRevision;
     const nowMs = Date.now();
     if (!options.force && state.nextFetchAt && nowMs < state.nextFetchAt) return;
     const backgroundRefresh = options.quiet && state.orders.length > 0;
@@ -1103,7 +1106,11 @@
         return;
       }
       const pizzainWarning = await refreshPizzain(client, options);
-      if (state.profile?.id !== profileId || rangeKey !== JSON.stringify(completedFetchRange())) return;
+      if (state.profile?.id !== profileId) return;
+      if (actionRevision !== orderActionRevision || rangeKey !== JSON.stringify(completedFetchRange())) {
+        state.refreshQueued = true;
+        return;
+      }
       const orders = mergeOrderItems([...(result.data || []), ...pizzainFeed.orders]);
       state.orders = orders;
       state.syncWarning = [result.warning, pizzainWarning].filter(Boolean).join(" ");
@@ -1246,7 +1253,7 @@
 
   async function runAction(action, orderId) {
     const order = state.orders.find(item => item.id === orderId);
-    if (!order || !hasProfile()) return;
+    if (!order || !hasProfile() || state.actionLoading) return;
     if (driverOrderCancelled(order)) { state.error = "Pesanan sudah dibatalkan dan tidak dapat diproses."; render(); return; }
     if (order.merchant === "pizzain" && !["take", "process", "delivering", "complete"].includes(action)) return;
     if (action === "reject") {
@@ -1325,13 +1332,21 @@
           driverId: kitchenAction ? order.driver_id : ""
         });
       }
+      orderActionRevision += 1;
+      const orderPatch = { ...next.patch, updated_at: now };
+      Object.assign(order, orderPatch);
+      if (order.merchant === "pizzain") {
+        pizzainFeed.orders = pizzainFeed.orders.map(item => item.id === order.id ? { ...item, ...orderPatch } : item);
+        pizzainFeed.revision = "";
+      }
+      notifyNewDriverOrders(state.orders);
       if (action === "take" || action === "picked" || action === "delivering") state.view = "active";
       if (action === "complete") {
         state.view = "active";
         state.selectedId = "";
       }
       localStorage.setItem(VIEW_KEY, state.view);
-      await fetchOrders({ force: true });
+      void fetchOrders({ force: true, quiet: true });
     } catch (error) {
       console.warn("Driver order action failed", error);
       state.error = "Status belum tersimpan. Cek koneksi lalu coba lagi.";
@@ -1763,7 +1778,7 @@
 
   function renderEarnings() {
     const range = walletDateRange();
-    const historyOrders = completedOrdersForRange(range);
+    const historyOrders = completedOrdersForRange(range).filter(order => order.merchant !== "pizzain");
     const historyClaims = walletClaimsForRange(range);
     const historyTotal = earningsTotal(historyOrders) + historyClaims.reduce((total, item) => total + Number(item.total || 0), 0);
     const historyCount = historyOrders.length + historyClaims.reduce((total, item) => total + Number(item.count || 0), 0);
