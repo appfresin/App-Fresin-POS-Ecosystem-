@@ -70,42 +70,45 @@
       dialog.id = "onlineHoursNotice";
       dialog.className = "online-hours-notice";
       dialog.setAttribute("aria-labelledby", "onlineHoursNoticeTitle");
-      dialog.setAttribute("aria-describedby", "onlineHoursNoticeDescription onlineHoursNoticeSchedule onlineHoursNoticeNext onlineHoursNoticeThanks");
+      dialog.setAttribute("aria-describedby", "onlineHoursNoticeDescription onlineHoursNoticeSchedule onlineHoursNoticeNext onlineHoursNoticeClosing");
       dialog.innerHTML = `
-        <div class="online-hours-art" aria-hidden="true">
-          <span class="online-hours-orbit"></span>
-          <span class="online-hours-spark online-hours-spark-one">✦</span>
-          <span class="online-hours-spark online-hours-spark-two">✧</span>
-          <span class="online-hours-emblem">
-            <svg viewBox="0 0 80 80" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M53 12a12 12 0 0 0 15 15 12 12 0 1 1-15-15Z" fill="#ffdc98" stroke="#bf8b36"/>
-              <path d="M14 38h44v28H14z" fill="#fffaf1"/>
-              <path d="m12 38 6-15h34l8 15" fill="#abccef"/>
-              <path d="M12 38c0 9 12 9 12 0 0 9 12 9 12 0 0 9 12 9 12 0 0 9 12 9 12 0M24 24l-1 14m12-14v14m10-14 3 14"/>
-              <path d="M21 66V51h12v15m8-15h10v8H41zM10 67h52"/>
-              <path d="M68 42v6m-3-3h6" stroke="#bf8b36"/>
+        <form method="dialog" class="online-hours-dismiss">
+          <button type="submit" aria-label="Tutup pemberitahuan jam operasional">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          </button>
+        </form>
+        <div class="online-hours-copy">
+          <span class="online-hours-emblem" aria-hidden="true">
+            <svg viewBox="0 0 36 36">
+              <path d="M5 15 8 7h17l3 8M5 15c0 3 4 4 6 1 2 3 5 3 7 0 2 3 6 3 8 0M7 18v11h12M12 29v-7h4v7"/>
+              <circle cx="27" cy="26" r="7"/>
+              <path d="M27 22.5v4l2.5 1.5"/>
             </svg>
           </span>
-        </div>
-        <form method="dialog" class="online-hours-dismiss"><button type="submit" aria-label="Tutup pemberitahuan jam operasional">×</button></form>
-        <div class="online-hours-copy">
-          <h2 id="onlineHoursNoticeTitle" tabindex="-1" autofocus>Mohon maaf,</h2>
-          <p id="onlineHoursNoticeDescription">saat ini di luar jam operasional outlet.</p>
-          <div class="online-hours-schedule-chip">
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-            <span><span class="online-hours-chip-label">Jam operasional hari ini</span><strong id="onlineHoursNoticeSchedule"></strong></span>
+          <h2 id="onlineHoursNoticeTitle" tabindex="-1" autofocus>Outlet sedang tutup</h2>
+          <p id="onlineHoursNoticeDescription"></p>
+          <div class="online-hours-details">
+            <div class="online-hours-schedule-chip">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4m8-4v4M4 10h16"/></svg>
+              <span><span class="online-hours-chip-label">Jam operasional hari ini</span><strong id="onlineHoursNoticeSchedule"></strong></span>
+            </div>
+            <div id="onlineHoursNoticeNext" class="online-hours-next">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 1.5"/></svg>
+              <div><span></span><strong></strong></div>
+            </div>
           </div>
-          <p id="onlineHoursNoticeNext" class="online-hours-next"><span></span><strong></strong></p>
-          <p id="onlineHoursNoticeThanks" class="online-hours-thanks"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-9-5.4-9-12a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 6.6-9 12-9 12Z"/></svg><span>Terima kasih, teman Fresin!<small>Kami tunggu di jam buka, ya.</small></span></p>
+          <p id="onlineHoursNoticeClosing" class="online-hours-closing"></p>
         </div>`;
       document.body.appendChild(dialog);
     }
     dialog.querySelector("#onlineHoursNoticeDescription").textContent = result.service === "dinein"
-      ? "saat ini di luar jam pemesanan makan di sini."
-      : "saat ini di luar jam operasional outlet.";
+      ? "Pemesanan makan di sini belum tersedia."
+      : "Pemesanan online mengikuti jam operasional outlet.";
     dialog.querySelector("#onlineHoursNoticeSchedule").textContent = result.schedule.replaceAll(":", ".");
-    dialog.querySelector(".online-hours-next span").textContent = result.nextLabel;
-    dialog.querySelector(".online-hours-next strong").textContent = result.nextTime;
+    dialog.querySelector(".online-hours-next span").textContent = result.nextTime ? "Buka kembali" : "Jadwal buka berikutnya";
+    dialog.querySelector(".online-hours-next strong").textContent = result.nextTime || "Belum tersedia";
+    const invitation = result.nextLabel.replace(/^Silahkan kembali/, "Mohon kembali");
+    dialog.querySelector("#onlineHoursNoticeClosing").textContent = `${invitation}. Terima kasih!`;
     if (!dialog.open) dialog.showModal();
   }
 

@@ -12,36 +12,127 @@
 .online-hours-day input[type=time] { box-sizing: border-box; min-width: 0; width: 100%; padding: 9px 6px; border: 1px solid #cee4dc; border-radius: 10px; background: #fff; color: #194d42; font: inherit; font-size: 12px; }
 .online-hours-day:not(:has(input[type=checkbox]:checked)) input[type=time] { opacity: .45; }
 .online-hours-settings > small { display: block; margin-top: 10px; }
-.online-hours-notice { box-sizing: border-box; position: fixed; inset: 0; width: min(390px, calc(100% - 32px)); max-width: none; max-height: calc(100% - 32px); max-height: calc(100dvh - 32px); margin: auto; padding: 0; overflow-x: hidden; overflow-y: auto; border: 1px solid #d7e3f3; border-radius: 30px; background: #fffdf9; color: #173f6d; font: 500 15px/1.55 system-ui, sans-serif; text-align: center; box-shadow: 0 32px 90px #06264f55, inset 0 1px 0 #fff; }
-.online-hours-notice::backdrop { background: #102d5057; -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px); }
-.online-hours-notice[open] { animation: onlineHoursAppear .26s ease-out; }
+.online-hours-notice {
+  --hours-ink: #173f6d;
+  --hours-muted: #4f6783;
+  --hours-line: #cfdef1;
+  --hours-tint: #eef5ff;
+  --hours-paper: #f4f8ff;
+  --hours-accent: #174f88;
+  --hours-action: linear-gradient(135deg, #286eac, #17518c);
+  --hours-glow: rgb(24 83 139 / .22);
+  box-sizing: border-box;
+  position: fixed;
+  inset: 0;
+  width: min(380px, calc(100% - 32px));
+  max-width: none;
+  max-height: calc(100% - 32px);
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--hours-line);
+  border-radius: 26px;
+  background: linear-gradient(145deg, #fff, var(--hours-paper));
+  color: var(--hours-ink);
+  font: 500 14px/1.5 system-ui, sans-serif;
+  text-align: center;
+  box-shadow: 0 22px 64px var(--hours-glow);
+}
+.online-hours-notice::backdrop {
+  background: rgb(20 20 28 / .46);
+  backdrop-filter: blur(5px);
+}
+.online-hours-notice[open] { animation: onlineHoursAppear .2s ease-out; }
 .online-hours-notice * { box-sizing: border-box; }
-.online-hours-art { position: relative; isolation: isolate; display: flex; flex-direction: column; align-items: center; overflow: hidden; padding: 22px 20px; background: radial-gradient(ellipse at 50% 0%, #2465a8, #08478f 75%); color: #fff1d8; }
-.online-hours-orbit { position: absolute; z-index: -1; top: -95px; width: 300px; height: 300px; border: 1px solid #ffffff16; border-radius: 50%; box-shadow: 0 0 0 25px #ffffff06, 0 0 0 55px #ffffff04; }
-.online-hours-emblem { display: grid; place-items: center; width: 80px; height: 80px; border: 4px solid #fff8e9; border-radius: 25.6px; background: #fff1d8; color: #19599f; box-shadow: 0 7.2px 17.6px #00285b38, 0 0 0 5.6px #ffffff0c; transform: rotate(-5deg); }
-.online-hours-emblem svg { width: 60.8px; height: 60.8px; transform: rotate(5deg); }
-.online-hours-spark { position: absolute; color: #ffd68e; line-height: 1; }
-.online-hours-spark-one { top: 34px; left: calc(50% - 82px); font-size: 22.4px; transform: rotate(-12deg); }
-.online-hours-spark-two { top: 69px; right: calc(50% - 78px); font-size: 18.4px; }
+.online-hours-copy { padding: 27px 20px 21px; }
+.online-hours-emblem {
+  display: grid;
+  width: 68px;
+  height: 68px;
+  margin: 0 auto 14px;
+  place-items: center;
+  border-radius: 22px;
+  background: var(--hours-action);
+  color: #fff9ef;
+  box-shadow: 0 7px 18px var(--hours-glow);
+}
+.online-hours-notice svg {
+  display: block;
+  width: 21px;
+  height: 21px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.online-hours-emblem svg { width: 40px; height: 40px; stroke-width: 1.8; }
 .online-hours-dismiss { position: absolute; top: 10px; right: 10px; margin: 0; }
-.online-hours-dismiss button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid #ffffff30; border-radius: 50%; background: #ffffff10; color: #fff; font: 400 28px/1 system-ui, sans-serif; cursor: pointer; }
-.online-hours-dismiss button:hover { background: #ffffff28; }
-.online-hours-dismiss button:focus-visible { outline: 3px solid #ffd68e; outline-offset: 3px; }
-.online-hours-copy { --online-hours-heading-size: clamp(20px, 6.9vw, 27px); padding: 24px 25px 25px; }
-.online-hours-copy h2,.online-hours-next strong { color: #15477e; font-family: "Fresin Display", system-ui, sans-serif; font-size: var(--online-hours-heading-size); font-weight: 800; letter-spacing: -.8px; line-height: 1.2; }
-.online-hours-copy h2 { margin: 0 0 5px; outline: none; }
-.online-hours-copy > p:not(.online-hours-next):not(.online-hours-thanks) { max-width: 255px; margin: 0 auto; color: #64768c; font-size: 14px; line-height: 1.6; }
-.online-hours-schedule-chip { display: flex; align-items: center; justify-content: center; gap: 11px; width: fit-content; max-width: 100%; margin: 10px auto 0; padding: 12px 18px; border: 1px solid #d2e2f6; border-radius: 18px; background: #edf4fd; color: #245887; text-align: left; }
-.online-hours-schedule-chip > svg { width: 26px; height: 26px; flex: 0 0 auto; }
-.online-hours-chip-label { display: block; margin-bottom: 2px; color: #617b99; font-size: 11px; font-weight: 600; }
-.online-hours-schedule-chip strong { display: block; font-size: 14px; font-weight: 800; line-height: 1.5; }
-.online-hours-next { margin: 10px 0 23px; color: #64768c; font-size: 14px; line-height: 1.6; }
-.online-hours-next span { display: block; }
-.online-hours-next strong { display: block; width: fit-content; max-width: 100%; margin: 5px auto 0; padding: 0 7px; border-radius: 5px; background: linear-gradient(transparent 62%, #ffe4ad 62%); }
-.online-hours-next strong:empty { display: none; }
-.online-hours-thanks { display: flex; align-items: flex-start; justify-content: center; gap: 9px; margin: 0; padding-top: 18px; border-top: 1px dashed #d5dfeb; color: #90703e; font-size: 12px; font-weight: 750; line-height: 1.6; }
-.online-hours-thanks svg { flex: 0 0 auto; width: 17px; height: 17px; margin-top: 2px; color: #c79345; }
-.online-hours-thanks small { display: block; margin-top: 2px; color: #7b8795; font-size: 11px; font-weight: 500; }
-@keyframes onlineHoursAppear { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: none; } }
-@media (max-width: 359px), (max-height: 640px) { .online-hours-art { padding-block: 16px 14px; } .online-hours-emblem { width: 64px; height: 64px; border-radius: 20.8px; } .online-hours-emblem svg { width: 48px; height: 48px; } .online-hours-copy { padding: 20px; } .online-hours-next { margin-block: 10px 18px; } }
-@media (prefers-reduced-motion: reduce) { .online-hours-notice[open] { animation: none; } }
+.online-hours-dismiss button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--hours-accent);
+  cursor: pointer;
+}
+.online-hours-dismiss button:hover { background: var(--hours-tint); }
+.online-hours-dismiss button:focus-visible { outline: 2px solid var(--hours-accent); outline-offset: 2px; }
+.online-hours-copy h2 {
+  margin: 0 0 5px;
+  outline: none;
+  color: var(--hours-ink);
+  font-size: clamp(20px, 6vw, 25px);
+  font-weight: 800;
+  letter-spacing: -.45px;
+  line-height: 1.2;
+}
+.online-hours-copy > p { margin: 0; color: var(--hours-muted); font-size: 13px; }
+.online-hours-details {
+  margin-top: 19px;
+  overflow: hidden;
+  border: 1px solid var(--hours-line);
+  border-radius: 17px;
+  background: var(--hours-tint);
+  text-align: left;
+}
+.online-hours-schedule-chip, .online-hours-next {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  color: var(--hours-accent);
+}
+.online-hours-next { border-top: 1px solid var(--hours-line); }
+.online-hours-chip-label, .online-hours-next span {
+  display: block;
+  color: var(--hours-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.online-hours-schedule-chip strong, .online-hours-next strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--hours-ink);
+  font-size: 14px;
+  font-weight: 750;
+}
+.online-hours-copy > .online-hours-closing {
+  margin: 15px 0 0;
+  color: var(--hours-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+@keyframes onlineHoursAppear {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .online-hours-notice[open] { animation: none; }
+}
