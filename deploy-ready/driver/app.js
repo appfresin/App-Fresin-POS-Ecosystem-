@@ -80,6 +80,7 @@
     supabaseUrl: SUPABASE_URL,
     supabaseAnonKey: SUPABASE_ANON_KEY,
     refreshMs: 15000,
+    pizzainPilot: true,
     storeLatitude: 5.3722219,
     storeLongitude: 95.9585189
   };

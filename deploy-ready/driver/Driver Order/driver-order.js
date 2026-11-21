@@ -481,10 +481,15 @@
     return Number.isFinite(number) ? number : null;
   }
 
+  function pickupLabel(order) {
+    return order.merchant === "pizzain" ? "Pizzain" : "Outlet Fresin";
+  }
+
   function distanceKm(order) {
     if (Number.isFinite(order.delivery_distance_meters) && order.delivery_distance_meters >= 0) {
       return order.delivery_distance_meters / 1000;
     }
+    if (order.merchant === "pizzain") return null;
     const coordinates = firstCoordinates(
       order.delivery_latitude && order.delivery_longitude ? `${order.delivery_latitude},${order.delivery_longitude}` : "",
       order.delivery_location,
@@ -658,7 +663,7 @@
       `Ongkir: ${money(Math.max(0, Number(order.delivery_fee || 0)))}`,
       `Total: ${money(orderSubtotal(order) + Math.max(0, Number(order.delivery_fee || 0)))}`,
       `Status bayar: ${order.payment_status || "Belum dibayar"}`,
-      "", "PENGANTARAN", "Pickup: Outlet Fresin", "",
+      "", "PENGANTARAN", `Pickup: ${pickupLabel(order)}`, "",
       ...deliveryLocationLines(order),
       ...(meta.note !== "-" ? ["", "Catatan pelanggan:", meta.note] : []),
       "", `Driver: ${order.driver_name || state.profile.name || "-"}`,
@@ -1026,6 +1031,46 @@
     return nextOrders;
   }
 
+  let pizzainFeed = { device: "", revision: "", orders: [], checkedAt: 0 };
+
+  function pizzainDevice() {
+    return config.pizzainPilot === true ? window.DriverNotifications?.deviceCredentials?.() : null;
+  }
+
+  async function requestPizzain(client, device, action, fields = {}) {
+    const { data, error } = await client.functions.invoke("pizzain-transport", {
+      body: { deviceId: device.id, deviceSecret: device.secret, action, ...fields }
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function refreshPizzain(client, options) {
+    const device = pizzainDevice();
+    const deviceKey = device ? state.profile.id + ":" + device.id : "";
+    if (pizzainFeed.device !== deviceKey) pizzainFeed = { device: deviceKey, revision: "", orders: [], checkedAt: 0 };
+    const feed = pizzainFeed;
+    if (!device || document.hidden || (!options.force && Date.now() - feed.checkedAt < (options.realtime ? 30000 : 60000))) return "";
+    feed.checkedAt = Date.now();
+    try {
+      const result = await requestPizzain(client, device, "feed", { revision: feed.revision });
+      if (state.profile?.id + ":" + pizzainDevice()?.id !== deviceKey) return "";
+      if (!result?.revision || (result.revision !== feed.revision && !Array.isArray(result.orders))) {
+        throw new Error("Invalid Pizzain feed");
+      }
+      if (Array.isArray(result.orders)) feed.orders = result.orders;
+      feed.revision = result.revision;
+      feed.checkedAt = Date.now();
+      return "";
+    } catch (error) {
+      if ([401, 403].includes(error?.context?.status)) {
+        feed.orders = [];
+        feed.revision = "";
+      }
+      return "Tugas Pizzain belum tersinkron. Coba muat ulang.";
+    }
+  }
+
   async function fetchOrders(options = {}) {
     if (!hasProfile()) return;
     if (state.fetching) { if (options.force || options.realtime) state.refreshQueued = true; return; }
@@ -1057,9 +1102,11 @@
         state.refreshQueued = true;
         return;
       }
-      const orders = mergeOrderItems(result.data || []);
+      const pizzainWarning = await refreshPizzain(client, options);
+      if (state.profile?.id !== profileId || rangeKey !== JSON.stringify(completedFetchRange())) return;
+      const orders = mergeOrderItems([...(result.data || []), ...pizzainFeed.orders]);
       state.orders = orders;
-      state.syncWarning = result.warning || "";
+      state.syncWarning = [result.warning, pizzainWarning].filter(Boolean).join(" ");
       notifyNewDriverOrders(orders);
       state.lastSyncAt = new Date().toISOString();
       state.error = "";
@@ -1201,6 +1248,7 @@
     const order = state.orders.find(item => item.id === orderId);
     if (!order || !hasProfile()) return;
     if (driverOrderCancelled(order)) { state.error = "Pesanan sudah dibatalkan dan tidak dapat diproses."; render(); return; }
+    if (order.merchant === "pizzain" && !["take", "process", "delivering", "complete"].includes(action)) return;
     if (action === "reject") {
       if (!canRejectOrder(order) || state.actionLoading) return;
       state.rejectOrderId = order.id;
@@ -1264,11 +1312,19 @@
     state.error = "";
     render();
     try {
-      await updateOrder(order, next.patch, {
-        onlyStatus: next.onlyStatus || (kitchenAction ? order.customer_order_status : ""),
-        kitchenStatus: kitchenAction || action === "take" ? order.status : "",
-        driverId: kitchenAction ? order.driver_id : ""
-      });
+      if (order.merchant === "pizzain") {
+        const device = pizzainDevice();
+        if (!device) throw new Error("Verifikasi akun Anterin diperlukan.");
+        const client = await window.DriverSupabase.ready();
+        const result = await requestPizzain(client, device, action, { orderId: order.id });
+        if (result?.accepted !== true) throw new Error("Status pesanan Pizzain sudah berubah.");
+      } else {
+        await updateOrder(order, next.patch, {
+          onlyStatus: next.onlyStatus || (kitchenAction ? order.customer_order_status : ""),
+          kitchenStatus: kitchenAction || action === "take" ? order.status : "",
+          driverId: kitchenAction ? order.driver_id : ""
+        });
+      }
       if (action === "take" || action === "picked" || action === "delivering") state.view = "active";
       if (action === "complete") {
         state.view = "active";
@@ -1295,6 +1351,7 @@
   }
 
   function canRejectOrder(order) {
+    if (order?.merchant === "pizzain") return false;
     if (!hasProfile() || !isCourierCash(order) || isPaidOrder(order) || driverOrderCancelled(order)
       || order.customer_order_type !== "DELIVERY" || order.confirmed_at || order.status !== "Pesanan Baru") return false;
     if (order.customer_order_status === "DRIVER_ASSIGNED") return order.driver_id === state.profile.id;
@@ -1379,6 +1436,14 @@
     render();
     try {
       const client = await window.DriverSupabase.ready();
+      if (order.merchant === "pizzain") {
+        const device = pizzainDevice();
+        if (!device) throw new Error("Verifikasi akun Anterin diperlukan.");
+        const result = await requestPizzain(client, device, "process", { orderId: order.id });
+        if (result?.accepted !== true) throw new Error("Status pesanan Pizzain sudah berubah.");
+        await fetchOrders({ force: true, quiet: true });
+        return;
+      }
       const now = new Date().toISOString();
       const { data, error } = await client.from("orders")
         .update({ confirmed_at: now, updated_at: now })
@@ -1837,7 +1902,7 @@
           <span>
             <i class="pickup-dot" aria-hidden="true"></i>
             <b>Pickup</b>
-            <strong>Outlet Fresin</strong>
+            <strong>${escapeHtml(pickupLabel(order))}</strong>
           </span>
         </div>
         ${renderOrderTimeline(order, status, { compact: true })}
@@ -1928,14 +1993,14 @@
         <section class="driver-summary-grid">
           <span><b>Pesanan</b><strong>${money(orderSubtotal(order))}</strong></span>
           <span><b>Ongkir</b><strong>${money(order.delivery_fee || 0)}</strong></span>
-          <span><b>${Number.isFinite(order.delivery_distance_meters) ? "Rute motor" : "Garis lurus"}</b><strong>${distanceLabel(order)}</strong></span>
+          <span><b>${order.merchant === "pizzain" || Number.isFinite(order.delivery_distance_meters) ? "Rute motor" : "Garis lurus"}</b><strong>${distanceLabel(order)}</strong></span>
           <span><b>WhatsApp</b><strong>${escapeHtml(order.customer_phone || "-")}</strong></span>
         </section>
         <section class="driver-panel">
           <h2>Alamat pengantaran</h2>
           <div class="driver-address modern">
             <div class="driver-address-route">
-              <span><i class="pickup-dot" aria-hidden="true"></i><b>Pickup</b><strong>Outlet Fresin</strong></span>
+              <span><i class="pickup-dot" aria-hidden="true"></i><b>Pickup</b><strong>${escapeHtml(pickupLabel(order))}</strong></span>
               <span><i class="drop-dot" aria-hidden="true"></i><b>Tujuan</b><strong>${escapeHtml(meta.address)}</strong></span>
             </div>
             <div class="driver-address-notes">
