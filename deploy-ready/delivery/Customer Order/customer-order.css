@@ -743,26 +743,41 @@
 .customer-home-status-sync {
   display: grid;
   justify-items: center;
-  gap: 14px;
-  padding: 40px 24px;
+  justify-self: center;
+  gap: 16px;
+  width: min(100%, 360px);
+  padding: 24px 18px;
+  border: 1px solid #cfe0f3;
+  border-radius: 24px;
+  background: linear-gradient(145deg, #fbfdff, #edf5ff);
+  box-shadow: 0 10px 28px rgb(30 78 130 / .11), inset 0 1px 0 #fff;
   text-align: center;
-  background: radial-gradient(ellipse at top, #ffffff, #f0f5fd);
 }
 
-.customer-home-status-sync-spinner {
-  width: 38px;
-  height: 38px;
-  margin-bottom: 8px;
-  border: 3px solid #dce6f2;
-  border-top-color: #2f5592;
-  border-right-color: #dfbd7b;
-  border-radius: 50%;
-  animation: customerHomeMapLoadingSpin 1s linear infinite;
+.customer-home-status-sync-icon {
+  display: grid;
+  width: 62px;
+  height: 62px;
+  place-items: center;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #286eac, #17518c);
+  color: #f4f9ff;
+  box-shadow: 0 7px 14px rgb(24 83 139 / .21);
 }
-
-.customer-home-status-sync strong { color: #234d7a; font-size: 1rem; }
-.customer-home-status-sync p { margin: 0; max-width: 30ch; color: #52667f; line-height: 1.6; }
-.customer-home-status-sync small { color: #75859a; }
+.customer-home-status-sync-icon svg {
+  width: 35px;
+  height: 35px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.customer-home-status-sync strong {
+  color: #174f88;
+  font-size: clamp(.95rem, 4.6vw, 1.125rem);
+  line-height: 1.35;
+}
 
 @keyframes customerHomeMapLoadingSpin {
   to { transform: rotate(360deg); }

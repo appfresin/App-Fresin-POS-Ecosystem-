@@ -2180,7 +2180,7 @@
     const order = homeCurrentOrder();
     if (!order) return homeRenderOrdersList();
     homeEnsureDriverSearchSession(order);
-    if (homeOrderKind(order) === "DELIVERY" && homeStatusNeedsRefresh) return homeRenderStatusSync(order);
+    if (homeOrderKind(order) === "DELIVERY" && homeStatusNeedsRefresh) return homeRenderStatusSync();
     if (homeIsPayLaterOrder(order)) return homeRenderCashStatus(order);
     const paid = homeIsPaid(order);
     const kind = homeOrderKind(order);
@@ -2207,14 +2207,20 @@
     `;
   }
 
-  function homeRenderStatusSync(order) {
+  function homeRenderStatusSync() {
+    const failed = homeStatusRefreshFailed;
     return `<main class="self-order-main success customer-home-status">
-      <section class="customer-home-tracking-card customer-home-status-sync" role="status" aria-live="polite">
-        <span class="customer-home-status-sync-spinner" aria-hidden="true"></span>
-        <strong>${homeStatusRefreshFailed ? "Status pesanan belum dapat diperbarui" : "Memperbarui status pesanan..."}</strong>
-        <p>${homeStatusRefreshFailed ? "Periksa koneksi internet. Kami akan mencoba memperbarui status lagi." : "Mohon tunggu sebentar, kami sedang memeriksa kabar terbaru pesananmu."}</p>
-        <small>Pesanan ${homeEscape(order.number)}</small>
-        ${homeStatusRefreshFailed ? '<button class="self-order-secondary" type="button" onclick="CustomerOrder.refreshStatus()">Coba perbarui status</button>' : ""}
+      <section class="customer-home-status-sync">
+        <span class="customer-home-status-sync-icon" aria-hidden="true">
+          <svg viewBox="0 0 32 32">
+            <path d="M17 26H8a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7"/>
+            <path d="M10.5 11h9M10.5 16h5.5M10.5 21h3"/>
+            <circle cx="23" cy="22" r="6"/>
+            <path d="M23 19v3.5l2 1"/>
+          </svg>
+        </span>
+        <strong role="status">${failed ? "Status belum diperbarui" : "Memperbarui status pesanan..."}</strong>
+        ${failed ? '<button class="self-order-secondary" type="button" onclick="CustomerOrder.refreshStatus()">Coba lagi</button>' : ""}
       </section>${homeRenderSupportContact()}</main>`;
   }
 
