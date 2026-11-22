@@ -120,6 +120,9 @@
     itemLoadingId: ""
   };
   const loadedItemOrderIds = new Set();
+  let pizzainDetail = null;
+  let pizzainDetailRequest = null;
+  let pizzainDetailErrorId = "";
   let realtimeRefreshTimer = 0;
   let pushRefreshTimer = 0;
 
@@ -309,6 +312,9 @@
     state.profile = {};
     state.orders = [];
     state.selectedId = "";
+    pizzainDetail = null;
+    pizzainDetailRequest = null;
+    pizzainDetailErrorId = "";
     state.menuOpen = false;
     state.claimError = "";
     state.claimValidator = null;
@@ -687,8 +693,8 @@
 
   async function shareOrderSummary(orderId) {
     const order = state.orders.find(order => order.id === orderId);
-    if (!order || state.itemLoadingId === order.id) return;
-    return shareContent({ title: `Pesanan ${order.order_number || "Delivery"}`, text: orderShareText(order) });
+    if (!order || state.itemLoadingId === order.id || pizzainDetailRequest?.id === order.id) return;
+    return shareContent({ title: `Pesanan ${order.order_number || "Delivery"}`, text: orderShareText(withPizzainDetail(order)) });
   }
 
   function sharedContentText(payload) {
@@ -1207,10 +1213,46 @@
     });
   }
 
+  function withPizzainDetail(order) {
+    if (order.merchant !== "pizzain" || order.driver_id !== state.profile.id
+      || pizzainDetail?.id !== order.id || pizzainDetail.driverId !== state.profile.id) return order;
+    return { ...order, ...pizzainDetail.data, ready_at: order.ready_at || pizzainDetail.data.ready_at };
+  }
+
+  async function ensurePizzainOrderDetail(order) {
+    const driverId = state.profile.id;
+    const device = pizzainDevice();
+    if (!device || order.driver_id !== driverId || pizzainDetailRequest?.id === order.id) return;
+    if (pizzainDetail?.id === order.id && pizzainDetail.driverId === driverId && pizzainDetail.updatedAt === order.updated_at) return;
+
+    const request = { id: order.id };
+    pizzainDetailRequest = request;
+    pizzainDetailErrorId = "";
+    render();
+    try {
+      const client = await window.DriverSupabase.ready();
+      const result = await requestPizzain(client, device, "feed", { orderId: order.id });
+      if (pizzainDetailRequest !== request || state.profile.id !== driverId || pizzainDevice()?.id !== device.id) return;
+      if (result?.order?.id !== order.id || !Array.isArray(result.order.items)) throw new Error("Invalid Pizzain detail");
+      pizzainDetail = { id: order.id, driverId, updatedAt: order.updated_at, data: result.order };
+    } catch (error) {
+      if (pizzainDetailRequest === request && state.profile.id === driverId) {
+        pizzainDetailErrorId = order.id;
+        if (pizzainDetail?.id === order.id) pizzainDetail = null;
+      }
+    } finally {
+      if (pizzainDetailRequest === request) {
+        pizzainDetailRequest = null;
+        render();
+      }
+    }
+  }
+
   async function ensureOrderItems(orderId, options = {}) {
     if (!orderId || loadedItemOrderIds.has(orderId) && !options.force) return;
     const order = state.orders.find(item => item.id === orderId);
     if (!order) return;
+    if (order.merchant === "pizzain") return ensurePizzainOrderDetail(order);
     state.itemLoadingId = orderId;
     render();
     try {
@@ -2008,7 +2050,9 @@
     `;
   }
 
-  function renderDetail(order) {
+  function renderDetail(summary) {
+    const order = withPizzainDetail(summary);
+    const loadingDetail = state.itemLoadingId === order.id || pizzainDetailRequest?.id === order.id;
     const status = effectiveOrderStatus(order);
     const meta = deliveryMeta(order);
     const map = mapsTarget(order);
@@ -2025,7 +2069,7 @@
           </div>
           <div class="driver-detail-tools">
             <span class="driver-pill ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
-            <button class="driver-share-order" type="button" data-action="share-order" data-order="${escapeHtml(order.id)}" aria-label="Bagikan pesanan" ${state.itemLoadingId === order.id ? "disabled" : ""}>${icon("send")}<span>Bagikan</span></button>
+            <button class="driver-share-order" type="button" data-action="share-order" data-order="${escapeHtml(order.id)}" aria-label="Bagikan pesanan" ${loadingDetail ? "disabled" : ""}>${icon("send")}<span>Bagikan</span></button>
           </div>
         </article>
         ${renderCustomerWait(order)}
@@ -2044,7 +2088,7 @@
             </div>
             <div class="driver-address-notes">
               <span><b>Patokan alamat</b><strong>${escapeHtml(meta.landmark)}</strong></span>
-              <span><b>Catatan driver</b><strong>${escapeHtml(meta.note)}</strong></span>
+              <span><b>${order.merchant === "pizzain" ? "Catatan pesanan" : "Catatan driver"}</b><strong>${escapeHtml(meta.note)}</strong></span>
             </div>
           </div>
           <div class="driver-action-row">
@@ -2055,7 +2099,9 @@
         <section class="driver-panel driver-items-panel">
           <h2>Item pesanan</h2>
           <div class="driver-items">
-            ${state.itemLoadingId === order.id ? `<p class="driver-muted">Memuat item pesanan...</p>` : (order.items || []).map(renderItem).join("") || `<p class="driver-muted">Item belum termuat.</p>`}
+            ${loadingDetail ? '<p class="driver-muted" role="status">Memuat detail pesanan...</p>'
+              : pizzainDetailErrorId === order.id ? '<p class="driver-muted" role="status">Detail pesanan belum bisa dimuat.</p><button class="driver-secondary" type="button" data-action="retry-order-detail">Coba lagi</button>'
+              : (order.items || []).map(renderItem).join("") || '<p class="driver-muted">Item belum termuat.</p>'}
           </div>
         </section>
         ${renderOrderTimeline(order, status)}
@@ -2315,6 +2361,10 @@
     const actionButton = event.target.closest("[data-action]");
     if (!actionButton) return;
     const action = actionButton.dataset.action;
+    if (action === "retry-order-detail") {
+      ensureOrderItems(state.selectedId);
+      return;
+    }
     if (action === "close-date-range") { state.datePickerContext = ""; render(); return; }
     if (action === "close-reject") {
       if (state.actionLoading) return;
