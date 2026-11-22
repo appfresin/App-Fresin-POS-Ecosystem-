@@ -251,19 +251,17 @@
 
   function categoryVisual(category, products) {
     if (!enabled()) return "";
-    if (category === "Semua" && typeof productImageOrToken === "function") {
-      const pictured = (products || []).filter(product => String(product.imageName || "").trim());
-      const isDonut = product => /donut|donat/i.test(`${product.category || ""} ${product.name || ""}`);
-      const donut = pictured.find(isDonut);
-      const drink = pictured.find(product => !isDonut(product) && /coffee|kopi|latte|milky|drink|minum/i.test(`${product.category || ""} ${product.name || ""}`))
-        || pictured.find(product => !isDonut(product));
-      if (drink && donut) return `<span class="fresin-category-visual fresin-category-photo-stack" aria-hidden="true"><span class="fresin-category-stack-drink">${productImageOrToken(drink, "fresin-category-photo", 96)}</span><span class="fresin-category-stack-donut">${productImageOrToken(donut, "fresin-category-photo", 96)}</span></span>`;
+    if (category === "Semua") {
+      return `<span class="fresin-category-visual fresin-category-photo-stack" aria-hidden="true">
+        <span class="fresin-category-stack-drink"><img src="/Customer%20Gateway/assets/category-aren-latte.webp" class="fresin-category-photo" alt="" decoding="async"></span>
+        <span class="fresin-category-stack-donut"><img src="/Customer%20Gateway/assets/category-classic-ceres-donut.webp" class="fresin-category-photo" alt="" decoding="async"></span>
+      </span>`;
     }
     const candidates = (products || []).filter(product => product.category === category);
     const pictured = candidates.filter(product => String(product.imageName || "").trim());
     const nonCoffee = /^non[\s-]*kopi$/i.test(String(category).trim());
     const representative = (nonCoffee ? pictured.find(product => /choco|cok[el]at|taro|matcha|hazelnut/i.test(product.name || "")) : null) || pictured[0] || candidates[0];
-    const photo = category !== "Semua" && representative && typeof productImageOrToken === "function"
+    const photo = representative && typeof productImageOrToken === "function"
       ? productImageOrToken(representative, "fresin-category-photo", 96) : icon("all");
     return `<span class="fresin-category-visual" aria-hidden="true">${photo}</span>`;
   }

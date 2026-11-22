@@ -424,7 +424,7 @@ test('table category photos reuse visible catalog products and preserve category
   assert.match(html, /src="donut.jpg"/);
   assert.doesNotMatch(html, /hidden.jpg|Hidden coffee/);
   assert.match(html, /CATALOG:Coffee:No photo,Aren Latte/);
-  assert.match(env.window.FresinGateway.categoryVisual('Semua', []), /data-icon="all"/);
+  assert.match(env.window.FresinGateway.categoryVisual('Semua', []), /fresin-category-photo-stack/);
   assert.match(env.window.FresinGateway.categoryVisual('Unknown', []), /data-icon="all"/);
   const pos = setup({ standalone: false });
   assert.equal(pos.window.FresinGateway.categoryVisual('Coffee', env.ctx.state.products), '');
@@ -465,19 +465,15 @@ test('normal entry and previews keep shared motion active unless explicitly turn
   }
 });
 
-test('Semua combines real drink and donut thumbnails from the current catalog', () => {
+test('Semua always uses the local Fresin drink and donut photos', () => {
   const env = setup({ engine: 'home', url: 'https://www.fresin.id/pesan/' });
-  env.ctx.productImageOrToken = product => `<img src="${product.imageName}" alt="">`;
-  const html = env.window.FresinGateway.categoryVisual('Semua', [
-    { name: 'Fries', category: 'Snack', imageName: 'fries.jpg' },
-    { name: 'Aren Latte', category: 'Coffee', imageName: 'latte.jpg' },
-    { name: 'Choco Donut', category: 'Donuts', imageName: 'donut.jpg' }
-  ]);
+  const html = env.window.FresinGateway.categoryVisual('Semua', []);
   assert.match(html, /fresin-category-photo-stack/);
-  assert.match(html, /src="latte.jpg"/);
-  assert.match(html, /src="donut.jpg"/);
-  assert.doesNotMatch(html, /fries.jpg|<svg/);
-  assert.match(env.window.FresinGateway.categoryVisual('Semua', []), /data-icon="all"/);
+  assert.doesNotMatch(html, /<svg/);
+  for (const asset of ['category-aren-latte.webp', 'category-classic-ceres-donut.webp']) {
+    assert.ok(html.includes('/Customer%20Gateway/assets/' + asset));
+    assert.ok(fs.statSync(sourcePath('Customer Gateway/assets/' + asset)).size > 0);
+  }
 });
 
 test('customer cart keeps the entry method and checkout data without another service picker', () => {
