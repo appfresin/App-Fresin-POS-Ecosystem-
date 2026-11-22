@@ -121,6 +121,20 @@
   };
   const loadedItemOrderIds = new Set();
   let realtimeRefreshTimer = 0;
+  let pushRefreshTimer = 0;
+
+  function refreshFromPush() {
+    if (document.hidden) {
+      state.pendingVisibleRefresh = true;
+      return;
+    }
+    window.clearTimeout(realtimeRefreshTimer);
+    window.clearTimeout(pushRefreshTimer);
+    pushRefreshTimer = window.setTimeout(() => {
+      pushRefreshTimer = 0;
+      fetchOrders({ force: true, quiet: true });
+    }, DRIVER_REALTIME_DEBOUNCE_MS);
+  }
 
   function escapeHtml(value) {
     return utils.escapeHtml ? utils.escapeHtml(value) : String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
@@ -1075,6 +1089,10 @@
 
   async function fetchOrders(options = {}) {
     if (!hasProfile()) return;
+    if (document.hidden) {
+      state.pendingVisibleRefresh = true;
+      return;
+    }
     if (state.fetching) { if (options.force || options.realtime) state.refreshQueued = true; return; }
     const profileId = state.profile.id;
     const rangeKey = JSON.stringify(completedFetchRange());
@@ -1211,7 +1229,9 @@
   function scheduleRealtimeRefresh() {
     if (document.hidden) {
       state.pendingVisibleRefresh = true;
+      return;
     }
+    if (pushRefreshTimer) return;
     window.clearTimeout(realtimeRefreshTimer);
     realtimeRefreshTimer = window.setTimeout(() => fetchOrders({ quiet: true, realtime: true }), DRIVER_REALTIME_DEBOUNCE_MS);
   }
@@ -1855,7 +1875,11 @@
       ["placed", "Pesanan masuk", order.created_at, true],
       ["accepted", "Pesanan diterima", order.driver_accepted_at, Boolean(order.driver_id || order.confirmed_at || rank >= 2)],
       ["ready", "Selesai di dapur", order.ready_at, rank >= 4],
-      ["delivering", "Pesanan diantar", dispatched ? order.cashier_paid_at : null, dispatched, "Jam pembayaran di kasir"],
+      ...(order.merchant === "pizzain" && isCourierCash(order)
+        ? [["paid", "Dibayar di kasir", order.cashier_paid_at, isPaidOrder(order)]]
+        : []),
+      ["delivering", "Pesanan diantar", dispatched ? (order.merchant === "pizzain" ? order.dispatched_at : order.cashier_paid_at) : null,
+        dispatched, order.merchant === "pizzain" ? "" : "Jam pembayaran di kasir"],
       ["completed", "Transaksi selesai", order.completed_at, completed]
     ];
     const visibleMilestones = compact
@@ -2355,7 +2379,7 @@
 
   window.DriverOrder = {
     renderUI: render,
-    refresh: fetchOrders,
+    refresh: options => options?.force && options.quiet ? refreshFromPush() : fetchOrders(options),
     setView,
     state,
     statusLabel,
@@ -2370,18 +2394,22 @@
   if (hasProfile()) fetchOrders({ force: true });
   window.setInterval(updateCustomerWaitTimers, 1000);
   window.setInterval(() => {
-    if (!hasProfile()) return;
+    if (!hasProfile() || document.hidden) return;
     fetchOrders({ quiet: true });
   }, Number(config.staleRefreshMs || config.refreshMs || DRIVER_STALE_POLL_MS));
   document.addEventListener("visibilitychange", () => {
-    if (!hasProfile() || document.hidden) return;
+    if (!hasProfile()) return;
+    if (document.hidden) {
+      window.clearTimeout(pushRefreshTimer);
+      window.clearTimeout(realtimeRefreshTimer);
+      pushRefreshTimer = 0;
+      state.pendingVisibleRefresh = true;
+      return;
+    }
     updateCustomerWaitTimers();
     if (state.pendingVisibleRefresh) {
       state.pendingVisibleRefresh = false;
-      fetchOrders({ quiet: true });
-      return;
+      if (!pushRefreshTimer) refreshFromPush();
     }
-    const lastSync = new Date(state.lastSyncAt || 0).getTime();
-    if (!lastSync || Date.now() - lastSync > Number(config.visibleRefreshMs || 30000)) fetchOrders({ quiet: true });
   });
 }());
