@@ -11,16 +11,22 @@
   gap: 16px;
 }
 
-/* Shared success layout for outlet Takeaway and customer cash orders. */
-.self-order-app:has(> .so-takeaway-success) { padding-bottom: 0; }
-.self-order-main.success.so-takeaway-success {
+/* Success actions live in the page between the status card and the bottom inset. */
+.self-order-app:has(> :is(.so-takeaway-success, .customer-home-status)) {
+  padding-bottom: 0;
+}
+.self-order-app:has(> :is(.so-takeaway-success, .customer-home-status)) > .self-order-bottom-nav {
+  display: none;
+}
+.self-order-main.success:is(.so-takeaway-success, .customer-home-status) {
   min-height: 0;
   align-content: start;
   place-items: stretch;
   gap: 12px;
-  padding: 14px 14px 100px;
+  padding: 14px 14px max(18px, env(safe-area-inset-bottom));
 }
-.so-takeaway-success > .so-takeaway-status-card {
+.self-order-app .so-takeaway-success > .so-takeaway-status-card,
+.self-order-app .customer-home-status > .customer-home-tracking-card {
   width: 100%;
   padding: 0;
   gap: 12px;
