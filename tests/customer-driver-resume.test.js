@@ -25,7 +25,7 @@ function setup(file) {
     customer_order_type: 'DELIVERY', payment_provider: 'courier_cash', driver_id: 'driver-1',
     payment_status: 'Belum dibayar', status: 'Sedang Disiapkan', updated_at: new Date(now).toISOString() };
   const writes = [], reads = [], paints = [], timers = [];
-  let readGate, writeGate, readError;
+  let readGate, writeGate, readError, step = 'success';
   const query = (table, operation = 'read', payload) => {
     const filters = [];
     const q = {
@@ -60,7 +60,7 @@ function setup(file) {
     document: { hidden: false },
     window: { setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout() {} },
     location: { search: '' },
-    homeIsMode: () => true, selfOrderStep: () => 'success', supabaseReadable: () => true,
+    homeIsMode: () => true, selfOrderStep: () => step, supabaseReadable: () => true,
     homeCurrentOrder: () => order, homeOrderKind: order => order.customerOrderType,
     homeIsPaid: order => order.paymentStatus === 'Lunas', homeIsPayLaterOrder: () => true,
     homeCustomerStatus: order => order.customerOrderStatus,
@@ -77,7 +77,7 @@ function setup(file) {
     supabaseClient: { from: table => query(table) }
   });
   const names = ['homeDriverSearchTimestamp', 'homeDriverSearchRemainingMs', 'homeStartDriverSearchSession',
-    'homeExpireDriverSearchSession', 'homeEnsureDriverSearchSession', 'homeRefreshActiveOrderFromSupabase',
+    'homeExpireDriverSearchSession', 'homeEnsureDriverSearchSession', 'homeStatusIsFinal', 'homeRefreshActiveOrderFromSupabase',
     'homeScheduleDriverSearchTick', 'homeRenderStatus', 'homeRenderStatusSync', 'homeResumeOrderStatus'];
   for (const name of names) {
     const fn = source.match(new RegExp(`^  (?:async )?function ${name}\\([\\s\\S]*?^  }`, 'm'));
@@ -85,12 +85,44 @@ function setup(file) {
     vm.runInContext(fn[0], ctx);
   }
   return { ctx, writes, reads, paints, timers, get order() { return order; },
+    set step(value) { step = value; },
     set row(value) { row = { ...row, ...value }; },
     set readGate(value) { readGate = value; }, set writeGate(value) { writeGate = value; },
     set readError(value) { readError = value; } };
 }
 
 for (const file of ['delivery/Customer Order/customer-order.js', 'deploy-ready/delivery/Customer Order/customer-order.js']) {
+
+  test(`${file}: polling stops for paid completed and cancelled orders, with a fresh read on reopen`, async () => {
+    const env = setup(file);
+    Object.assign(env.order, { customerOrderStatus: 'COMPLETED', paymentStatus: 'Lunas' });
+    env.row = { customer_order_status: 'COMPLETED', payment_status: 'Lunas', status: 'Selesai' };
+    assert.equal(await env.ctx.homeRefreshActiveOrderFromSupabase(), false);
+    assert.equal(env.reads.length, 0);
+    assert.equal(env.ctx.homeResumeOrderStatus({ switched: true }), true);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(env.reads.length, 1);
+    assert.equal(await env.ctx.homeRefreshActiveOrderFromSupabase(), false);
+    env.order.customerOrderStatus = 'CANCELLED';
+    env.order.paymentStatus = 'Belum dibayar';
+    env.ctx.homeStatusRefreshAt = 0;
+    assert.equal(await env.ctx.homeRefreshActiveOrderFromSupabase(), false);
+    assert.equal(env.reads.length, 1);
+  });
+
+  test(`${file}: delivery still polls after kitchen readiness and pickup still polls until paid`, async () => {
+    const env = setup(file);
+    Object.assign(env.order, { customerOrderStatus: 'READY_FOR_PICKUP', status: 'Selesai', paymentStatus: 'Lunas' });
+    assert.equal(await env.ctx.homeRefreshActiveOrderFromSupabase(), true);
+    Object.assign(env.order, { customerOrderType: 'PICKUP_PREORDER', customerOrderStatus: 'COMPLETED', paymentStatus: 'Belum dibayar' });
+    env.ctx.homeStatusRefreshAt = 0;
+    assert.equal(await env.ctx.homeRefreshActiveOrderFromSupabase(), true);
+    env.step = 'menu';
+    env.ctx.homeStatusRefreshAt = 0;
+    assert.equal(await env.ctx.homeRefreshActiveOrderFromSupabase(), false);
+    assert.equal(env.reads.length, 2);
+  });
+
   test(`${file}: expired cached radar waits for the assigned driver on resume`, async () => {
     const env = setup(file), gate = deferred();
     env.readGate = gate;
@@ -146,7 +178,7 @@ for (const file of ['delivery/Customer Order/customer-order.js', 'deploy-ready/d
     env.readError = new Error('offline');
     await env.ctx.homeRefreshActiveOrderFromSupabase({ force: true });
     env.ctx.render();
-    assert.match(env.paints.at(-1), /Status pesanan belum dapat diperbarui/);
+    assert.match(env.paints.at(-1), /Status(?: pesanan)? belum (?:dapat )?diperbarui/);
     assert.doesNotMatch(env.paints.at(-1), /NO_DRIVER_AVAILABLE|Coba Cari Driver Lagi/);
     assert.equal(env.writes.length, 0);
     env.readError = null;

@@ -1706,8 +1706,10 @@
   function homeCustomerStatus(order) {
     const stored = String(order.customerOrderStatus || "").trim();
     const lifecycle = homeLifecycleCustomerStatus(order);
+    if (stored === "CANCELLED" || order.cancelledAt || /^(batal|dibatalkan)$/i.test(String(order.status || "").trim())) {
+      return "CANCELLED";
+    }
     if (homeIsPayLaterOrder(order)) {
-      if (order.cancelledAt || order.status === "Dibatalkan") return "CANCELLED";
       if (homeOrderKind(order) === "DELIVERY") return homePreferAdvancedCustomerStatus(stored, lifecycle) || "SEARCHING_DRIVER";
       return lifecycle || (order.confirmedAt ? "ACCEPTED" : "WAITING_ACCEPTANCE");
     }
@@ -2180,7 +2182,7 @@
     const order = homeCurrentOrder();
     if (!order) return homeRenderOrdersList();
     homeEnsureDriverSearchSession(order);
-    if (homeOrderKind(order) === "DELIVERY" && homeStatusNeedsRefresh) return homeRenderStatusSync();
+    if (homeOrderKind(order) === "DELIVERY" && homeStatusNeedsRefresh && !homeStatusIsFinal(order)) return homeRenderStatusSync();
     if (homeIsPayLaterOrder(order)) return homeRenderCashStatus(order);
     const paid = homeIsPaid(order);
     const kind = homeOrderKind(order);
@@ -2224,18 +2226,20 @@
       </section>${homeRenderSupportContact()}</main>`;
   }
 
-  function homeResumeOrderStatus() {
-    if (!homeIsMode()) return;
-    if (document.hidden || !homeStatusNeedsRefresh) homeStatusRefreshRevision += 1;
+  function homeResumeOrderStatus({ switched = false } = {}) {
+    if (!homeIsMode()) return false;
+    const order = selfOrderStep() === "success" ? homeCurrentOrder() : null;
+    if (switched || document.hidden || !homeStatusNeedsRefresh) homeStatusRefreshRevision += 1;
     homeStatusNeedsRefresh = true;
     homeStatusRefreshFailed = false;
     if (homeDriverSearchTickTimer) {
       window.clearTimeout(homeDriverSearchTickTimer);
       homeDriverSearchTickTimer = null;
     }
-    if (selfOrderStep() !== "success" || !homeCurrentOrder()) return;
+    if (!order) return false;
     render();
     if (!document.hidden) homeRefreshActiveOrderFromSupabase({ force: true });
+    return true;
   }
 
   function homeRenderOrdersEmptyState() {
@@ -2290,12 +2294,18 @@
     `;
   }
 
+  function homeStatusIsFinal(order) {
+    const status = homeCustomerStatus(order);
+    return status === "CANCELLED" || (status === "COMPLETED" && homeIsPaid(order));
+  }
+
   async function homeRefreshActiveOrderFromSupabase(options = {}) {
     if (!homeIsMode() || document.hidden || homeStatusRefreshLoading || !supabaseReadable()) return false;
     const order = homeCurrentOrder();
     if (!order?.number) return false;
     const now = Date.now();
-    if (!options.force && now - homeStatusRefreshAt < HOME_STATUS_REFRESH_MS) return false;
+    if (!options.force && (selfOrderStep() !== "success" || homeStatusIsFinal(order)
+      || now - homeStatusRefreshAt < HOME_STATUS_REFRESH_MS)) return false;
     homeStatusRefreshLoading = true;
     homeStatusRefreshAt = now;
     const revision = homeStatusRefreshRevision;
@@ -2399,7 +2409,7 @@
       homeStatusRefreshLoading = false;
       if (!document.hidden) {
         render();
-        if (revision !== homeStatusRefreshRevision && homeStatusNeedsRefresh) {
+        if (revision !== homeStatusRefreshRevision && homeStatusNeedsRefresh && selfOrderStep() === "success") {
           window.setTimeout(() => homeRefreshActiveOrderFromSupabase({ force: true }), 0);
         }
       }
@@ -2679,13 +2689,13 @@
         sessionStorage.setItem("self_order_step", "success");
         sessionStorage.removeItem("customer_home_last_token");
         pushSelfOrderHistory("success");
-        render();
+        if (!homeResumeOrderStatus({ switched: true })) render();
       },
       openStatus(token) {
         sessionStorage.setItem("customer_home_last_token", token);
         sessionStorage.setItem("self_order_step", "success");
         pushSelfOrderHistory("success");
-        render();
+        if (!homeResumeOrderStatus({ switched: true })) render();
       },
       startNewOrder: homeStartNewOrder,
       PaymentService
@@ -2706,7 +2716,9 @@
       window.addEventListener("pageshow", homeResumeOrderStatus);
       window.addEventListener("online", homeResumeOrderStatus);
       window.__customerHomeStatusRefreshTimer = window.setInterval(homeRefreshActiveOrderFromSupabase, HOME_STATUS_REFRESH_MS);
-      window.setTimeout(() => homeRefreshActiveOrderFromSupabase({ force: true }), 1600);
+      window.setTimeout(() => {
+        if (!homeStatusRefreshAt && !document.hidden) homeResumeOrderStatus();
+      }, 1600);
     }
   }
 
