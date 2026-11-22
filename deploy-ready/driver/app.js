@@ -81,6 +81,18 @@
     supabaseAnonKey: SUPABASE_ANON_KEY,
     refreshMs: 15000,
     pizzainPilot: true,
+    outletHours: {
+      fresin: {
+        url: SUPABASE_URL,
+        key: SUPABASE_ANON_KEY,
+        settingsId: "54a5801f-b78f-44a5-aca8-846d33fa292e"
+      },
+      pizzain: {
+        url: "https://veifszvxdfkzpcxhbqlu.supabase.co",
+        key: "sb_publishable_sFeKaDZ84lUC5YAaMlUzKA_bYdfxf4o",
+        settingsId: "bed47e3f-cb3b-472b-b697-7c1fb31e5257"
+      }
+    },
     storeLatitude: 5.3722219,
     storeLongitude: 95.9585189
   };

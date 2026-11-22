@@ -13,6 +13,8 @@
   const DRIVER_FETCH_RETRY_MS = 30000;
   const DRIVER_REALTIME_DEBOUNCE_MS = 900;
   const DRIVER_STALE_POLL_MS = 120000;
+  const PIZZAIN_POLL_MS = 60000;
+  const OUTLET_HOURS_REFRESH_MS = 15 * 60 * 1000;
   const DRIVER_ACCEPT_WINDOW_MS = 5 * 60 * 1000;
   const ORDER_COLUMNS = [
     "id",
@@ -1066,12 +1068,57 @@
     return data;
   }
 
+  const outletSchedules = new Map();
+  let outletHoursCheckedAt = 0;
+
+  async function refreshOutletHours(now) {
+    if (!config.outletHours || now - outletHoursCheckedAt < OUTLET_HOURS_REFRESH_MS) return;
+    outletHoursCheckedAt = now;
+    const entries = Object.entries(config.outletHours);
+    await Promise.allSettled(entries.map(async ([merchant, source]) => {
+      const url = new URL("/rest/v1/store_settings", source.url);
+      url.search = new URLSearchParams({
+        select: "online_hours:self_order_settings->onlineOperatingHours",
+        id: `eq.${source.settingsId}`,
+        limit: "1"
+      });
+      const response = await fetch(url, {
+        headers: { apikey: source.key, Authorization: `Bearer ${source.key}` },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!response.ok) return;
+      const [row] = await response.json();
+      if (row) outletSchedules.set(merchant, { hours: row.online_hours, checkedAt: now });
+    }));
+  }
+
+  function shouldPollOutlet(merchant, now) {
+    if (state.orders.some(order => (order.merchant || "fresin") === merchant
+      && driverMatches(order) && ACTIVE_STATUSES.includes(effectiveOrderStatus(order)))) return true;
+    const schedule = outletSchedules.get(merchant);
+    if (!schedule || now.getTime() - schedule.checkedAt >= OUTLET_HOURS_REFRESH_MS * 4) return true;
+    return window.FresinOnlineHours?.status(schedule.hours, now).open !== false;
+  }
+
+  async function pollOutletOrders() {
+    if (!hasProfile() || document.hidden) return;
+    await refreshOutletHours(Date.now());
+    if (!hasProfile() || document.hidden) return;
+    const now = new Date();
+    const pollFresin = shouldPollOutlet("fresin", now);
+    const device = pizzainDevice();
+    const pizzainDue = device && (pizzainFeed.device !== `${state.profile.id}:${device.id}`
+      || now.getTime() - pizzainFeed.checkedAt >= PIZZAIN_POLL_MS);
+    const pollPizzain = pizzainDue && shouldPollOutlet("pizzain", now);
+    if (pollFresin || pollPizzain) fetchOrders({ quiet: true, skipFresin: !pollFresin, skipPizzain: !pollPizzain });
+  }
+
   async function refreshPizzain(client, options) {
     const device = pizzainDevice();
     const deviceKey = device ? state.profile.id + ":" + device.id : "";
     if (pizzainFeed.device !== deviceKey) pizzainFeed = { device: deviceKey, revision: "", orders: [], checkedAt: 0 };
     const feed = pizzainFeed;
-    if (!device || document.hidden || (!options.force && Date.now() - feed.checkedAt < (options.realtime ? 30000 : 60000))) return "";
+    if (!device || document.hidden || (!options.force && Date.now() - feed.checkedAt < (options.realtime ? 30000 : PIZZAIN_POLL_MS))) return "";
     feed.checkedAt = Date.now();
     const actionRevision = orderActionRevision;
     try {
@@ -1112,7 +1159,9 @@
     try {
       const client = await window.DriverSupabase.ready();
       let columns = [...ORDER_COLUMNS];
-      let result = await selectOrders(client, columns);
+      let result = options.skipFresin
+        ? { data: state.orders.filter(order => order.merchant !== "pizzain") }
+        : await selectOrders(client, columns);
       for (let attempt = 0; result.error && isMissingColumn(result.error) && attempt < ORDER_COLUMNS.length; attempt += 1) {
         const column = missingColumnName(result.error);
         if (!column || !columns.includes(column)) break;
@@ -1129,7 +1178,7 @@
         state.refreshQueued = true;
         return;
       }
-      const pizzainWarning = await refreshPizzain(client, options);
+      const pizzainWarning = options.skipPizzain ? null : await refreshPizzain(client, options);
       if (state.profile?.id !== profileId) return;
       if (actionRevision !== orderActionRevision || rangeKey !== JSON.stringify(completedFetchRange())) {
         state.refreshQueued = true;
@@ -1275,7 +1324,11 @@
     }
     if (pushRefreshTimer) return;
     window.clearTimeout(realtimeRefreshTimer);
-    realtimeRefreshTimer = window.setTimeout(() => fetchOrders({ quiet: true, realtime: true }), DRIVER_REALTIME_DEBOUNCE_MS);
+    realtimeRefreshTimer = window.setTimeout(() => fetchOrders({
+      quiet: true,
+      realtime: true,
+      skipPizzain: !shouldPollOutlet("pizzain", new Date())
+    }), DRIVER_REALTIME_DEBOUNCE_MS);
   }
 
   function setupRealtime(client) {
@@ -2443,10 +2496,7 @@
   window.DriverNotifications?.syncNative();
   if (hasProfile()) fetchOrders({ force: true });
   window.setInterval(updateCustomerWaitTimers, 1000);
-  window.setInterval(() => {
-    if (!hasProfile() || document.hidden) return;
-    fetchOrders({ quiet: true });
-  }, Number(config.staleRefreshMs || config.refreshMs || DRIVER_STALE_POLL_MS));
+  window.setInterval(pollOutletOrders, Number(config.staleRefreshMs || config.refreshMs || DRIVER_STALE_POLL_MS));
   document.addEventListener("visibilitychange", () => {
     if (!hasProfile()) return;
     if (document.hidden) {
