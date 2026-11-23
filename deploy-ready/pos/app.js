@@ -326,7 +326,7 @@ let masterSyncUiTimedOut = false;
 let stockOpnameHistoryVisitRequested = false;
 let selfOrderCatalogLoadingGuardTimer = null;
 let nativePushTokenRegisterKey = "";
-let nativePushTokenRegistering = false;
+let nativePushTokenRegistrationQueue = Promise.resolve();
 let nativePushTokenRegisterRetryTimer = null;
 let nativePushTokenLastAttemptAt = 0;
 let nativePushTokenRetryCount = 0;
@@ -2582,8 +2582,19 @@ async function ensureNativePushSupabaseSession() {
   return null;
 }
 
-async function registerNativePushToken(options = {}) {
-  if (nativePushTokenRegistering || !supabaseClient || !supabaseClient.functions?.invoke) return false;
+function registerNativePushToken(options = {}) {
+  const registration = nativePushTokenRegistrationQueue.then(() =>
+    performNativePushTokenRegistration(options.reason === "manual-token")
+  );
+  nativePushTokenRegistrationQueue = registration.catch(error => {
+    console.warn("Native push token registration failed", error);
+    return false;
+  });
+  return nativePushTokenRegistrationQueue;
+}
+
+async function performNativePushTokenRegistration(force) {
+  if (!supabaseClient?.functions?.invoke) return false;
   const session = await ensureNativePushSupabaseSession();
   if (!session?.user && !isKasirinAndroidWebView()) return false;
   const token = await getNativeFcmToken();
@@ -2592,13 +2603,12 @@ async function registerNativePushToken(options = {}) {
   const scopeKey = nativePushScopeKey();
   const enabled = nativePushEnabledForTarget(target);
   const kitchenCategories = target === "dapur" ? deviceKitchenNotificationCategories() : [];
-  setNativeKitchenNotificationCategories(kitchenCategories);
   const registerKey = `${session?.user?.id || "native-anon"}|${scopeKey}|${target}|${enabled ? "on" : "off"}|${kitchenCategories.join("\u001f")}|${token}`;
-  if (!options.force && nativePushTokenRegisterKey === registerKey) {
+  if (!force && nativePushTokenRegisterKey === registerKey) {
     markNativePushTokenRegistered();
     return true;
   }
-  nativePushTokenRegistering = true;
+  setNativeKitchenNotificationCategories(kitchenCategories);
   try {
     const { error } = await supabaseClient.functions.invoke("register-device-token", {
       body: {
@@ -2619,8 +2629,6 @@ async function registerNativePushToken(options = {}) {
   } catch (error) {
     console.warn("Native push token registration failed", error);
     return false;
-  } finally {
-    nativePushTokenRegistering = false;
   }
 }
 
