@@ -217,6 +217,7 @@
       id: order?.id || "",
       number: order.number || soTakeawayNumber(order),
       takeawayNumber: soTakeawayNumber(order),
+      createdAt: order.createdAt,
       checkoutTotal: total,
       total,
       orderTotal: orderTotal(order),
@@ -234,7 +235,10 @@
       items: (order.items || []).map(item => ({
         name: item.name || "Item",
         qty: Number(item.qty || 1),
-        total: typeof cartItemTotal === "function" ? cartItemTotal(item) : Number(item.price || 0) * Number(item.qty || 1)
+        variantLabel: item.variantLabel || item.variant,
+        addons: item.addons || [],
+        note: item.note,
+        lineTotal: typeof cartItemTotal === "function" ? cartItemTotal(item) : Number(item.price || 0) * Number(item.qty || 1)
       }))
     }));
   }
@@ -263,14 +267,65 @@
     )) || null;
   }
 
+  let dineInStatusLoading = false;
+  let dineInStatusSnapshot = null;
+
+  function dineInStatusLabel(snapshot, liveOrder) {
+    const order = snapshot?.number && dineInStatusSnapshot?.number === snapshot.number
+      ? dineInStatusSnapshot : liveOrder;
+    if (["Dibatalkan", "Batal"].includes(order?.status) || order?.cancelledAt) return "Dibatalkan";
+    if (["Selesai", "Siap Diambil"].includes(order?.status) || order?.completedAt) return "Selesai";
+    if (soTakeawayIsReleasedToKitchen(order)) return "Diproses";
+    return "Menunggu diproses";
+  }
+
+  async function refreshDineInStatus() {
+    if (document.hidden || soTakeawayIsMode() || window.CustomerOrder?.isMode?.()
+      || !(IS_SELF_ORDER_APP || view === "selforder")
+      || sessionStorage.getItem("self_order_step") !== "success"
+      || typeof selfOrderLastOrderSnapshot !== "function" || !supabaseReadable() || !localDbReady
+      || dineInStatusLoading) return;
+    const snapshot = selfOrderLastOrderSnapshot();
+    if (!snapshot?.number || snapshot.orderMode === TAKEAWAY_MODE || window.FresinGateway?.isArchived?.(snapshot.number)) return;
+    dineInStatusLoading = true;
+    try {
+      const { data, error } = await supabaseClient.from("orders")
+        .select("order_number,status,payment_status,confirmed_at,prepared_at,completed_at,cancelled_at")
+        .eq("order_number", snapshot.number).eq("type", "Dine In").limit(1).maybeSingle();
+      if (error || !data || selfOrderLastOrderSnapshot()?.number !== snapshot.number) return;
+      const liveOrder = selfOrderLastLiveOrder();
+      const previous = dineInStatusLabel(snapshot, liveOrder);
+      dineInStatusSnapshot = {
+        number: data.order_number,
+        status: data.status,
+        paymentStatus: data.payment_status,
+        confirmedAt: data.confirmed_at,
+        preparedAt: data.prepared_at,
+        completedAt: data.completed_at,
+        cancelledAt: data.cancelled_at
+      };
+      window.FresinGateway?.updateOrderStatus?.(dineInStatusSnapshot);
+      if (previous !== dineInStatusLabel(snapshot, liveOrder)
+        && sessionStorage.getItem("self_order_step") === "success") {
+        if (typeof isBlockingInteractionActive === "function" && isBlockingInteractionActive()) {
+          deferredRealtimeRender = true;
+        } else render();
+      }
+    } catch (error) {
+      console.warn("Dine In status refresh failed", error);
+    } finally {
+      dineInStatusLoading = false;
+    }
+  }
+
   function soTakeawayShouldRefreshStatus() {
-    if (!soTakeawayIsMode()) return false;
+    if (document.hidden || !soTakeawayIsMode()) return false;
     if (!(IS_SELF_ORDER_APP || view === "selforder")) return false;
     if (sessionStorage.getItem("self_order_step") !== "success") return false;
     const snapshot = soTakeawayLastSnapshot();
-    if (!snapshot) return false;
+    if (!snapshot || window.FresinGateway?.isArchived?.(snapshot.number)) return false;
     const order = soTakeawayFindOrder(snapshot);
-    return !order || (!soTakeawayIsExpired(order) && !(soTakeawayIsCompleted(order) && soTakeawayIsPaid(order)));
+    return !order || (!order.cancelledAt && !["Batal", "Dibatalkan"].includes(order.status) && !soTakeawayIsExpired(order) && !(soTakeawayIsCompleted(order) && soTakeawayIsPaid(order)));
   }
 
   async function soTakeawayRefreshActiveOrderFromSupabase(options = {}) {
@@ -284,15 +339,27 @@
     soTakeawayStatusRefreshLoading = true;
     soTakeawayStatusRefreshAt = now;
     try {
-      const { data: orderRows, error: orderError } = await supabaseClient
-        .from("orders")
-        .select("*")
-        .or(`order_number.eq.${number},service_info.eq.${number}`)
+      const receipt = window.FresinGateway?.savedOrder?.(number);
+      const orderQuery = supabaseClient.from("orders").select("*");
+      const { data: orderRows, error: orderError } = await (receipt
+        ? orderQuery.eq("order_number", number)
+        : orderQuery.or(`order_number.eq.${number},service_info.eq.${number}`))
         .order("updated_at", { ascending: false })
         .limit(1);
       if (orderError) throw orderError;
       const orderRow = (orderRows || [])[0];
       if (!orderRow?.id) return false;
+      if (soTakeawayLastSnapshot()?.number !== snapshot.number) return false;
+      if (receipt) {
+        const liveOrder = normalizeSupabaseLiveOrder(orderRow, [], new Map(), null);
+        const current = soTakeawayFindOrder(snapshot);
+        if (!current || ["status", "paymentStatus", "confirmedAt", "preparedAt", "completedAt", "cancelledAt", "takeawayStatus"]
+          .some(key => liveOrder[key] !== current[key])) {
+          mergeSupabaseLiveOrders([liveOrder]);
+          render();
+        }
+        return true;
+      }
       const [itemsResult, paymentsResult] = await Promise.all([
         supabaseClient.from("order_items").select("*").eq("order_id", orderRow.id).order("id", { ascending: true }),
         supabaseClient.from("payments").select("*").eq("order_id", orderRow.id).order("paid_at", { ascending: false }).limit(1)
@@ -413,7 +480,7 @@
   function soTakeawaySuccessActions(againAction) {
     const takeaway = againAction === "window.SOTakeaway.newOrder(event)";
     return `<div class="fresin-order-success-actions">
-      <button class="self-order-secondary fresin-view-receipt" type="button" onclick="window.SOTakeaway.openReceipt()">Lihat Pesanan</button>
+      <button class="self-order-secondary fresin-view-receipt" type="button" onclick="window.FresinGateway ? window.FresinGateway.showOrders() : window.SOTakeaway.openReceipt()">Lihat Pesanan</button>
       <button class="self-order-primary ${takeaway ? "so-takeaway-new-order-btn" : ""}" ${takeaway ? 'data-so-takeaway-new-order="1"' : ""} type="button" onclick="${soTakeawayEscape(againAction)}">Pesan Lagi</button>
     </div>`;
   }
@@ -443,26 +510,33 @@
   function soTakeawayRenderReceiptPage() {
     const order = soTakeawayReceiptOrder();
     if (!order) return `<main class="self-order-main fresin-receipt-page"><p>Pesanan belum tersedia.</p><button class="self-order-secondary" type="button" onclick="window.SOTakeaway.closeReceipt()">Kembali</button></main>`;
+    const saved = window.FresinGateway?.savedOrder?.(order.number);
+    if (saved) return soTakeawayRenderReceipt({
+      ...saved,
+      customer: order.customer,
+      items: saved.items.map((item, index) => ({ ...item, note: order.items?.[index]?.note })),
+      paymentStatus: order.paymentStatus || saved.paymentStatus
+    }, false, true);
     return soTakeawayRenderReceipt(order);
   }
 
-  function soTakeawayRenderReceipt(order) {
+  function soTakeawayRenderReceipt(order, archived = false, saved = archived) {
     const items = order.items || [];
-    const lineTotal = item => typeof cartItemTotal === "function" ? cartItemTotal(item)
+    const lineTotal = item => item.lineTotal ?? (typeof cartItemTotal === "function" ? cartItemTotal(item)
       : Number(item.qty || 0) * Number(item.price || 0)
-        + (item.addons || []).reduce((sum, addon) => sum + Number(addon.price || 0) * Number(addon.qty || 0), 0);
+        + (item.addons || []).reduce((sum, addon) => sum + Number(addon.price || 0) * Number(addon.qty || 0), 0));
     const subtotal = Number(order.subtotal ?? items.reduce((sum, item) => sum + lineTotal(item), 0));
     const discount = Number(order.discount || 0);
     const fee = Number(order.deliveryFee ?? order.delivery_fee ?? 0);
     const tax = Number(order.tax ?? order.tax_amount ?? 0);
     const service = Number(order.serviceFee ?? order.service_fee ?? 0);
-    const total = Math.max(0, Number(order.grandTotal ?? order.total ?? 0), subtotal - discount + fee + tax + service);
+    const total = saved ? order.total : Math.max(0, Number(order.grandTotal ?? order.total ?? 0), subtotal - discount + fee + tax + service);
     const delivery = order.type === "Delivery" || order.customerOrderType === "DELIVERY";
     // Courier settlement with the outlet does not confirm the customer's COD payment.
     const payment = soTakeawayIsPaid(order) && !(delivery && order.paymentProvider === "courier_cash") ? "Lunas" : "Belum Lunas";
     const store = state.settings?.selfOrderAppName || state.settings?.receiptStoreName || "Fresin Indonesia";
     const logo = String(state.settings?.selfOrderProfileImageDataUrl || state.settings?.receiptLogoDataUrl || "").trim();
-    const emblem = logo ? mediaImageTag(logo, "Logo usaha", "fresin-receipt-logo", 160, "eager") : soTakeawayEscape(store.charAt(0));
+    const emblem = logo && (!archived || logo.startsWith("data:image/")) ? mediaImageTag(logo, "Logo usaha", "fresin-receipt-logo", 160, "eager") : soTakeawayEscape(store.charAt(0));
     const rawNumber = String(order.number || "-").trim();
     const number = /^ORD-\d{8}-[A-Z0-9]+$/i.test(rawNumber)
       ? (typeof displayOrderNumber === "function" ? displayOrderNumber(rawNumber) : rawNumber.replace(/^ORD-\d{8}-/i, "#"))
@@ -472,14 +546,27 @@
       <article class="fresin-customer-receipt" aria-label="Rincian pesanan ${soTakeawayEscape(number)}">
         <header class="fresin-receipt-brand"><span class="fresin-receipt-emblem">${emblem}</span><strong>${soTakeawayEscape(store)}</strong></header>
         <div class="fresin-receipt-meta"><strong>${soTakeawayEscape(number)}</strong><span>${soTakeawayEscape(delivery ? "Delivery" : order.type || "Takeaway")}</span>
+          ${archived && order.finalStatus ? `<span>${soTakeawayEscape(order.finalStatus)}</span>` : ""}
           ${order.customer ? `<span>${soTakeawayEscape(order.customer)}</span>` : ""}
           ${Number.isFinite(created) ? `<span>${soTakeawayEscape(soTakeawayDateTime(order.createdAt))}</span>` : ""}
         </div>
         <div class="fresin-receipt-items">
-          ${items.map(item => `<div class="fresin-receipt-item"><div><strong>${Number(item.qty || 0)}× ${soTakeawayEscape(item.name || "Produk")}</strong>
-            ${item.variantLabel || item.variant ? `<small>${soTakeawayEscape(item.variantLabel || item.variant)}</small>` : ""}
-            ${(item.addons || []).map(addon => `<small>+ ${Number(addon.qty || 1)}× ${soTakeawayEscape(addon.name || "Tambahan")}</small>`).join("")}
-            ${item.note ? `<small>${soTakeawayEscape(item.note)}</small>` : ""}</div><b>${soTakeawayMoney(lineTotal(item))}</b></div>`).join("") || '<p class="fresin-receipt-empty">Rincian item sedang dimuat. Kembali ke status untuk memperbarui pesanan.</p>'}
+          ${items.map(item => {
+            const variant = String(item.variantLabel || item.variant || "").trim();
+            return `<div class="fresin-receipt-item">
+              <strong class="fresin-receipt-qty">${Number(item.qty || 0)}x</strong>
+              <div><strong>${soTakeawayEscape(item.name || "Produk")}</strong>
+                ${variant && !/^(regular|reguler)$/i.test(variant) ? `<small>${soTakeawayEscape(variant)}</small>` : ""}
+                ${(item.addons || []).map(addon => {
+                  const crust = addon.crust || (addon.selectionType === "crust" || /\b(?:crust|corner)\b/i.test(addon.name || ""));
+                  const name = String(addon.name || "Tambahan");
+                  const label = crust && !/\bcrust\b/i.test(name) ? `${name} Crust` : name;
+                  return `<small>${Number(addon.qty || 1)}x ${soTakeawayEscape(label)}</small>`;
+                }).join("")}
+                ${item.note ? `<small>${soTakeawayEscape(item.note)}</small>` : ""}
+              </div><b>${soTakeawayMoney(lineTotal(item))}</b>
+            </div>`;
+          }).join("") || '<p class="fresin-receipt-empty">Rincian item sedang dimuat. Kembali ke status untuk memperbarui pesanan.</p>'}
         </div>
         <div class="fresin-receipt-totals">
           ${discount ? `<span><b>Diskon</b><strong>− ${soTakeawayMoney(discount)}</strong></span>` : ""}
@@ -489,10 +576,10 @@
           <span class="fresin-receipt-grand"><b>Total</b><strong>${soTakeawayMoney(total)}</strong></span>
         </div>
         <div class="fresin-receipt-payment"><span>Pembayaran</span><strong>${soTakeawayEscape(payment)}</strong></div>
-        <footer class="fresin-receipt-footer"><p>Terima kasih sudah memesan.</p><span>Dari Fresin, untuk hari baikmu.</span></footer>
+        <footer class="fresin-receipt-footer"><p>Terima kasih sudah memesan.</p></footer>
       </article>
-      <button class="self-order-secondary fresin-receipt-back" type="button" onclick="window.SOTakeaway.closeReceipt()">Kembali ke status pesanan</button>
-      ${window.CustomerOrder?.isMode?.() ? window.CustomerOrder.renderSupport() : ""}
+      <button class="self-order-secondary fresin-receipt-back" type="button" onclick="${archived ? "history.back()" : "window.SOTakeaway.closeReceipt()"}">${archived ? "Kembali ke Pesanan Saya" : "Kembali ke status pesanan"}</button>
+      ${!archived && window.CustomerOrder?.isMode?.() ? window.CustomerOrder.renderSupport() : ""}
     </main>`;
   }
 
@@ -729,6 +816,7 @@
       sessionStorage.removeItem("self_order_checkout_note");
       soTakeawaySetActiveOrder(order);
       soTakeawayMarkSnapshot(order, checkoutTotal);
+      window.FresinGateway?.rememberOrder?.(order, "takeaway", checkoutTotal);
       sessionStorage.setItem("self_order_step", "success");
       pushSelfOrderHistory("success");
       saveState();
@@ -1071,6 +1159,8 @@
       renderSuccessActions: soTakeawaySuccessActions,
       renderReceipt: soTakeawayRenderReceipt,
       renderReceiptPage: soTakeawayRenderReceiptPage,
+      renderSavedReceipt: order => soTakeawayRenderReceipt(order, true),
+      dineInStatusLabel,
       openReceipt: soTakeawayOpenReceipt,
       closeReceipt: soTakeawayCloseReceipt,
       renderProgress: soTakeawayStatusBar,
@@ -1096,8 +1186,20 @@
     }
 
     if (!window.__soTakeawayStatusRefreshTimer) {
-      window.__soTakeawayStatusRefreshTimer = window.setInterval(soTakeawayRefreshActiveOrderFromSupabase, TAKEAWAY_STATUS_REFRESH_MS);
-      window.setTimeout(() => soTakeawayRefreshActiveOrderFromSupabase({ force: true }), 1200);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+          soTakeawayRefreshActiveOrderFromSupabase({ force: true });
+          refreshDineInStatus();
+        }
+      });
+      window.__soTakeawayStatusRefreshTimer = window.setInterval(() => {
+        soTakeawayRefreshActiveOrderFromSupabase();
+        refreshDineInStatus();
+      }, TAKEAWAY_STATUS_REFRESH_MS);
+      window.setTimeout(() => {
+        soTakeawayRefreshActiveOrderFromSupabase({ force: true });
+        refreshDineInStatus();
+      }, 1200);
     }
   }
 

@@ -1642,6 +1642,7 @@
       sessionStorage.removeItem("self_order_customer");
       sessionStorage.removeItem("self_order_checkout_note");
       homeSaveActiveOrder(order);
+      window.FresinGateway?.rememberOrder?.(order, homeOrderKind(order) === "DELIVERY" ? "delivery" : "pickup", homeOrderTotal(order));
       sessionStorage.setItem("customer_home_last_token", order.publicOrderToken);
       sessionStorage.setItem("self_order_step", "success");
       pushSelfOrderHistory("success");
@@ -2236,7 +2237,10 @@
       window.clearTimeout(homeDriverSearchTickTimer);
       homeDriverSearchTickTimer = null;
     }
-    if (!order) return false;
+    if (!order || window.FresinGateway?.isArchived?.(order.number)) {
+      homeStatusNeedsRefresh = false;
+      return false;
+    }
     render();
     if (!document.hidden) homeRefreshActiveOrderFromSupabase({ force: true });
     return true;
@@ -2302,7 +2306,7 @@
   async function homeRefreshActiveOrderFromSupabase(options = {}) {
     if (!homeIsMode() || document.hidden || homeStatusRefreshLoading || !supabaseReadable()) return false;
     const order = homeCurrentOrder();
-    if (!order?.number) return false;
+    if (!order?.number || window.FresinGateway?.isArchived?.(order.number)) return false;
     const now = Date.now();
     if (!options.force && (selfOrderStep() !== "success" || homeStatusIsFinal(order)
       || now - homeStatusRefreshAt < HOME_STATUS_REFRESH_MS)) return false;
@@ -2350,7 +2354,10 @@
           if (!orderRow?.id) return false;
         }
       }
-      const [itemsResult, paymentsResult] = await Promise.all([
+      const saved = window.FresinGateway?.savedOrder?.(order.number);
+      const [itemsResult, paymentsResult] = saved && order.items?.length
+        ? [{ data: [] }, { data: [] }]
+        : await Promise.all([
         supabaseClient.from("order_items").select("*").eq("order_id", orderRow.id).order("id", { ascending: true }),
         supabaseClient.from("payments").select("*").eq("order_id", orderRow.id).order("paid_at", { ascending: false }).limit(1)
       ]);
@@ -2626,6 +2633,16 @@
       isOrder: homeIsOrder,
       renderSupport: homeRenderSupportContact,
       currentOrder: homeCurrentOrder,
+      activeOrders: () => homeActiveOrders().map(order => {
+        const delivery = homeOrderKind(order) === "DELIVERY";
+        return {
+          number: order.number,
+          createdAt: order.createdAt,
+          mode: delivery ? "delivery" : "pickup",
+          type: delivery ? "Delivery" : "Ambil sendiri",
+          total: homeOrderTotal(order)
+        };
+      }),
       hideSupport: homeHideSupport,
       setMethod(method) {
         homeSetCheckout({ method });
@@ -2685,7 +2702,16 @@
       mockPaymentSuccess: homeMarkPaid,
       dummyPaymentSuccess: homeMarkTemporaryDummyPaid,
       setStatus: homeSetStatus,
+      openSavedOrder(number) {
+        const ref = homeActiveRefs().find(item => item.number === number && item.token);
+        const token = ref?.token;
+        if (!token) return false;
+        window.CustomerOrder.openStatus(token);
+        return true;
+      },
       showOrders() {
+        if (window.FresinGateway?.showOrders) return window.FresinGateway.showOrders();
+
         sessionStorage.setItem("self_order_step", "success");
         sessionStorage.removeItem("customer_home_last_token");
         pushSelfOrderHistory("success");

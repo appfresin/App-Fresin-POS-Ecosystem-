@@ -411,20 +411,216 @@
       && ["menu", "detail", "cart", "payment", "table-check", "table-decision"].includes(selfOrderStep());
   }
 
+  const ORDERS_KEY = "fresin_customer_receipts_v1";
+
+  function localOrders() {
+    try {
+      const orders = JSON.parse(localStorage.getItem(ORDERS_KEY) || "[]");
+      return Array.isArray(orders) ? orders : [];
+    } catch { return []; }
+  }
+
+  function saveLocalOrders(orders) {
+    try { localStorage.setItem(ORDERS_KEY, JSON.stringify(orders)); }
+    catch { /* Checkout and status still work if browser storage is unavailable. */ }
+  }
+
+  function finalOrderStatus(order, mode) {
+    if (order.cancelledAt || ["Batal", "Dibatalkan"].includes(order.status)
+      || order.customerOrderStatus === "CANCELLED") return "Dibatalkan";
+    if (order.takeawayStatus === "EXPIRED" || order.customerOrderStatus === "PAYMENT_EXPIRED") return "Kedaluwarsa";
+    if (order.customerOrderStatus === "COMPLETED" || (mode !== "delivery" && (order.status === "Selesai" || order.completedAt))) return "Selesai";
+    return "";
+  }
+
+  function rememberOrder(order, mode, total) {
+    if (!order?.number || !order.items?.length) return;
+    const orders = localOrders();
+    const receipt = {
+      id: order.id,
+      number: order.number,
+      type: { dinein: "Makan di tempat", takeaway: "Takeaway", pickup: "Ambil sendiri", delivery: "Delivery" }[mode],
+      mode,
+      createdAt: order.createdAt,
+      table: order.serviceInfo,
+      takeawayNumber: order.takeawayNumber,
+      orderMode: mode === "takeaway" ? "TAKEAWAY" : undefined,
+      deliveryFee: order.deliveryFee,
+      serviceFee: order.serviceFee,
+      tax: order.tax,
+      discount: order.discount,
+      paymentProvider: order.paymentProvider,
+      paymentMethod: order.paymentMethod,
+      confirmedAt: order.confirmedAt,
+      preparedAt: order.preparedAt,
+      completedAt: order.completedAt,
+      paymentStatus: order.paymentStatus,
+      status: order.status,
+      customerOrderStatus: order.customerOrderStatus,
+      finalStatus: finalOrderStatus(order, mode),
+      total: Number(total),
+      items: order.items.map(item => ({
+        name: item.name,
+        qty: item.qty,
+        price: item.price,
+        variantLabel: item.variantLabel || item.variant,
+        lineTotal: cartItemTotal(item),
+        addons: (item.addons || []).map(addon => ({
+          name: addon.name,
+          qty: addon.qty,
+          price: addon.price,
+          crust: addon.selectionType === "crust" || /\b(?:crust|corner)\b/i.test(addon.name || "")
+        }))
+      }))
+    };
+    saveLocalOrders([receipt, ...orders.filter(saved => saved.number !== receipt.number)]);
+  }
+
+  function updateOrderStatus(order) {
+    updateOrderStatuses([order]);
+  }
+
+  function updateOrderStatuses(updates) {
+    const liveOrders = new Map(updates.map(order => [order?.number, order]));
+    const orders = localOrders();
+    let changed = false;
+    for (const saved of orders) {
+      const order = liveOrders.get(saved.number);
+      if (!order || saved.finalStatus) continue;
+      const finalStatus = finalOrderStatus(order, saved.mode);
+      const status = order.status || saved.status;
+      const paymentStatus = order.paymentStatus || saved.paymentStatus;
+      const customerOrderStatus = order.customerOrderStatus || saved.customerOrderStatus;
+      if (!finalStatus && saved.status === status && saved.paymentStatus === paymentStatus
+        && saved.customerOrderStatus === customerOrderStatus) continue;
+      saved.status = status;
+      saved.customerOrderStatus = customerOrderStatus;
+      saved.paymentStatus = paymentStatus;
+      saved.confirmedAt = order.confirmedAt || saved.confirmedAt;
+      saved.preparedAt = order.preparedAt || saved.preparedAt;
+      saved.completedAt = order.completedAt || saved.completedAt;
+      saved.finalStatus = finalStatus;
+      changed = true;
+    }
+    if (changed) saveLocalOrders(orders);
+  }
+
+  function savedOrder(number) {
+    return localOrders().find(order => order.number === number);
+  }
+
+  function isArchived(number) {
+    return Boolean(savedOrder(number)?.finalStatus);
+  }
+
+  function activeOnThisPage(order) {
+    return homeMode() ? ["pickup", "delivery"].includes(order.mode)
+      : takeawayMode() ? order.mode === "takeaway" : order.mode === "dinein";
+  }
+
+  function openOrdersStep(step, receiptNumber = "") {
+    sessionStorage.setItem("self_order_step", step);
+    history.pushState({ ...(history.state || {}), selfOrderStep: step, receiptNumber }, "", location.href);
+    render();
+    window.scrollTo?.({ top: 0 });
+  }
+
   function showOrders() {
     if (checkoutInProgress()) return toast("Selesaikan checkout pesanan baru terlebih dahulu.");
-    if (homeMode()) return window.CustomerOrder.showOrders();
-    try {
-      const snapshot = JSON.parse(sessionStorage.getItem("self_order_last_order") || "null");
-      const ownTableOrder = tableMode() && snapshot?.orderMode !== "TAKEAWAY" && (snapshot?.id || snapshot?.number) && String(snapshot?.table || "").trim() === tableCode();
-      if (ownTableOrder || (!tableMode() && snapshot?.orderMode === "TAKEAWAY")) {
-        sessionStorage.setItem("self_order_step", "success");
-        pushSelfOrderHistory("success");
-        return render();
+    openOrdersStep("my-orders");
+  }
+
+  function openSavedOrder(number) {
+    const order = savedOrder(number);
+    if (!order) {
+      if (homeMode()) return window.CustomerOrder.openSavedOrder?.(number);
+      if (selfOrderLastOrderSnapshot()?.number === number) return openOrdersStep("success");
+      return;
+    }
+    if (order.finalStatus) return openOrdersStep("saved-receipt", order.number);
+    if (!activeOnThisPage(order)) {
+      const target = new URL(order.mode === "pickup" || order.mode === "delivery" ? "/pesan/" : "/order/", location.origin);
+      if (order.mode === "dinein") target.searchParams.set("table", order.table);
+      else target.searchParams.set("mode", order.mode);
+      sessionStorage.setItem("fresin_open_saved_order", order.number);
+      return location.assign(target.href);
+    }
+    if (homeMode()) {
+      if (window.CustomerOrder.openSavedOrder?.(order.number)) return;
+      return toast("Status pesanan belum tersedia.");
+    }
+    const previous = selfOrderLastOrderSnapshot();
+    const sameOrder = previous?.number === order.number;
+    sessionStorage.setItem("self_order_last_order", JSON.stringify(sameOrder ? previous : {
+      ...order,
+      checkoutTotal: order.total,
+      orderTotal: order.total,
+      table: order.table || order.type
+    }));
+    openOrdersStep("success");
+  }
+
+  function activeOrderDetails(order) {
+    const deliveryStatus = order.mode === "delivery" ? {
+      SEARCHING_DRIVER: "Mencari kurir",
+      DRIVER_ASSIGNED: "Kurir ditemukan",
+      NO_DRIVER_AVAILABLE: "Kurir belum tersedia",
+      PREPARING: "Sedang disiapkan",
+      READY_FOR_PICKUP: "Siap diambil kurir",
+      PICKED_UP: "Diambil kurir",
+      DELIVERING: "Sedang diantar"
+    }[order.customerOrderStatus] : "";
+    const status = deliveryStatus || {
+      "Pesanan Baru": "Menunggu diproses",
+      "Sedang Disiapkan": "Sedang disiapkan",
+      "Siap Diambil": order.mode === "dinein" ? "Siap disajikan" : "Siap diambil"
+    }[order.status];
+    const quantity = (order.items || []).reduce((sum, item) => sum + (Number(item.qty) || 0), 0);
+    const extra = [order.mode === "dinein" && order.table ? `Meja ${order.table}` : "", quantity > 0 ? `${quantity} item` : ""].filter(Boolean).join(" · ");
+    return `<span class="fresin-my-order-details">
+      ${status ? `<span class="fresin-my-order-status">${escapeHtml(status)}</span>` : ""}
+      ${extra ? `<span>${escapeHtml(extra)}</span>` : ""}
+    </span>`;
+  }
+
+  function renderOrdersPage() {
+    const orders = localOrders();
+    const archived = orders.filter(order => order.finalStatus);
+    const active = orders.filter(order => !order.finalStatus);
+    const rows = (entries, expanded = false) => entries.map(order => {
+      const date = new Date(order.createdAt);
+      const dateLabel = Number.isFinite(date.getTime()) ? date.toLocaleDateString("id-ID", {
+        day: "numeric", month: "short", year: "numeric"
+      }) : "—";
+      const serviceIcon = order.mode === "dinein" ? "dinein" : order.mode === "delivery" ? "delivery" : "shopping";
+      return `<button type="button" class="fresin-my-order" data-fresin-saved-order="${escapeHtml(order.number)}" onclick="FresinGateway.openSavedOrder(this.dataset.fresinSavedOrder)">
+        <span class="fresin-my-order-icon" aria-hidden="true">${icon(serviceIcon)}</span>
+        <span class="fresin-my-order-meta"><strong>${escapeHtml(displayOrderNumber(order.number))}</strong><small>${escapeHtml(order.type)} · ${escapeHtml(dateLabel)}</small></span>
+        <strong class="fresin-my-order-total">${escapeHtml(money(order.total))}</strong><span class="fresin-my-order-arrow" aria-hidden="true">›</span>
+        ${expanded ? activeOrderDetails(order) : ""}
+      </button>`;
+    }).join("");
+    const previous = selfOrderLastOrderSnapshot();
+    if (homeMode()) {
+      for (const order of window.CustomerOrder.activeOrders?.() || []) {
+        if (!orders.some(saved => saved.number === order.number)) active.push(order);
       }
-    } catch { /* Keep the existing active-order fallback. */ }
-    if (tableMode()) return toast("Belum ada pesanan untuk meja ini.");
-    window.SOTakeaway?.showActiveOrder();
+    } else if (previous?.number && previous.number !== "-"
+      && !orders.some(order => order.number === previous.number)
+      && (takeawayMode() ? previous.orderMode === "TAKEAWAY" : previous.orderMode !== "TAKEAWAY" && previous.table === tableCode())) {
+      active.push({
+        ...previous,
+        type: takeawayMode() ? "Takeaway" : "Makan di tempat",
+        mode: takeawayMode() ? "takeaway" : "dinein",
+        total: previous.orderTotal ?? previous.total
+      });
+    }
+    const content = `${active.length ? `<section class="fresin-my-orders-active"><h2>Pesanan Aktif</h2>${rows(active, true)}</section>` : ""}
+      ${archived.length ? `<section class="fresin-my-orders-history"><h2>Riwayat pesanan</h2>${rows(archived)}</section>` : ""}
+      ${!active.length && !archived.length ? "<p>Belum ada pesanan di perangkat ini.</p>" : ""}`;
+    return `<main class="fresin-my-orders"><header>
+      <button type="button" onclick="history.back()" aria-label="Kembali"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button><h1>Pesanan Saya</h1>
+    </header>${content}</main>`;
   }
 
   function showSupport() {
@@ -443,6 +639,13 @@
 
   const baseRenderSelfOrder = renderSelfOrder;
   renderSelfOrder = function () {
+    const step = selfOrderStep();
+    if (["my-orders", "saved-receipt"].includes(step)) document.documentElement?.classList?.toggle("fresin-gateway-open", false);
+    if (step === "my-orders") return renderOrdersPage();
+    if (step === "saved-receipt") {
+      const order = localOrders().find(item => item.finalStatus && item.number === history.state?.receiptNumber);
+      return order ? `<section class="self-order-app">${window.SOTakeaway.renderSavedReceipt(order)}</section>` : renderOrdersPage();
+    }
     const gatewayOpen = isOpen();
     document.documentElement?.classList?.toggle("fresin-gateway-open", gatewayOpen);
     if (gatewayOpen) return renderGateway();
@@ -466,7 +669,7 @@
     return result;
   };
 
-  window.FresinGateway = { choose, open, restart, showOrders, showSupport, hideSupport, isOpen, categoryVisual, menuVisualsEnabled: enabled, serviceStrip, renderCart, checkoutItems, checkoutTotals, checkoutServiceHeader, checkoutServiceArt };
+  window.FresinGateway = { choose, open, restart, showOrders, openSavedOrder, rememberOrder, updateOrderStatus, updateOrderStatuses, savedOrder, isArchived, showSupport, hideSupport, isOpen, categoryVisual, menuVisualsEnabled: enabled, serviceStrip, renderCart, checkoutItems, checkoutTotals, checkoutServiceHeader, checkoutServiceArt };
 
   // Forward navigation must follow the current cart, never a previous order snapshot.
   if (typeof selfOrderShowPayment === "function") {
@@ -509,6 +712,16 @@
   if (!enabled() || statusContinuation()) {
     if (window.FRESIN_GATEWAY_BOOT_PENDING === true) finishBoot();
     return;
+  }
+  const requestedOrder = sessionStorage.getItem("fresin_open_saved_order");
+  if (requestedOrder) {
+    sessionStorage.removeItem("fresin_open_saved_order");
+    const order = savedOrder(requestedOrder);
+    if (order && activeOnThisPage(order)) {
+      window.FRESIN_GATEWAY_BOOT_PENDING = false;
+      openSavedOrder(requestedOrder);
+      return;
+    }
   }
   let handoff = null;
   try { handoff = JSON.parse(sessionStorage.getItem(HANDOFF_KEY) || "null"); }

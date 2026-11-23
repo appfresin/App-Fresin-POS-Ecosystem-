@@ -6191,6 +6191,7 @@ function orderMissingFromCompleteLiveRefresh(order, serverIds, serverNumbers, op
 }
 
 function mergeSupabaseLiveOrders(serverOrders = [], options = {}) {
+  if (IS_SELF_ORDER_APP) window.FresinGateway?.updateOrderStatuses?.(serverOrders);
   if (!serverOrders.length && !options.pruneMissingSynced) return;
   const serverIds = new Set(serverOrders.map(order => order.supabaseId).filter(Boolean));
   const serverNumbers = new Set(serverOrders.map(order => order.number).filter(Boolean));
@@ -10561,6 +10562,7 @@ async function selfOrderCreateOrder() {
     selfOrderSubmitError = "Gagal mengirim pesanan, cek koneksi anda lalu coba lagi";
     return;
   }
+  window.FresinGateway?.rememberOrder?.(order, "dinein", typeof orderGrandTotalForSync === "function" ? orderGrandTotalForSync(order) : orderTotal(order));
   audit("Self order dibuat", `${order.number} ${order.serviceInfo} ${money(orderTotal(order))}`);
   selfOrderCart = [];
   saveSelfOrderCart();
@@ -11161,6 +11163,7 @@ function renderSelfOrderSuccess() {
   const moveInline = selfOrderMoveTableInlineVisible() && canMove;
   const currentTable = liveOrder?.serviceInfo || order?.table || "A-1";
   const orderCreatedAt = liveOrder?.createdAt || order?.createdAt || "";
+  const status = window.SOTakeaway?.dineInStatusLabel?.(order, liveOrder) || "Menunggu diproses";
   const successHero = window.SOTakeaway?.renderHero?.({
     title: "Pesanan diterima",
     note: `Pesananmu akan diantar ke meja ${currentTable}.`,
@@ -11180,6 +11183,7 @@ function renderSelfOrderSuccess() {
           <span><b>Nomor order</b><strong class="so-takeaway-detail-copy">${escapeHtml(displayOrderNumber(order?.number || "-"))}</strong></span>
           <span><b>Waktu order</b><strong class="so-takeaway-detail-copy">${escapeHtml(orderCreatedAt ? timeOnly(orderCreatedAt) : "-")}</strong></span>
           <span class="so-takeaway-total-row"><b>Nominal</b><strong>${money(order?.checkoutTotal ?? order?.total ?? 0)}</strong></span>
+          <span><b>Status pesanan</b><strong class="so-takeaway-detail-copy" role="status">${escapeHtml(status)}</strong></span>
           <span><b>Status bayar</b><strong class="so-takeaway-payment-copy">Bayar di Kasir saat pulang</strong></span>
           <span><b>Nama pelanggan</b><strong class="so-takeaway-detail-copy">${customer ? escapeHtml(customer) : "-"}</strong></span>
         </div>
