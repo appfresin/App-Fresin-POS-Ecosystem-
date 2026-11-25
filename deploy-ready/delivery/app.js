@@ -255,6 +255,8 @@ let realtimeOrdersLastSyncedAt = "";
 const realtimePendingOrderIds = new Set();
 const realtimePendingOrderItemIds = new Set();
 let deletedOrderSweepLoadedAt = 0;
+let deletedOrderSweepCursor = 0;
+let deletedOrderSweepInFlight = false;
 let pendingNativePushOrderRefresh = null;
 let pendingLiveOrderRefreshAfterLocalDbReady = null;
 let supabaseRealtimeLastHealthyAt = 0;
@@ -6210,58 +6212,64 @@ function mergeSupabaseLiveOrders(serverOrders = [], options = {}) {
 }
 
 async function pruneDeletedSyncedOrdersFromSupabase(options = {}) {
-  if (!supabaseReadable() || !localDbReady) return false;
+  if (deletedOrderSweepInFlight || !supabaseReadable() || !localDbReady) return false;
   const now = Date.now();
   if (!options.force && now - deletedOrderSweepLoadedAt < 90000) return false;
   const candidates = (state.orders || [])
     .filter(order => syncedOrderCanBePruned(order))
-    .filter(order => String(order.supabaseId || "").trim() || String(order.number || "").trim())
-    .slice(0, 300);
+    .map(order => {
+      const id = String(order.supabaseId || "").trim();
+      return { order, column: id ? "id" : "order_number", key: id || String(order.number || "").trim() };
+    })
+    .filter(candidate => candidate.key);
   if (!candidates.length) {
     deletedOrderSweepLoadedAt = now;
+    deletedOrderSweepCursor = 0;
     return false;
   }
-  const ids = [...new Set(candidates.map(order => String(order.supabaseId || "").trim()).filter(Boolean))];
-  const numbers = [...new Set(candidates.map(order => String(order.number || "").trim()).filter(Boolean))];
+  const start = deletedOrderSweepCursor % candidates.length;
+  const batch = candidates.slice(start, start + 300);
+  const ids = [...new Set(batch.filter(candidate => candidate.column === "id").map(candidate => candidate.key))];
+  const numbers = [...new Set(batch.filter(candidate => candidate.column === "order_number").map(candidate => candidate.key))];
   const existingIds = new Set();
   const existingNumbers = new Set();
+  deletedOrderSweepInFlight = true;
   try {
     for (let index = 0; index < ids.length; index += 100) {
       const chunk = ids.slice(index, index + 100);
-      const { data, error } = await supabaseClient
-        .from("orders")
-        .select("id,order_number")
-        .in("id", chunk);
-      if (error) throw error;
-      (data || []).forEach(row => {
-        if (row?.id) existingIds.add(String(row.id));
-        if (row?.order_number) existingNumbers.add(String(row.order_number));
-      });
+      const { data, error } = await supabaseClient.from("orders").select("id,order_number").in("id", chunk);
+      if (error || !Array.isArray(data)) throw error || new Error("Missing order lookup result");
+      for (const row of data) existingIds.add(String(row.id));
     }
     for (let index = 0; index < numbers.length; index += 100) {
       const chunk = numbers.slice(index, index + 100);
-      const { data, error } = await supabaseClient
-        .from("orders")
-        .select("id,order_number")
-        .in("order_number", chunk);
-      if (error) throw error;
-      (data || []).forEach(row => {
-        if (row?.id) existingIds.add(String(row.id));
-        if (row?.order_number) existingNumbers.add(String(row.order_number));
-      });
+      const { data, error } = await supabaseClient.from("orders").select("id,order_number").in("order_number", chunk);
+      if (error || !Array.isArray(data)) throw error || new Error("Missing order lookup result");
+      for (const row of data) existingNumbers.add(String(row.order_number));
     }
   } catch (error) {
     console.warn("Deleted order sweep failed", options.reason || "", error);
     return false;
+  } finally {
+    deletedOrderSweepInFlight = false;
   }
+  const missing = new Map(batch.filter(({ column, key }) =>
+    !(column === "id" ? existingIds : existingNumbers).has(key)
+  ).map(candidate => [candidate.order, candidate]));
+  let removed = 0;
   const before = state.orders.length;
-  state.orders = (state.orders || []).filter(order => {
-    if (!syncedOrderCanBePruned(order)) return true;
-    const remoteId = String(order.supabaseId || "").trim();
-    const number = String(order.number || "").trim();
-    if (remoteId) return existingIds.has(remoteId);
-    return !number || existingNumbers.has(number);
+  state.orders = state.orders.filter(order => {
+    const checked = missing.get(order);
+    if (!checked || !syncedOrderCanBePruned(order)) return true;
+    const id = String(order.supabaseId || "").trim();
+    const stillMatches = checked.column === "id"
+      ? id === checked.key
+      : !id && String(order.number || "").trim() === checked.key;
+    if (stillMatches) removed++;
+    return !stillMatches;
   });
+  const next = start + batch.length;
+  deletedOrderSweepCursor = next < candidates.length ? next - removed : 0;
   deletedOrderSweepLoadedAt = now;
   if (state.orders.length === before) return false;
   normalizeState();
