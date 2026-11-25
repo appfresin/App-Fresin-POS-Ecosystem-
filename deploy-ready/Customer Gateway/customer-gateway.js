@@ -289,7 +289,7 @@
     function updateBags(selected = 0) {
       const layout = context.layouts[Number(form.elements.box.value)];
       const boxCount = donutBoxCount(layout);
-      dialog.querySelector("[data-donut-bags]").innerHTML = "<legend>Plastik pembawa</legend>"
+      dialog.querySelector("[data-donut-bags]").innerHTML = "<legend>Plastik kotak donat</legend>"
         + donutBagOptions(layout).map(count => option("bag", count, count ? `${count} plastik` : "Tanpa plastik",
           !count ? "" : count === 1 ? "Semua kemasan dalam satu plastik" : count === boxCount ? "Satu plastik untuk tiap box" : "Kemasan digabung sesuai kapasitas", count * donutBagPrice, count === selected)).join("");
     }
