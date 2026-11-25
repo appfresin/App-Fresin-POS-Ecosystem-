@@ -184,6 +184,129 @@
     return `<div class="fresin-service-strip is-${service}${checkout ? " is-checkout-header" : ""}"><span>${checkoutServiceArt(service)}<span class="fresin-service-strip-copy">${label}</span></span>${options.change === false ? "" : `<button type="button" onclick="FresinGateway.open()">Ubah layanan ${icon("arrow")}</button>`}</div>`;
   }
 
+  const donutPackagingKey = "fresin_donut_packaging_v2";
+  const donutBagPrice = 1000;
+
+  function donutCartItems() {
+    if (tableMode()) return [];
+    return selfOrderCart.filter(item => {
+      const product = state.products?.find(entry => entry.id === item.productId);
+      return /\b(?:donat|donuts?)\b/i.test(product?.category || item.category || "")
+        || /\b(?:donat|donuts?)\b/i.test(item.name || "");
+    });
+  }
+
+  function donutBoxLayouts(quantity) {
+    if (quantity < 3) return [];
+    const layouts = [];
+    for (let six = Math.floor(quantity / 6); six >= 0; six--) {
+      for (let four = Math.floor((quantity - 6 * six) / 4); four >= 0; four--) {
+        const remaining = quantity - 6 * six - 4 * four;
+        if (remaining % 3 === 0) layouts.push([[6, six], [4, four], [3, remaining / 3]].filter(([, count]) => count));
+      }
+    }
+    const fullBoxes = layouts.sort((a, b) => a.reduce((sum, [, count]) => sum + count, 0) - b.reduce((sum, [, count]) => sum + count, 0));
+    if (fullBoxes.length) return fullBoxes.slice(0, 2);
+    return donutBoxLayouts(quantity - 1).map(layout => [...layout, [1, 1]]);
+  }
+
+  function donutLayoutLabel(layout) {
+    return layout.map(([size, count]) => `${count} ${size === 1 ? "mika" : "box"} isi ${size}`).join(" + ");
+  }
+
+  function donutBoxCount(layout) {
+    return layout.reduce((sum, [size, count]) => sum + (size > 1 ? count : 0), 0);
+  }
+
+  function donutBagOptions(layout) {
+    const boxCount = donutBoxCount(layout);
+    const smallBoxes = layout.find(([size]) => size === 3)?.[1] || 0;
+    const sharedBags = Math.ceil((boxCount - smallBoxes) / 3);
+    const remainingSmallBoxes = Math.max(0, boxCount - sharedBags * 3);
+    const groupedBags = sharedBags + Math.ceil(remainingSmallBoxes / 4);
+    return [0, ...Array.from({ length: boxCount - groupedBags + 1 }, (_, index) => groupedBags + index)];
+  }
+
+  function donutPackagingContext() {
+    const items = donutCartItems();
+    const quantity = items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+    return { quantity, layouts: donutBoxLayouts(quantity), key: JSON.stringify(items.map(item => [item.lineId, item.productId, item.qty])) };
+  }
+
+  function donutPackagingSelection(context = donutPackagingContext()) {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(donutPackagingKey) || "null");
+      const layout = context.layouts[saved?.layoutIndex];
+      if (saved?.key !== context.key || !layout || !donutBagOptions(layout).includes(saved.bags)) return null;
+      return { ...saved, layout };
+    } catch {
+      return null;
+    }
+  }
+
+  function donutPackagingReview() {
+    const selection = donutPackagingSelection();
+    if (!selection) return "";
+    return `<div class="customer-home-review-row"><span>Plastik donat</span><strong>${money(selection.bags * donutBagPrice)}</strong></div>`;
+  }
+
+  function prepareDonutPackaging(note) {
+    const context = donutPackagingContext();
+    const selection = donutPackagingSelection(context);
+    if (context.layouts.length && !selection) return null;
+    const items = selfOrderCart.map(item => ({ ...item }));
+    if (!selection) return { items, note, fee: 0 };
+    const packaging = `Kemasan donat: ${donutLayoutLabel(selection.layout)} · ${selection.bags ? `${selection.bags} plastik` : "tanpa plastik"}`;
+    const item = items.find(entry => entry.lineId === donutCartItems()[0]?.lineId);
+    if (item && selection.bags) item.addons = [...(item.addons || []), {
+      name: "Plastik box donat", price: donutBagPrice, cost: 0, qty: selection.bags
+    }];
+    return { items, note: [note, packaging].filter(Boolean).join("\n"), fee: selection.bags * donutBagPrice };
+  }
+
+  function renderDonutPackagingDialog() {
+    return `<dialog class="fresin-donut-packaging" aria-labelledby="fresinDonutPackagingTitle"><form method="dialog">
+      <header><img class="fresin-donut-box-photo" src="/Customer%20Gateway/assets/donut-box-transparent.png" alt="" width="38" height="38"><div><h2 id="fresinDonutPackagingTitle">Kemasan donat</h2><p data-donut-count></p></div><button type="button" aria-label="Tutup" data-donut-close>×</button></header>
+      <fieldset data-donut-boxes></fieldset><fieldset data-donut-bags></fieldset>
+      <button class="self-order-primary" type="submit">Lanjut ke checkout</button>
+    </form></dialog>`;
+  }
+
+  function openDonutPackaging(context, proceed) {
+    const dialog = document.querySelector(".fresin-donut-packaging");
+    if (!dialog || dialog.open) return;
+    const form = dialog.querySelector("form");
+    const saved = donutPackagingSelection(context);
+    const initialLayout = saved?.layoutIndex ?? 0;
+    const option = (name, value, label, detail, price, checked) => `<label class="fresin-donut-option">
+      <input type="radio" name="${name}" value="${value}" ${checked ? "checked" : ""}>
+      <span><strong>${label}</strong>${detail ? `<small>${detail}</small>` : ""}</span>${price ? `<b>+ ${money(price)}</b>` : ""}
+    </label>`;
+    dialog.querySelector("[data-donut-count]").textContent = `${context.quantity} donat · Box sudah termasuk`;
+    dialog.querySelector("[data-donut-boxes]").innerHTML = "<legend>Susunan box</legend>" + (context.layouts.length === 1
+      ? `<div class="fresin-donut-option is-fixed"><strong>${donutLayoutLabel(context.layouts[0])}</strong></div><input type="hidden" name="box" value="0">`
+      : context.layouts.map((layout, i) => option("box", i, donutLayoutLabel(layout), "", 0, i === initialLayout)).join(""));
+    function updateBags(selected = 0) {
+      const layout = context.layouts[Number(form.elements.box.value)];
+      const boxCount = donutBoxCount(layout);
+      dialog.querySelector("[data-donut-bags]").innerHTML = "<legend>Plastik pembawa</legend>"
+        + donutBagOptions(layout).map(count => option("bag", count, count ? `${count} plastik` : "Tanpa plastik",
+          !count ? "" : count === 1 ? "Semua kemasan dalam satu plastik" : count === boxCount ? "Satu plastik untuk tiap box" : "Kemasan digabung sesuai kapasitas", count * donutBagPrice, count === selected)).join("");
+    }
+    updateBags(saved?.bags ?? 0);
+    form.onchange = event => { if (event.target.name === "box") updateBags(); };
+    dialog.querySelector("[data-donut-close]").onclick = () => dialog.close();
+    form.onsubmit = event => {
+      event.preventDefault();
+      sessionStorage.setItem(donutPackagingKey, JSON.stringify({
+        key: context.key, layoutIndex: Number(form.elements.box.value), bags: Number(form.elements.bag.value)
+      }));
+      dialog.close();
+      proceed();
+    };
+    dialog.showModal();
+  }
+
   function renderCart() {
     const subtotal = selfOrderSubtotal();
     const strip = serviceStrip(tableMode() ? "dinein" : "pickup");
@@ -221,6 +344,7 @@
         </section>
         ${typeof renderSelfOrderUpsellCard === "function" ? renderSelfOrderUpsellCard("cart") : ""}
         <button class="self-order-primary self-order-cart-pay" type="button" onclick="selfOrderShowPayment()" ${selfOrderCart.length ? "" : "disabled"}>Lanjut</button>
+        ${donutPackagingContext().layouts.length ? renderDonutPackagingDialog() : ""}
 
       </main>
     `;
@@ -241,7 +365,7 @@
 
   function checkoutTotals() {
     const subtotal = selfOrderSubtotal();
-    return `<section class="customer-home-review"><div class="customer-home-review-row"><span>Total Pesanan</span><strong>${money(subtotal)}</strong></div><div class="customer-home-total-row"><span>Pembayaran</span><strong>${money(subtotal)}</strong></div></section>`;
+    return `<section class="customer-home-review"><div class="customer-home-review-row"><span>Total Pesanan</span><strong>${money(subtotal)}</strong></div>${donutPackagingReview()}<div class="customer-home-total-row"><span>Pembayaran</span><strong>${money(subtotal + (donutPackagingSelection()?.bags || 0) * donutBagPrice)}</strong></div></section>`;
   }
 
   function checkoutServiceHeader() {
@@ -669,7 +793,7 @@
     return result;
   };
 
-  window.FresinGateway = { choose, open, restart, showOrders, openSavedOrder, rememberOrder, updateOrderStatus, updateOrderStatuses, savedOrder, isArchived, showSupport, hideSupport, isOpen, categoryVisual, menuVisualsEnabled: enabled, serviceStrip, renderCart, checkoutItems, checkoutTotals, checkoutServiceHeader, checkoutServiceArt };
+  window.FresinGateway = { choose, open, restart, showOrders, openSavedOrder, rememberOrder, updateOrderStatus, updateOrderStatuses, savedOrder, isArchived, showSupport, hideSupport, isOpen, categoryVisual, menuVisualsEnabled: enabled, serviceStrip, renderCart, checkoutItems, checkoutTotals, checkoutServiceHeader, checkoutServiceArt, prepareDonutPackaging, donutPackagingReview };
 
   // Forward navigation must follow the current cart, never a previous order snapshot.
   if (typeof selfOrderShowPayment === "function") {
@@ -679,9 +803,14 @@
       if (!enabled()) return baseShowPayment.apply(this, arguments);
       if (selfOrderSubmitting || enteringCheckout || ["payment", "table-check", "table-decision"].includes(selfOrderStep())) return;
       if (selfOrderStep() !== "cart") return toast("Periksa keranjang, lalu tekan Lanjut.");
-      enteringCheckout = true;
-      try { return await baseShowPayment.apply(this, arguments); }
-      finally { enteringCheckout = false; }
+      const proceed = async () => {
+        enteringCheckout = true;
+        try { return await baseShowPayment.apply(this, arguments); }
+        finally { enteringCheckout = false; }
+      };
+      const packaging = donutPackagingContext();
+      if (packaging.layouts.length) return openDonutPackaging(packaging, proceed);
+      return proceed();
     };
   }
   if (typeof renderSelfOrderBottomNav === "function") {

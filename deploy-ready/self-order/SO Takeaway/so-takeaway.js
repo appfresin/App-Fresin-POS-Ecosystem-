@@ -742,13 +742,21 @@
       sessionStorage.setItem("self_order_payment", "cash");
       render();
       await new Promise(resolve => window.setTimeout(resolve, 0));
-      const subtotal = selfOrderSubtotal();
+      const customerNote = String(document.getElementById("selfOrderCheckoutNote")?.value || sessionStorage.getItem("self_order_checkout_note") || "").trim();
+      const packaging = window.FresinGateway?.prepareDonutPackaging
+        ? window.FresinGateway.prepareDonutPackaging(customerNote)
+        : { items: selfOrderCart, note: customerNote, fee: 0 };
+      if (!packaging) {
+        selfOrderSubmitError = "Kembali ke keranjang untuk memilih kemasan donat.";
+        return;
+      }
+      const note = packaging.note;
+      const subtotal = selfOrderSubtotal() + packaging.fee;
       const checkoutTotal = subtotal;
-      const note = String(document.getElementById("selfOrderCheckoutNote")?.value || sessionStorage.getItem("self_order_checkout_note") || "").trim();
       const orderCreatedAt = await getSupabaseServerTimeIso();
       const takeawayNumber = await soTakeawayGenerateNumber();
       const publicOrderToken = Array.from(window.crypto.getRandomValues(new Uint8Array(18)), byte => byte.toString(16).padStart(2, "0")).join("");
-      const orderItems = tagOrderBatchItems(selfOrderCart.map(item => ({ ...item })), 1, note, orderCreatedAt);
+      const orderItems = tagOrderBatchItems(packaging.items.map(item => ({ ...item })), 1, note, orderCreatedAt);
       const order = {
         id: uid(),
         number: takeawayNumber,

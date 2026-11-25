@@ -643,3 +643,45 @@ html.fresin-gateway-open .view-selforder .page { min-height: 0; }
 .fresin-my-order-meta small { color: #466581; font-size: 11px; }
 .fresin-my-order-total { color: #174f89; font-size: 13px; white-space: nowrap; }
 .fresin-my-order-arrow { color: #174f89; font-size: 20px; }
+
+.fresin-donut-packaging {
+  box-sizing: border-box;
+  width: calc(100% - 20px);
+  max-width: 420px;
+  max-height: min(88dvh, 720px);
+  margin: auto auto 10px;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px; line-height: 1.35;
+  border: 0;
+  border-radius: 22px;
+  background: #fff;
+  color: #193555;
+  box-shadow: 0 16px 44px #19355538;
+}
+.fresin-donut-packaging::backdrop { background: #142c4f65; }
+.fresin-donut-packaging form { display: grid; gap: 8px; margin: 0; padding: 0 12px 10px; }
+.fresin-donut-packaging header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fresin-donut-packaging header {
+  margin: 0 -12px;
+  padding: 7px 12px;
+  background: #435e91;
+  color: #fff;
+}
+.fresin-donut-box-photo { flex: 0 0 38px; object-fit: contain; }
+.fresin-donut-packaging header > div { flex: 1; min-width: 0; }
+.fresin-donut-packaging h2, .fresin-donut-packaging p { margin: 0; }
+.fresin-donut-packaging h2 { font-size: 14px; font-weight: 800; line-height: 1.2; }
+.fresin-donut-packaging header p { margin-top: 3px; color: #e1edff; font-size: 12px; }
+.fresin-donut-option small { color: #536c8a; font-size: 12px; }
+.fresin-donut-packaging [data-donut-close] { width: 38px; height: 38px; display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: #fff; font: 700 20px/1 system-ui, sans-serif; }
+.fresin-donut-packaging fieldset { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; min-inline-size: 0; }
+.fresin-donut-packaging legend { color: #234b79; font-size: 12px; font-weight: 750; }
+.fresin-donut-packaging legend { padding: 0 0 5px; }
+.fresin-donut-option { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 36px; padding: 4px 8px; border: 1px solid #d5e2f3; border-radius: 11px; background: #f8fbff; }
+.fresin-donut-option:has(input:checked) { border-color: #6c9dd6; background: #e7f0ff; }
+.fresin-donut-option input { margin: 0; accent-color: #345c93; }
+.fresin-donut-option small { display: block; }
+.fresin-donut-option b { font-size: 12px; color: #264e80; white-space: nowrap; }
+.fresin-donut-option.is-fixed { grid-template-columns: minmax(0, 1fr); }
+.fresin-donut-packaging .self-order-primary { width: 100%; min-height: 40px; border: 0; border-radius: 999px; background: #435e91; color: #fff; }

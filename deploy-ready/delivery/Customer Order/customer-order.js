@@ -1397,7 +1397,8 @@
     if (delivery && (checkout.deliveryStage !== "details" || !quote)) return homeRenderDeliveryLocationStep(checkout);
     const fee = delivery ? quote?.fee : 0;
     const subtotal = selfOrderSubtotal();
-    const total = fee == null ? null : subtotal + fee;
+    const packagingFee = window.FresinGateway?.prepareDonutPackaging?.("")?.fee || 0;
+    const total = fee == null ? null : subtotal + packagingFee + fee;
     const pickupTime = checkout.pickupTime || "Secepatnya";
     const pickupNow = checkout.pickupTiming !== "scheduled" && !/^\d{2}:\d{2}$/.test(pickupTime);
     const errors = homeCheckoutErrors || {};
@@ -1472,6 +1473,7 @@
             : unavailable ? '<p role="status">Biaya pengantaran belum bisa dihitung.</p><button class="self-order-secondary" type="button" onclick="CustomerOrder.retryDeliveryRoute()">Coba lagi</button>'
             : `<p role="status">${routeKey ? "Menghitung biaya pengantaran…" : "Tetapkan pin untuk menghitung ongkir."}</p>`}
         `}
+        ${window.FresinGateway?.donutPackagingReview?.() || ""}
         <div class="customer-home-total-row"><span>Pembayaran</span><strong>${total == null ? "—" : homeMoney(total)}</strong></div>
       </section>
     `;
@@ -1549,7 +1551,15 @@
     try {
       render();
       await new Promise(resolve => window.setTimeout(resolve, 0));
-      const subtotal = selfOrderSubtotal();
+      const customerNote = String(checkout.note || "").trim();
+      const packaging = window.FresinGateway?.prepareDonutPackaging
+        ? window.FresinGateway.prepareDonutPackaging(customerNote)
+        : { items: selfOrderCart, note: customerNote, fee: 0 };
+      if (!packaging) {
+        selfOrderSubmitError = "Kembali ke keranjang untuk memilih kemasan donat.";
+        return;
+      }
+      const subtotal = selfOrderSubtotal() + packaging.fee;
       const deliveryFee = deliveryQuote?.fee ?? 0;
       const total = subtotal + deliveryFee;
       const orderCreatedAt = await getSupabaseServerTimeIso();
@@ -1559,10 +1569,7 @@
       const latitude = homeCoordinate(checkout.latitude);
       const longitude = homeCoordinate(checkout.longitude);
       const pickupTime = checkout.method === "PICKUP_PREORDER" ? (checkout.pickupTime || "Secepatnya") : "";
-      const noteParts = [
-        String(checkout.note || "").trim()
-      ].filter(Boolean);
-      const orderItems = tagOrderBatchItems(selfOrderCart.map(item => ({ ...item })), 1, checkout.note || "", orderCreatedAt);
+      const orderItems = tagOrderBatchItems(packaging.items.map(item => ({ ...item })), 1, packaging.note, orderCreatedAt);
       const order = {
         id: uid(),
         number,
@@ -1582,7 +1589,7 @@
         deliveryLongitude: checkout.method === "DELIVERY" ? longitude : null,
         deliveryDistanceKm: deliveryQuote?.distanceKm ?? null,
         serviceInfo: checkout.method === "DELIVERY" ? "Delivery" : homeParams().search.get("origin") === "outlet" ? "Takeaway Outlet" : "Takeaway-Rumah",
-        note: noteParts.join("\n"),
+        note: packaging.note,
         status: "Pesanan Baru",
         paymentStatus: "Belum dibayar",
         paymentMethod: checkout.method === "DELIVERY" ? "Bayar ke Kurir" : "Bayar di Outlet",
