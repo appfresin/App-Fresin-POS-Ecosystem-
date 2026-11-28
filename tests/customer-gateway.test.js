@@ -609,3 +609,42 @@ test('a new home pickup draft cannot jump to an old order status',()=>{
  env.window.CustomerOrder.showOrders();assert.equal(env.storage.get('self_order_step'),'payment');
  assert.match(env.messages.at(-1),/Selesaikan checkout/);
 });
+
+test("Lanjut mounts the donut packaging dialog before allowing checkout", async () => {
+  let entries = 0;
+  let mounted = false;
+  const env = setup({
+    step: "cart",
+    history: { selfOrderStep: "cart", fresinService: "pickup" },
+    cart: [{ lineId: "donut", name: "Choco Donut", qty: 5 }],
+    showPayment: async () => { entries++; }
+  });
+  const form = { elements: { box: { value: "0" }, bag: { value: "1" } } };
+  const count = {}, boxes = {}, bags = {}, close = {};
+  const fields = { form, "[data-donut-count]": count, "[data-donut-boxes]": boxes, "[data-donut-bags]": bags, "[data-donut-close]": close };
+  const dialog = {
+    open: false,
+    querySelector: selector => fields[selector],
+    showModal() { this.open = true; },
+    close() { this.open = false; }
+  };
+  const cart = {
+    insertAdjacentHTML(position, html) {
+      assert.equal(position, "beforeend");
+      assert.match(html, /<dialog class="fresin-donut-packaging"/);
+      mounted = true;
+    },
+    querySelector: () => mounted ? dialog : null
+  };
+  env.ctx.money = value => "Rp " + value;
+  env.ctx.document.querySelector = selector => selector === ".self-order-main.cart" ? cart : cart.querySelector();
+  await env.ctx.selfOrderShowPayment();
+  assert.equal(dialog.open, true);
+  assert.equal(entries, 0);
+  assert.match(boxes.innerHTML, /1 box isi 4 \+ 1 mika isi 1/);
+  assert.match(bags.innerHTML, /Plastik kotak donat/);
+  form.onsubmit({ preventDefault() {} });
+  assert.equal(dialog.open, false);
+  assert.equal(entries, 1);
+  assert.equal(env.window.FresinGateway.prepareDonutPackaging("").fee, 1000);
+});

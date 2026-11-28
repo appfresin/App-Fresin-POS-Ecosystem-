@@ -273,8 +273,14 @@
   }
 
   function openDonutPackaging(context, proceed) {
-    const dialog = document.querySelector(".fresin-donut-packaging");
-    if (!dialog || dialog.open) return;
+    let dialog = document.querySelector(".fresin-donut-packaging");
+    if (!dialog) {
+      const cart = document.querySelector(".self-order-main.cart");
+      if (!cart) return toast("Keranjang belum siap. Buka kembali keranjang, lalu tekan Lanjut.");
+      cart.insertAdjacentHTML("beforeend", renderDonutPackagingDialog());
+      dialog = cart.querySelector(".fresin-donut-packaging");
+    }
+    if (dialog.open) return;
     const form = dialog.querySelector("form");
     const saved = donutPackagingSelection(context);
     const initialLayout = saved?.layoutIndex ?? 0;
@@ -344,7 +350,6 @@
         </section>
         ${typeof renderSelfOrderUpsellCard === "function" ? renderSelfOrderUpsellCard("cart") : ""}
         <button class="self-order-primary self-order-cart-pay" type="button" onclick="selfOrderShowPayment()" ${selfOrderCart.length ? "" : "disabled"}>Lanjut</button>
-        ${donutPackagingContext().layouts.length ? renderDonutPackagingDialog() : ""}
 
       </main>
     `;
@@ -809,7 +814,13 @@
         finally { enteringCheckout = false; }
       };
       const packaging = donutPackagingContext();
-      if (packaging.layouts.length) return openDonutPackaging(packaging, proceed);
+      if (packaging.layouts.length) {
+        try { return openDonutPackaging(packaging, proceed); }
+        catch (error) {
+          console.error("Gagal membuka dialog kemasan donat", error);
+          return toast("Pilihan kemasan donat belum bisa dibuka. Coba buka kembali keranjang.");
+        }
+      }
       return proceed();
     };
   }
